@@ -1,0 +1,14 @@
+packet: CommandSuggestions
+id: 0x10
+groups: [play, clientbound]
+doc: The count is written before the list and calculated from it when encoding.
+fields:
+  - id: varint32
+  - start: varint32
+  - length: varint32
+  - name: count
+    type: varint32
+    computed: len(matches)
+  - name: matches
+    type: CommandMatch[count]
+    maxItems: 1000

@@ -1,0 +1,8 @@
+packet: LoginStart
+id: 0
+groups: [login, serverbound]
+fields:
+  - name: name
+    type: string
+    maxLength: 16
+  - playerUuid: uuid

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+    <PropertyGroup>
+        <RootNamespace>FormatStudio.Web</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="MudBlazor" Version="9.11.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\FormatStudio.Core\FormatStudio.Core.csproj" />
+        <ProjectReference Include="..\FormatStudio.Importers.Mojang\FormatStudio.Importers.Mojang.csproj" />
+    </ItemGroup>
+
+</Project>

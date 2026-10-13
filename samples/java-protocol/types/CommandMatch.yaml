@@ -1,0 +1,10 @@
+struct: CommandMatch
+fields:
+  - match: string
+  - name: hasTooltip
+    type: bool
+    computed: tooltip != null
+  - name: tooltip
+    type: string
+    if: hasTooltip
+    doc: A JSON text component.

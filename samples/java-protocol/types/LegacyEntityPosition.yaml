@@ -1,0 +1,9 @@
+struct: LegacyEntityPosition
+doc: Pre-1.9 entity coordinates as 27.5 fixed-point numbers.
+fields:
+  - name: x
+    type: {fixed: i32, fraction: 5}
+  - name: y
+    type: {fixed: i32, fraction: 5}
+  - name: z
+    type: {fixed: i32, fraction: 5}

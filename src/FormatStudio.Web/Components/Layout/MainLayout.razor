@@ -1,0 +1,43 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject ProjectService Projects
+
+<MudThemeProvider IsDarkMode="_dark" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => _drawer = !_drawer" />
+        <MudText Typo="Typo.h6" Class="ml-2">Format Studio</MudText>
+        <MudText Typo="Typo.body2" Class="ml-4 mud-text-secondary">@(Projects.Project?.Settings.Name ?? "no project")</MudText>
+        <MudSpacer />
+        <MudTooltip Text="Reload the project from disk">
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Inherit" OnClick="Projects.Reload" />
+        </MudTooltip>
+        <MudIconButton Icon="@(_dark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)" Color="Color.Inherit"
+                       OnClick="() => _dark = !_dark" />
+    </MudAppBar>
+    <MudDrawer @bind-Open="_drawer" ClipMode="DrawerClipMode.Always" Elevation="1" Width="320px">
+        <NavMenu />
+    </MudDrawer>
+    <MudMainContent Class="pa-4">
+        @if (Projects.LoadError != null)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Error" Class="mb-4">Loading @Projects.Path failed: @Projects.LoadError</MudAlert>
+        }
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _drawer = true;
+    private bool _dark;
+
+    protected override void OnInitialized() => Projects.Changed += OnChanged;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Projects.Changed -= OnChanged;
+}

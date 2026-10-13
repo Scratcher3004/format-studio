@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <AssemblyName>format-studio</AssemblyName>
+        <RootNamespace>FormatStudio.Cli</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\FormatStudio.Core\FormatStudio.Core.csproj" />
+        <ProjectReference Include="..\FormatStudio.Importers.Mojang\FormatStudio.Importers.Mojang.csproj" />
+    </ItemGroup>
+
+</Project>

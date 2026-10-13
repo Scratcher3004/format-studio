@@ -1,0 +1,15 @@
+name: java-protocol
+description: >-
+  A few packets of the Minecraft Java Edition protocol (1.20.x), as a sample of a big-endian format with VarInts,
+  packed positions, externally tagged variants, conditional fields and Java NBT.
+version: "765"
+defaults:
+  endian: big
+  length: varint32
+  string: utf8
+  nbt: java-network
+sources:
+  - types/**/*.yaml
+  - packets/**/*.yaml
+samples:
+  - samples/**/*.yaml

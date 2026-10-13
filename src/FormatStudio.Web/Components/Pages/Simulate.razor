@@ -1,0 +1,29 @@
+@page "/simulate"
+@inject ProjectService Projects
+@inject NavigationManager Navigation
+
+<PageTitle>Simulate - Format Studio</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Simulate</MudText>
+<MudText Typo="Typo.body2" Class="mb-3">
+    Encode a JSON value or decode bytes as any type expression, e.g. <span class="mono">TextPacket</span>,
+    <span class="mono">varuint32[]</span> or <span class="mono">string?</span>.
+</MudText>
+
+<MudTextField T="string" @bind-Value="_type" Label="Type" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" Style="max-width: 480px"
+              Immediate="false" HelperText="@Hint" />
+
+@if (!string.IsNullOrWhiteSpace(_type))
+{
+    <SimulatorPanel Type="@_type" />
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "type")] public string? Initial { get; set; }
+
+    private string? _type;
+
+    protected override void OnInitialized() => _type = Initial ?? Projects.Project?.Packets.OrderBy(p => p.Id).FirstOrDefault()?.Name;
+
+    private string? Hint => _type != null && Projects.Project?.Find(_type) is { } definition ? $"{definition.Kind}, {definition.Source?.File}" : null;
+}

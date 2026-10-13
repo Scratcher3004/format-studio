@@ -1,0 +1,5 @@
+packet: StatusPing
+id: 1
+groups: [status, serverbound]
+fields:
+  - payload: i64

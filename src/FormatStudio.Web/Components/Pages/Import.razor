@@ -1,0 +1,128 @@
+@page "/import"
+@using FormatStudio.Importers
+@inject ProjectService Projects
+@inject ISnackbar Snackbar
+
+<PageTitle>Import - Format Studio</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Import</MudText>
+
+@if (Projects.Project is { } project)
+{
+    <MudStack Spacing="2" Style="max-width: 720px">
+        <MudSelect T="IImporter" Value="_importer" ValueChanged="Select" ToStringFunc="@(i => i?.Title)" Label="Importer"
+                   Variant="Variant.Outlined" Margin="Margin.Dense">
+            @foreach (var importer in ImporterRegistry.All)
+            {
+                <MudSelectItem Value="importer">@importer.Title</MudSelectItem>
+            }
+        </MudSelect>
+        @if (_importer != null)
+        {
+            <MudText Typo="Typo.body2">
+                @_importer.Description Files with the import header are replaced; other files are not touched. Corrections
+                belong in override files. Settings come from <code>import.@_importer.Name</code> in the project file.
+            </MudText>
+            @foreach (var option in _importer.Options)
+            {
+                <MudTextField T="string" Value="@_values.GetValueOrDefault(option.Key)" ValueChanged="v => _values[option.Key] = v"
+                              Label="@option.Label" HelperText="@HelperText(option)" Variant="Variant.Outlined" Margin="Margin.Dense" />
+            }
+            <MudStack Row="true" Spacing="2">
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="() => Run(project, false)" Disabled="_running">Dry run</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Download" OnClick="() => Run(project, true)" Disabled="_running">Import</MudButton>
+            </MudStack>
+        }
+        else
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info" Dense="true">No importers are registered.</MudAlert>
+        }
+    </MudStack>
+
+    @if (_running)
+    {
+        <MudProgressLinear Indeterminate="true" Class="my-2" />
+    }
+    @if (_result != null)
+    {
+        <MudAlert Severity="@(_result.Diagnostics.HasErrors ? MudBlazor.Severity.Error : MudBlazor.Severity.Success)" Dense="true" Class="my-2">
+            @_result.Definitions.Count definitions: @_result.Written.Count written, @_result.Unchanged unchanged, @_result.Deleted.Count deleted.
+        </MudAlert>
+        <DiagnosticList Items="_result.Diagnostics" />
+        <pre class="code-block">@_result.Report</pre>
+    }
+}
+
+@code {
+    private IImporter? _importer;
+    private readonly Dictionary<string, string?> _values = new(StringComparer.Ordinal);
+    private bool _running;
+    private ImportResult? _result;
+
+    protected override void OnInitialized()
+    {
+        // Preselect the first importer the project has settings for.
+        var importers = ImporterRegistry.All;
+        Select(importers.FirstOrDefault(i => Projects.Project?.Settings.Import.ContainsKey(i.Name) == true) ?? importers.FirstOrDefault());
+    }
+
+    private static string HelperText(ImportOption option) => string.Join(" ", new[]
+    {
+        option.Help,
+        option.IsPath ? "Relative to the project folder." : null,
+        option.Multiple ? "Separate several with ;." : null,
+    }.Where(text => text != null));
+
+    private void Select(IImporter? importer)
+    {
+        _importer = importer;
+        _result = null;
+        _values.Clear();
+        if (importer == null || Projects.Project is not { } project) return;
+        var settings = ImporterRegistry.Settings(project, importer.Name);
+        foreach (var option in importer.Options)
+        {
+            _values[option.Key] = settings[option.Key] switch
+            {
+                JsonArray array => string.Join(";", array.Select(v => v?.ToString())),
+                { } value => value.ToString(),
+                null => null,
+            };
+        }
+    }
+
+    private async Task Run(FormatProject project, bool write)
+    {
+        if (_importer is not { } importer) return;
+        var settings = ImporterRegistry.Settings(project, importer.Name);
+        foreach (var option in importer.Options)
+        {
+            var text = _values.GetValueOrDefault(option.Key);
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                settings.Remove(option.Key);
+                continue;
+            }
+
+            settings[option.Key] = option.Multiple
+                ? new JsonArray(text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(v => (JsonNode)v!).ToArray())
+                : text.Trim();
+        }
+
+        _running = true;
+        StateHasChanged();
+        try
+        {
+            _result = await Task.Run(() => importer.Run(project, settings, write));
+            if (write) Projects.Reload();
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or InvalidDataException)
+        {
+            Snackbar.Add(e.Message, MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+}

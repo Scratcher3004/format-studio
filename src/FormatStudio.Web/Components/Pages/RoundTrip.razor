@@ -1,0 +1,68 @@
+@page "/roundtrip"
+@inject ProjectService Projects
+
+<PageTitle>Round trip - Format Studio</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Round trip</MudText>
+<MudText Typo="Typo.body2" Class="mb-3">
+    Generates random values for each type, encodes them, decodes the bytes and encodes again. Both encodings must match.
+    Finds definitions that can't be read back, e.g. a length that doesn't match its list.
+</MudText>
+
+<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-3">
+    <MudTextField T="string" @bind-Value="_filter" Label="Types containing" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 240px" />
+    <MudSwitch T="bool" @bind-Value="_structs" Label="Structs too" Color="Color.Primary" />
+    <MudNumericField T="int" @bind-Value="_iterations" Label="Values per type" Min="1" Max="1000" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 140px" />
+    <MudNumericField T="int" @bind-Value="_seed" Label="Seed" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 120px" />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="Run" Disabled="_running">Run</MudButton>
+</MudStack>
+
+@if (_running)
+{
+    <MudProgressLinear Indeterminate="true" Class="mb-2" />
+}
+@if (_results != null)
+{
+    <MudAlert Severity="@(_failed.Count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Error)" Dense="true" Class="mb-2">
+        @(_results.Count - _failed.Count) of @_results.Count round trips passed.
+    </MudAlert>
+    <MudSimpleTable Dense="true" Hover="true">
+        <thead><tr><th>Type</th><th>Problem</th><th>Value</th></tr></thead>
+        <tbody>
+            @foreach (var result in _failed.Take(200))
+            {
+                <tr>
+                    <td><MudLink Href="@($"type/{result.Type}")">@result.Type</MudLink></td>
+                    <td>@string.Join("; ", result.Diagnostics.Where(d => d.Severity == Severity.Error).Select(d => d.ToString()))</td>
+                    <td class="mono" style="max-width: 480px; overflow-wrap: anywhere">@JsonValues.ToText(result.Value, false)</td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+}
+
+@code {
+    private string? _filter;
+    private bool _structs;
+    private int _iterations = 10;
+    private int _seed = 1;
+    private bool _running;
+    private List<RoundTripResult>? _results;
+    private List<RoundTripResult> _failed = [];
+
+    private async Task Run()
+    {
+        if (Projects.Project is not { } project) return;
+        _running = true;
+        StateHasChanged();
+        var types = project.Types.Values
+            .Where(t => t is StructDef { IsPacket: true } || _structs && t is StructDef)
+            .Where(t => string.IsNullOrWhiteSpace(_filter) || t.Name.Contains(_filter, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(t => t.Name, StringComparer.Ordinal)
+            .ToList();
+        if (types.Count == 0) types = project.Types.Values.OfType<StructDef>().Cast<TypeDef>().ToList();
+        _results = await Task.Run(() => Simulator.Fuzz(project, types, _seed, _iterations).ToList());
+        _failed = _results.Where(r => !r.Success).ToList();
+        _running = false;
+    }
+}

@@ -1,0 +1,127 @@
+@using FormatStudio.Dsl
+@* A read-only table of a definition's fields, members or cases, with links to the types used. *@
+
+@switch (Definition)
+{
+    case StructDef structDef:
+        <MudSimpleTable Dense="true" Hover="true">
+            <thead><tr><th>Field</th><th>Type</th><th>Condition / value</th><th>Description</th></tr></thead>
+            <tbody>
+                @foreach (var field in structDef.Fields)
+                {
+                    <tr>
+                        <td class="mono">@field.Name @if (field.Title != null) { <div class="mud-text-secondary">@field.Title</div> }</td>
+                        <td class="mono">@TypeLinks(field.Type)</td>
+                        <td class="mono">@Details(field)</td>
+                        <td style="white-space: pre-wrap">@field.Doc</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        break;
+    case EnumDef enumDef:
+        <MudText Typo="Typo.body2" Class="mb-2">Wire type @enumDef.Type@(enumDef.Flags ? ", flags" : "")@(enumDef.AllowUnknown ? ", unknown values allowed" : "")</MudText>
+        <MudSimpleTable Dense="true" Hover="true">
+            <thead><tr><th>Member</th><th>Value</th><th>Description</th></tr></thead>
+            <tbody>
+                @foreach (var member in enumDef.Members)
+                {
+                    <tr><td class="mono">@member.Name</td><td class="mono">@member.Value</td><td style="white-space: pre-wrap">@member.Doc</td></tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        break;
+    case VariantDef variant:
+        <MudText Typo="Typo.body2" Class="mb-2">Tag: @if (variant.Tag != null) { @TypeLinks(variant.Tag) } else { <span>stored outside, given by the field using this variant</span> }</MudText>
+        <MudSimpleTable Dense="true" Hover="true">
+            <thead><tr><th>Case</th><th>Tag</th><th>Type</th><th>Description</th></tr></thead>
+            <tbody>
+                @foreach (var variantCase in variant.Cases)
+                {
+                    <tr>
+                        <td class="mono">@variantCase.Name</td>
+                        <td class="mono">@(variantCase.TagMember ?? variantCase.TagValue?.ToString())</td>
+                        <td class="mono">@if (variantCase.Type != null) { @TypeLinks(variantCase.Type) } else { <span>-</span> }</td>
+                        <td style="white-space: pre-wrap">@variantCase.Doc</td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        break;
+    case AliasDef alias:
+        <MudText Typo="Typo.body1" Class="mono">= @TypeLinks(alias.Target)</MudText>
+        break;
+    case BitfieldDef bitfield:
+        <MudText Typo="Typo.body2" Class="mb-2">Packed into @bitfield.Base, @(bitfield.LsbFirst ? "first member in the lowest bits" : "first member in the highest bits")</MudText>
+        <MudSimpleTable Dense="true">
+            <thead><tr><th>Member</th><th>Bits</th><th>Shift</th><th>Type</th></tr></thead>
+            <tbody>
+                @foreach (var (member, shift) in Bitfields.Layout(bitfield))
+                {
+                    <tr><td class="mono">@member.Name</td><td>@member.Bits</td><td>@shift</td><td class="mono">@(member.Type ?? (member.Signed ? "signed" : "unsigned"))</td></tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public TypeDef Definition { get; set; } = null!;
+
+    private static string Details(FieldDef field)
+    {
+        var parts = new List<string>();
+        if (field.If != null) parts.Add($"if {field.If}");
+        if (field.Const != null) parts.Add($"= {field.Const.ToJsonString()}");
+        if (field.Computed != null) parts.Add($"= {field.Computed}");
+        if (field.Min != null || field.Max != null) parts.Add($"[{field.Min}, {field.Max}]");
+        if (field.MaxLength != null) parts.Add($"maxLength {field.MaxLength}");
+        if (field.MaxItems != null) parts.Add($"maxItems {field.MaxItems}");
+        if (field.Default != null) parts.Add($"default {field.Default.ToJsonString()}");
+        return string.Join(", ", parts);
+    }
+
+    /// <summary>The type expression with each named type as a link.</summary>
+    private static RenderFragment TypeLinks(TypeRef type) => __builder =>
+    {
+        var text = TypeExpressions.TryFormat(type) ?? type.ToString();
+        var names = Names(type).Distinct().ToList();
+        var position = 0;
+        while (position < text.Length)
+        {
+            var next = names.Select(n => (Name: n, Index: IndexOfWord(text, n, position))).Where(m => m.Index >= 0).OrderBy(m => m.Index).FirstOrDefault();
+            if (next.Name == null)
+            {
+                @text[position..]
+                break;
+            }
+
+            @text[position..next.Index]
+            <MudLink Href="@($"type/{next.Name}")">@next.Name</MudLink>
+            position = next.Index + next.Name.Length;
+        }
+    };
+
+    private static int IndexOfWord(string text, string word, int start)
+    {
+        for (var index = text.IndexOf(word, start, StringComparison.Ordinal); index >= 0; index = text.IndexOf(word, index + 1, StringComparison.Ordinal))
+        {
+            var before = index == 0 || !char.IsLetterOrDigit(text[index - 1]) && text[index - 1] != '_';
+            var end = index + word.Length;
+            var after = end == text.Length || !char.IsLetterOrDigit(text[end]) && text[end] != '_';
+            if (before && after) return index;
+        }
+
+        return -1;
+    }
+
+    private static IEnumerable<string> Names(TypeRef type) => type switch
+    {
+        NamedRef named => [named.Name],
+        ArrayRef array => Names(array.Element),
+        MapRef map => Names(map.Key).Concat(Names(map.Value)),
+        OptionalRef optional => Names(optional.Inner),
+        SizedRef sized => Names(sized.Inner),
+        _ => [],
+    };
+}

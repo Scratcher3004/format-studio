@@ -1,0 +1,17 @@
+packet: Particle
+id: 0x27
+groups: [play, clientbound]
+fields:
+  - particleId: varint32
+  - longDistance: bool
+  - x: f64
+  - y: f64
+  - z: f64
+  - offsetX: f32
+  - offsetY: f32
+  - offsetZ: f32
+  - maxSpeed: f32
+  - particleCount: i32
+  - name: data
+    type: ParticleData
+    tag: particleId

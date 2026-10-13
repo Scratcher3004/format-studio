@@ -1,0 +1,61 @@
+@page "/new"
+@inject ProjectService Projects
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>New definition - Format Studio</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">New definition</MudText>
+<MudStack Row="true" Spacing="2" Class="mb-2">
+    @foreach (var (kind, template) in Templates)
+    {
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="() => _text = template">@kind</MudButton>
+    }
+</MudStack>
+<textarea class="code-editor" rows="20" spellcheck="false" @bind="_text" @bind:event="oninput"></textarea>
+<MudTextField T="string" @bind-Value="_file" Label="File, relative to the project (empty: a folder per kind)" Variant="Variant.Outlined" Margin="Margin.Dense" Class="my-2" />
+<MudStack Row="true" Spacing="2">
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Rule" OnClick="() => Check()">Validate</MudButton>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Create">Create</MudButton>
+</MudStack>
+<DiagnosticList Items="_diagnostics" />
+
+@code {
+    private static readonly (string Kind, string Template)[] Templates =
+    [
+        ("packet", "packet: MyPacket\nid: 0\ngroups: [serverbound]\nfields:\n  - entityId: varint32\n  - name: name\n    type: string\n    maxLength: 16\n"),
+        ("struct", "struct: MyStruct\nfields:\n  - x: f32\n  - y: f32\n"),
+        ("enum", "enum: MyEnum\ntype: u8\nvalues:\n  first: 0\n  second: 1\n"),
+        ("variant", "variant: MyVariant\ntag: varuint32\ncases:\n  - name: empty\n    tag: 0\n  - name: number\n    tag: 1\n    type: i32\n"),
+        ("alias", "alias: MyName\ntype: {string: utf8, length: u16}\n"),
+        ("bitfield", "bitfield: MyFlags\ntype: u8\nfields:\n  - name: enabled\n    bits: 1\n    type: bool\n  - mode: 3\n"),
+    ];
+
+    private string _text = Templates[0].Template;
+    private string? _file;
+    private DiagnosticBag _diagnostics = [];
+
+    private TypeDef? Check()
+    {
+        var (definition, diagnostics) = Projects.Check(_text, _file ?? "new.yaml");
+        _diagnostics = diagnostics;
+        if (definition != null && Projects.Project?.Find(definition.Name) != null)
+            _diagnostics.Error($"'{definition.Name}' already exists; edit it on its page.");
+        return definition;
+    }
+
+    private void Create()
+    {
+        var definition = Check();
+        if (definition == null || _diagnostics.HasErrors || Projects.Project == null) return;
+        var file = string.IsNullOrWhiteSpace(_file) ? Projects.Project.FileFor(definition) : Path.Combine(Projects.Project.Directory, _file);
+        Projects.Save(definition, _text, file);
+        if (Projects.Project?.Find(definition.Name) == null)
+        {
+            Snackbar.Add($"Saved {file}, but it is not part of the project's sources.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        Navigation.NavigateTo($"type/{definition.Name}");
+    }
+}

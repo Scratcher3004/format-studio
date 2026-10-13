@@ -1,0 +1,8 @@
+packet: SetSlot
+id: 0x15
+groups: [play, clientbound]
+fields:
+  - windowId: i8
+  - stateId: varint32
+  - slot: i16
+  - item: Slot

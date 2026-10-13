@@ -1,0 +1,9 @@
+struct: DustData
+fields:
+  - red: f32
+  - green: f32
+  - blue: f32
+  - name: scale
+    type: f32
+    min: 0.01
+    max: 4

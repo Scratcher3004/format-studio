@@ -1,0 +1,48 @@
+@* Bytes in rows of 16 with the selected span highlighted. Clicking a byte selects the innermost value containing it. *@
+<div class="hex-view">
+    @for (var row = 0; row < Bytes.Length; row += 16)
+    {
+        var start = row;
+        <div class="hex-row">
+            <span class="hex-offset">@start.ToString("x6")</span>
+            @for (var i = start; i < Math.Min(start + 16, Bytes.Length); i++)
+            {
+                var offset = i;
+                <span class="@ByteClass(offset)" title="@Title(offset)" @onclick="() => Select(offset)">@Bytes[offset].ToString("x2")</span>
+            }
+            <span class="hex-ascii">@Ascii(start)</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public byte[] Bytes { get; set; } = [];
+    [Parameter] public SpanNode? Root { get; set; }
+    [Parameter] public SpanNode? Selected { get; set; }
+    [Parameter] public EventCallback<SpanNode?> SelectedChanged { get; set; }
+
+    private string ByteClass(int offset)
+    {
+        var classes = "hex-byte";
+        if (Selected != null && offset >= Selected.Offset && offset < Selected.Offset + Selected.Length) classes += " hex-selected";
+        if (Root != null && offset >= Root.Offset + Root.Length) classes += " hex-unread";
+        if (Root?.At(offset) is { Error: not null }) classes += " hex-error";
+        return classes;
+    }
+
+    private string? Title(int offset) => Root?.At(offset) is { } node ? $"{node.Path}: {node.Type} {node.Display}" : null;
+
+    private Task Select(int offset) => SelectedChanged.InvokeAsync(Root?.At(offset));
+
+    private string Ascii(int start)
+    {
+        var chars = new char[Math.Min(16, Bytes.Length - start)];
+        for (var i = 0; i < chars.Length; i++)
+        {
+            var b = Bytes[start + i];
+            chars[i] = b is >= 0x20 and < 0x7F ? (char)b : '.';
+        }
+
+        return new string(chars);
+    }
+}

@@ -1,0 +1,104 @@
+@page "/"
+@inject ProjectService Projects
+
+<PageTitle>Format Studio</PageTitle>
+
+@if (Projects.Project is { } project)
+{
+    <MudText Typo="Typo.h5">@project.Settings.Name</MudText>
+    @if (project.Settings.Description != null)
+    {
+        <MudText Typo="Typo.body1" Class="mb-2">@project.Settings.Description</MudText>
+    }
+    <MudText Typo="Typo.body2" Class="mud-text-secondary mb-4 mono">@project.FilePath</MudText>
+
+    <MudGrid Spacing="2" Class="mb-4">
+        @foreach (var (label, count) in Counts(project))
+        {
+            <MudItem xs="6" sm="4" md="2">
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudText Typo="Typo.h5">@count</MudText>
+                    <MudText Typo="Typo.body2">@label</MudText>
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+
+    <MudExpansionPanels MultiExpansion="true">
+        <MudExpansionPanel Text="Settings" Expanded="false">
+            <pre class="code-block">@project.Settings.ToYaml()</pre>
+        </MudExpansionPanel>
+        <MudExpansionPanel Text="@($"Diagnostics ({project.Diagnostics.Count(d => d.Severity != Severity.Info)})")" Expanded="true">
+            @if (project.Diagnostics.All(d => d.Severity == Severity.Info))
+            {
+                <MudAlert Severity="MudBlazor.Severity.Success" Dense="true">No errors or warnings.</MudAlert>
+            }
+            <DiagnosticList Items="project.Diagnostics.Where(d => _showInfo || d.Severity != Severity.Info)" />
+            <MudSwitch T="bool" @bind-Value="_showInfo" Label="Show overrides and other infos" Color="Color.Primary" />
+        </MudExpansionPanel>
+        <MudExpansionPanel Text="@($"Samples ({project.Samples.Count})")" Expanded="@(project.Samples.Count > 0)">
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => RunSamples(project)" Class="mb-2">Run samples</MudButton>
+            <MudSimpleTable Dense="true">
+                <thead><tr><th>Sample</th><th>Type</th><th>Expected hex</th><th>Result</th></tr></thead>
+                <tbody>
+                    @foreach (var sample in project.Samples)
+                    {
+                        <tr>
+                            <td>@sample.Name</td>
+                            <td><MudLink Href="@($"type/{sample.Type}")">@sample.Type</MudLink></td>
+                            <td class="mono">@sample.Hex</td>
+                            <td>@(_sampleResults.TryGetValue(sample, out var result) ? result : "")</td>
+                        </tr>
+                    }
+                </tbody>
+            </MudSimpleTable>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+}
+
+@code {
+    private bool _showInfo;
+    private readonly Dictionary<SampleDef, string> _sampleResults = [];
+
+    private static IEnumerable<(string, int)> Counts(FormatProject project) =>
+    [
+        ("packets", project.Packets.Count()),
+        ("structs", project.Types.Values.Count(t => t is StructDef { IsPacket: false })),
+        ("variants", project.Types.Values.Count(t => t is VariantDef)),
+        ("enums", project.Types.Values.Count(t => t is EnumDef)),
+        ("aliases", project.Types.Values.Count(t => t is AliasDef)),
+        ("bitfields", project.Types.Values.Count(t => t is BitfieldDef)),
+    ];
+
+    private void RunSamples(FormatProject project)
+    {
+        var codec = new Codec(project);
+        _sampleResults.Clear();
+        foreach (var sample in project.Samples)
+        {
+            var type = Codec.ParseType(sample.Type);
+            if (sample.Value != null)
+            {
+                var encoded = codec.Encode(type, sample.Value);
+                if (!encoded.Success)
+                {
+                    _sampleResults[sample] = "encode failed: " + encoded.Diagnostics.First(d => d.Severity == Severity.Error).Message;
+                    continue;
+                }
+
+                if (sample.Hex != null && !Hex.Parse(sample.Hex).AsSpan().SequenceEqual(encoded.Bytes))
+                {
+                    _sampleResults[sample] = $"differs: {Hex.Format(encoded.Bytes)}";
+                    continue;
+                }
+
+                var roundTrip = Simulator.RoundTripBytes(codec, type, encoded.Bytes);
+                _sampleResults[sample] = roundTrip.Success ? "ok" : "round trip failed";
+            }
+            else if (sample.Hex != null)
+            {
+                _sampleResults[sample] = Simulator.RoundTripBytes(codec, type, Hex.Parse(sample.Hex)).Success ? "ok" : "round trip failed";
+            }
+        }
+    }
+}

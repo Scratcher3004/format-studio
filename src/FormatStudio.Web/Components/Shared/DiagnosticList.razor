@@ -1,0 +1,33 @@
+@if (Items.Any())
+{
+    <MudSimpleTable Dense="true" Hover="true" Class="mb-2">
+        <tbody>
+            @foreach (var diagnostic in Items.Take(Max))
+            {
+                <tr>
+                    <td style="width: 1%">
+                        <MudChip T="string" Size="Size.Small" Color="@Color(diagnostic.Severity)">@diagnostic.Severity</MudChip>
+                    </td>
+                    <td class="mono">@diagnostic.Source</td>
+                    <td>@diagnostic.Message @if (diagnostic.Path != null) { <span class="mud-text-secondary"> [@diagnostic.Path]</span> }</td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+    @if (Items.Count() > Max)
+    {
+        <MudText Typo="Typo.caption">@(Items.Count() - Max) more not shown.</MudText>
+    }
+}
+
+@code {
+    [Parameter] public IEnumerable<Diagnostic> Items { get; set; } = [];
+    [Parameter] public int Max { get; set; } = 200;
+
+    private static MudBlazor.Color Color(Severity severity) => severity switch
+    {
+        Severity.Error => MudBlazor.Color.Error,
+        Severity.Warning => MudBlazor.Color.Warning,
+        _ => MudBlazor.Color.Info,
+    };
+}

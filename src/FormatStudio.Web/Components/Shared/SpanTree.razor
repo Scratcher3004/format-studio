@@ -1,0 +1,36 @@
+@* The decoded values with their byte ranges. *@
+<div class="span-tree">
+    @Row(Root, 0)
+</div>
+
+@code {
+    [Parameter, EditorRequired] public SpanNode Root { get; set; } = null!;
+    [Parameter] public SpanNode? Selected { get; set; }
+    [Parameter] public EventCallback<SpanNode?> SelectedChanged { get; set; }
+
+    private const int MaxRows = 3000;
+    private int _rows;
+
+    protected override void OnParametersSet() => _rows = 0;
+
+    private RenderFragment Row(SpanNode node, int depth) => __builder =>
+    {
+        if (_rows++ > MaxRows) return;
+        var selected = ReferenceEquals(node, Selected);
+        <div class="@($"span-row{(selected ? " span-selected" : "")}{(node.Error != null ? " span-error" : "")}")"
+             style="@($"padding-left: {depth * 14 + 4}px")" @onclick="() => SelectedChanged.InvokeAsync(node)">
+            <span class="span-name">@node.Name</span>
+            <span class="span-type">@node.Type</span>
+            <span class="span-range">@node.Offset.ToString("x")+@node.Length</span>
+            <span class="span-value">@node.Display</span>
+            @if (node.Error != null)
+            {
+                <span class="span-message">@node.Error</span>
+            }
+        </div>
+        foreach (var child in node.Children)
+        {
+            @Row(child, depth + 1)
+        }
+    };
+}

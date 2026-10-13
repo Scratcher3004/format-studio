@@ -1,0 +1,16 @@
+variant: ParticleData
+doc: Extra data of a particle. The tag is the particle id, stored before this value (see Particle.particleId).
+cases:
+  - name: ambientEntityEffect
+    tag: 0
+  - name: angryVillager
+    tag: 1
+  - name: block
+    tag: 2
+    type: varint32
+  - name: dust
+    tag: 14
+    type: DustData
+  - name: item
+    tag: 39
+    type: Slot

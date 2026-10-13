@@ -1,0 +1,15 @@
+struct: Slot
+doc: An item stack. The presence flag is calculated from itemId when encoding.
+fields:
+  - name: present
+    type: bool
+    computed: itemId != null
+  - name: itemId
+    type: varint32
+    if: present
+  - name: count
+    type: i8
+    if: present
+  - name: tag
+    type: nbt
+    if: present

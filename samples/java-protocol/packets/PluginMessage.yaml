@@ -1,0 +1,7 @@
+packet: PluginMessage
+id: 0x18
+groups: [play, clientbound]
+doc: Mod channel data. The data runs to the end of the packet.
+fields:
+  - channel: string
+  - data: bytes[eof]

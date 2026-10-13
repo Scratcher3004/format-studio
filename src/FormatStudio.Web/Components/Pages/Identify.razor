@@ -1,0 +1,90 @@
+@page "/identify"
+@inject ProjectService Projects
+
+<PageTitle>Identify - Format Studio</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Identify</MudText>
+<MudText Typo="Typo.body2" Class="mb-3">
+    Paste bytes of unknown type. Without a header they are decoded as every packet (or struct) and ranked; with a header
+    the packet id is read first.
+</MudText>
+
+<textarea class="code-editor" rows="8" spellcheck="false" placeholder="hex bytes" @bind="_hex" @bind:event="oninput"></textarea>
+<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="my-2">
+    <MudTextField T="string" @bind-Value="_header" Label="Id header (optional)" Placeholder="varuint32" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 200px" />
+    <MudTextField T="string" @bind-Value="_mask" Label="Id mask" Placeholder="0x3ff" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 140px" />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ManageSearch" OnClick="Run">Identify</MudButton>
+</MudStack>
+
+@if (_error != null)
+{
+    <MudAlert Severity="MudBlazor.Severity.Error" Dense="true">@_error</MudAlert>
+}
+@if (_packet != null)
+{
+    <MudAlert Severity="@(_packet.Value.Result?.Success == true ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning)" Dense="true" Class="mb-2">
+        Id @_packet.Value.Id (@_packet.Value.HeaderLength header bytes): @(_packet.Value.Name ?? "no packet with this id")
+    </MudAlert>
+    @if (_packet.Value.Result is { } result)
+    {
+        <DiagnosticList Items="result.Diagnostics" />
+        <pre class="code-block">@JsonValues.ToText(result.Value)</pre>
+    }
+}
+@if (_matches.Count > 0)
+{
+    <MudSimpleTable Dense="true" Hover="true">
+        <thead><tr><th>Score</th><th>Type</th><th>Result</th><th>Decoded</th><th>First problem</th></tr></thead>
+        <tbody>
+            @foreach (var match in _matches.Take(25))
+            {
+                <tr>
+                    <td>@match.Score</td>
+                    <td><MudLink Href="@($"simulate?type={match.Type.Name}")">@match.Type.Name</MudLink></td>
+                    <td>@(match.Result.Success ? match.Result.Consumed == _length ? "complete" : "partial" : "error")</td>
+                    <td>@match.Result.Consumed / @_length</td>
+                    <td>@match.Result.Diagnostics.FirstOrDefault()?.Message</td>
+                </tr>
+            }
+        </tbody>
+    </MudSimpleTable>
+}
+
+@code {
+    private string _hex = "";
+    private string? _header;
+    private string? _mask;
+    private string? _error;
+    private int _length;
+    private List<IdentifyMatch> _matches = [];
+    private (ulong Id, int HeaderLength, string? Name, DecodeResult? Result)? _packet;
+
+    private void Run()
+    {
+        _error = null;
+        _matches = [];
+        _packet = null;
+        if (Projects.Project == null) return;
+        try
+        {
+            var bytes = Hex.Parse(_hex);
+            _length = bytes.Length;
+            var codec = new Codec(Projects.Project);
+            if (string.IsNullOrWhiteSpace(_header))
+            {
+                _matches = Simulator.Identify(codec, bytes);
+                return;
+            }
+
+            if (!Primitives.TryParse(_header.Trim(), out var headerType)) throw new System.FormatException($"'{_header}' is not a primitive type");
+            var mask = string.IsNullOrWhiteSpace(_mask) ? ulong.MaxValue
+                : Convert.ToUInt64(_mask.Trim(), _mask.Trim().StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? 16 : 10);
+            var (packet, id, headerLength, result) = Simulator.DecodePacket(codec, bytes, new PacketHeader(headerType, mask));
+            _packet = (id, headerLength, packet?.Name, result);
+        }
+        catch (Exception e) when (e is System.FormatException or DecodeException or OverflowException or ArgumentException)
+        {
+            _error = e.Message;
+        }
+    }
+}

@@ -1,0 +1,6 @@
+packet: BlockUpdate
+id: 0x09
+groups: [play, clientbound]
+fields:
+  - location: Position
+  - blockState: varint32

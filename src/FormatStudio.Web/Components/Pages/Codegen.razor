@@ -1,0 +1,96 @@
+@page "/codegen"
+@using FormatStudio.Codegen
+@inject ProjectService Projects
+@inject ISnackbar Snackbar
+
+<PageTitle>Code generation - Format Studio</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-2">Code generation</MudText>
+<MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mb-3">
+    Files are only written to the target's output folder inside the project, and only files with the generated-file
+    marker are replaced or deleted. Copy the reviewed output into the consuming project by hand.
+</MudAlert>
+
+@if (Projects.Project is { } project)
+{
+    @if (project.Settings.Codegen.Count == 0)
+    {
+        <MudAlert Severity="MudBlazor.Severity.Warning">The project has no codegen targets.</MudAlert>
+    }
+    @foreach (var target in project.Settings.Codegen)
+    {
+        <MudPaper Outlined="true" Class="pa-3 mb-3">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudText Typo="Typo.h6">@target.Name</MudText>
+                <MudChip T="string" Size="Size.Small">@target.Generator</MudChip>
+                <MudText Typo="Typo.body2" Class="mono">→ @target.Output</MudText>
+                <MudSpacer />
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="() => Preview(project, target)">Preview</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="() => Write(project, target)"
+                           Disabled="project.Diagnostics.HasErrors">Write</MudButton>
+            </MudStack>
+            @if (target.Options.Count > 0)
+            {
+                <pre class="code-block small">@target.Options.ToJsonString()</pre>
+            }
+        </MudPaper>
+    }
+
+    @if (_summary != null)
+    {
+        <MudAlert Severity="@(_summary.Refused.Count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning)" Dense="true" Class="mb-2">
+            @_summary.Written.Count written, @_summary.Unchanged unchanged, @_summary.Deleted.Count deleted@(_summary.Refused.Count > 0 ? $", {_summary.Refused.Count} refused (no generated-file marker)" : "")
+            in @_summary.OutputDirectory
+        </MudAlert>
+    }
+
+    @if (_output != null)
+    {
+        <DiagnosticList Items="_output.Diagnostics" />
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="3">
+                <MudTextField T="string" @bind-Value="_fileFilter" Immediate="true" Placeholder="Filter files" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                <div class="file-list">
+                    @foreach (var file in _output.Files.Where(f => string.IsNullOrEmpty(_fileFilter) || f.Path.Contains(_fileFilter, StringComparison.OrdinalIgnoreCase)).Take(500))
+                    {
+                        <div class="@(file == _file ? "file-item file-selected" : "file-item")" @onclick="() => _file = file">@file.Path</div>
+                    }
+                </div>
+                <MudText Typo="Typo.caption">@_output.Files.Count files</MudText>
+            </MudItem>
+            <MudItem xs="12" md="9">
+                @if (_file != null)
+                {
+                    <pre class="code-block">@_file.Content</pre>
+                }
+            </MudItem>
+        </MudGrid>
+    }
+}
+
+@code {
+    private GeneratedOutput? _output;
+    private GeneratedFile? _file;
+    private WriteSummary? _summary;
+    private string? _fileFilter;
+
+    private void Preview(FormatProject project, CodegenTarget target)
+    {
+        _output = CodeGeneration.Generate(project, target);
+        _file = _output.Files.FirstOrDefault();
+        _summary = null;
+    }
+
+    private void Write(FormatProject project, CodegenTarget target)
+    {
+        try
+        {
+            _output = CodeGeneration.Generate(project, target);
+            _summary = CodeGeneration.Write(project, target, _output);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException)
+        {
+            Snackbar.Add(e.Message, MudBlazor.Severity.Error);
+        }
+    }
+}

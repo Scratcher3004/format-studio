@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <RootNamespace>FormatStudio.Importers.Mojang</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\FormatStudio.Core\FormatStudio.Core.csproj" />
+    </ItemGroup>
+
+</Project>

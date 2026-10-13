@@ -1,0 +1,10 @@
+packet: Handshake
+id: 0
+groups: [handshaking, serverbound]
+fields:
+  - protocolVersion: varint32
+  - name: serverAddress
+    type: string
+    maxLength: 255
+  - serverPort: u16
+  - nextState: NextState

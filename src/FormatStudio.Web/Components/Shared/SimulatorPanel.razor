@@ -1,0 +1,203 @@
+@using System.Text.Json
+@inject ProjectService Projects
+
+<MudGrid Spacing="2">
+    <MudItem xs="12" md="6">
+        <MudText Typo="Typo.subtitle2">Value (JSON)</MudText>
+        <textarea class="code-editor" rows="14" spellcheck="false" @bind="_json" @bind:event="oninput"></textarea>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudNumericField T="int" @bind-Value="_seed" Label="Seed" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 120px" />
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Casino" OnClick="Random">Random value</MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward" OnClick="Encode">Encode</MudButton>
+        </MudStack>
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudText Typo="Typo.subtitle2">Bytes (hex)</MudText>
+        <textarea class="code-editor" rows="14" spellcheck="false" @bind="_hex" @bind:event="oninput"></textarea>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="Decode">Decode</MudButton>
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Loop" OnClick="RoundTrip">Round trip</MudButton>
+            @if (_bytes != null)
+            {
+                <MudText Typo="Typo.body2">@_bytes.Length bytes@(_consumed != null && _consumed != _bytes.Length ? $", {_consumed} decoded" : "")</MudText>
+            }
+        </MudStack>
+    </MudItem>
+</MudGrid>
+
+@if (_message != null)
+{
+    <MudAlert Severity="@_messageSeverity" Class="my-2" Dense="true">@_message</MudAlert>
+}
+<DiagnosticList Items="_diagnostics" />
+
+@if (_bytes != null && _root != null)
+{
+    <MudGrid Spacing="2" Class="mt-2">
+        <MudItem xs="12" lg="5">
+            <MudText Typo="Typo.subtitle2">Annotated bytes</MudText>
+            <HexView Bytes="_bytes" Root="_root" @bind-Selected="_selected" />
+            @if (_selected != null)
+            {
+                <MudText Typo="Typo.body2" Class="mt-2 mono">@_selected.Path: @_selected.Type, offset @_selected.Offset, @_selected.Length bytes @_selected.Display</MudText>
+            }
+        </MudItem>
+        <MudItem xs="12" lg="7">
+            <MudText Typo="Typo.subtitle2">Structure</MudText>
+            <SpanTree Root="_root" @bind-Selected="_selected" />
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Type { get; set; } = "";
+
+    private string _json = "";
+    private string _hex = "";
+    private int _seed = 1;
+    private byte[]? _bytes;
+    private int? _consumed;
+    private SpanNode? _root;
+    private SpanNode? _selected;
+    private DiagnosticBag _diagnostics = [];
+    private string? _message;
+    private MudBlazor.Severity _messageSeverity;
+    private string? _lastType;
+
+    protected override void OnParametersSet()
+    {
+        if (_lastType == Type) return;
+        _lastType = Type;
+        _json = _hex = "";
+        _bytes = null;
+        _root = _selected = null;
+        _diagnostics = [];
+        _message = null;
+    }
+
+    private Codec? Codec => Projects.Project is { } project ? new Codec(project) : null;
+
+    private bool TryType(out TypeRef type)
+    {
+        type = null!;
+        try
+        {
+            type = Codec.ParseType(Type);
+            return true;
+        }
+        catch (System.FormatException e)
+        {
+            Show(e.Message, MudBlazor.Severity.Error);
+            return false;
+        }
+    }
+
+    private void Show(string? message, MudBlazor.Severity severity = MudBlazor.Severity.Info)
+    {
+        _message = message;
+        _messageSeverity = severity;
+    }
+
+    private void Random()
+    {
+        if (Projects.Project == null || !TryType(out var type)) return;
+        try
+        {
+            _json = JsonValues.ToText(new RandomValues(Projects.Project, _seed++).Generate(type));
+            Show(null);
+            Encode();
+        }
+        catch (Exception e) when (e is Expressions.ExprException or FormatDefinitionException)
+        {
+            Show(e.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    private void Encode()
+    {
+        if (Codec is not { } codec || !TryType(out var type)) return;
+        JsonNode? value;
+        try
+        {
+            value = JsonNode.Parse(_json);
+        }
+        catch (JsonException e)
+        {
+            Show($"Invalid JSON: {e.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        var result = codec.Encode(type, value);
+        _diagnostics = result.Diagnostics;
+        if (!result.Success)
+        {
+            Show("Encoding failed.", MudBlazor.Severity.Error);
+            return;
+        }
+
+        _hex = FormatHex(result.Bytes);
+        Show($"Encoded {result.Bytes.Length} bytes.", MudBlazor.Severity.Success);
+        Annotate(codec, type, result.Bytes, updateJson: false);
+    }
+
+    private void Decode()
+    {
+        if (Codec is not { } codec || !TryType(out var type)) return;
+        byte[] bytes;
+        try
+        {
+            bytes = Hex.Parse(_hex);
+        }
+        catch (System.FormatException e)
+        {
+            Show($"Invalid hex: {e.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        _diagnostics = [];
+        var result = Annotate(codec, type, bytes, updateJson: true);
+        Show(result.Success ? $"Decoded {result.Consumed} of {bytes.Length} bytes." : "Decoding failed; the structure shows how far it got.",
+            result.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+
+    private DecodeResult Annotate(Codec codec, TypeRef type, byte[] bytes, bool updateJson)
+    {
+        var result = codec.Decode(type, bytes);
+        _bytes = bytes;
+        _consumed = result.Consumed;
+        _root = result.Root;
+        _selected = null;
+        _diagnostics.AddRange(result.Diagnostics);
+        if (updateJson && result.Value != null) _json = JsonValues.ToText(result.Value);
+        return result;
+    }
+
+    private void RoundTrip()
+    {
+        if (Codec is not { } codec || !TryType(out var type)) return;
+        RoundTripResult result;
+        try
+        {
+            result = _hex.Trim().Length > 0
+                ? Simulator.RoundTripBytes(codec, type, Hex.Parse(_hex))
+                : Simulator.RoundTripValue(codec, type, JsonNode.Parse(_json));
+        }
+        catch (Exception e) when (e is System.FormatException or JsonException)
+        {
+            Show(e.Message, MudBlazor.Severity.Error);
+            return;
+        }
+
+        _diagnostics = result.Diagnostics;
+        Show(result.Success ? "Round trip OK: decoding and encoding again gives the same bytes." : "Round trip failed.",
+            result.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+    }
+
+    private static string FormatHex(byte[] bytes)
+    {
+        var lines = new List<string>();
+        for (var i = 0; i < bytes.Length; i += 16)
+            lines.Add(string.Join(' ', bytes.Skip(i).Take(16).Select(b => b.ToString("x2"))));
+        return string.Join('\n', lines);
+    }
+}
