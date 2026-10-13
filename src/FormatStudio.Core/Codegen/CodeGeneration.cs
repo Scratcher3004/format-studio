@@ -50,7 +50,7 @@ public static class CodeGeneration
     public static WriteSummary Write(FormatProject project, CodegenTarget target, GeneratedOutput output, bool clean = true)
     {
         var generator = Find(target.Generator);
-        var directory = Path.GetFullPath(target.Output, project.Directory);
+        var directory = project.Sandbox.Check(Path.GetFullPath(target.Output, project.Directory));
         var projectDirectory = Path.GetFullPath(project.Directory) + Path.DirectorySeparatorChar;
         if (!(directory + Path.DirectorySeparatorChar).StartsWith(projectDirectory, StringComparison.Ordinal))
             throw new FormatDefinitionException($"The output folder {directory} is outside the project folder {project.Directory}");
@@ -59,7 +59,7 @@ public static class CodeGeneration
         var written = new HashSet<string>(StringComparer.Ordinal);
         foreach (var file in output.Files)
         {
-            var path = Path.GetFullPath(Path.Combine(directory, file.Path));
+            var path = project.Sandbox.Check(Path.Combine(directory, file.Path));
             written.Add(path);
             if (File.Exists(path))
             {
@@ -84,7 +84,7 @@ public static class CodeGeneration
 
         if (clean && Directory.Exists(directory))
         {
-            foreach (var path in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+            foreach (var path in project.Sandbox.EnumerateFiles(directory, recursive: true).ToList())
             {
                 if (written.Contains(Path.GetFullPath(path))) continue;
                 using (var reader = new StreamReader(path))

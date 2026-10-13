@@ -13,7 +13,20 @@
     }
 </MudStack>
 <textarea class="code-editor" rows="20" spellcheck="false" @bind="_text" @bind:event="oninput"></textarea>
-<MudTextField T="string" @bind-Value="_file" Label="File, relative to the project (empty: a folder per kind)" Variant="Variant.Outlined" Margin="Margin.Dense" Class="my-2" />
+<MudStack Row="true" Spacing="2" Class="my-2">
+    <MudTextField T="string" @bind-Value="_folder" Label="Folder, relative to the project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                  HelperText="Empty: a folder per kind" />
+    <MudTextField T="string" @bind-Value="_file" Label="File name" Variant="Variant.Outlined" Margin="Margin.Dense"
+                  HelperText="Empty: the definition's name; .yaml is added" />
+</MudStack>
+@if (Projects.Project != null)
+{
+    <MudExpansionPanels Elevation="0" Class="mb-2">
+        <MudExpansionPanel Text="Browse">
+            <FolderBrowser Root="@Projects.Project.Directory" FilePattern="*.yaml" Picked="Pick" />
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+}
 <MudStack Row="true" Spacing="2">
     <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Rule" OnClick="() => Check()">Validate</MudButton>
     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Create">Create</MudButton>
@@ -32,23 +45,79 @@
     ];
 
     private string _text = Templates[0].Template;
+    private string? _folder;
     private string? _file;
     private DiagnosticBag _diagnostics = [];
 
     private TypeDef? Check()
     {
-        var (definition, diagnostics) = Projects.Check(_text, _file ?? "new.yaml");
+        var (definition, diagnostics) = Projects.Check(_text, string.IsNullOrWhiteSpace(_file) ? "new.yaml" : _file.Trim());
         _diagnostics = diagnostics;
         if (definition != null && Projects.Project?.Find(definition.Name) != null)
             _diagnostics.Error($"'{definition.Name}' already exists; edit it on its page.");
         return definition;
     }
 
+    /// <summary>Picking a folder fills in the folder; picking a file fills in both.</summary>
+    private void Pick(string path)
+    {
+        var directory = Projects.Project!.Directory;
+        if (File.Exists(path))
+        {
+            _file = Path.GetFileName(path);
+            path = Path.GetDirectoryName(path)!;
+        }
+
+        var relative = Path.GetRelativePath(directory, path);
+        _folder = relative == "." ? "" : relative;
+    }
+
+    /// <summary>The full path to write the new definition to, or null after reporting why the folder or name can't be used.</summary>
+    private string? Target(TypeDef definition)
+    {
+        var project = Projects.Project!;
+        var folder = _folder?.Trim().Trim('"') ?? "";
+        var name = _file?.Trim().Trim('"') ?? "";
+        if (folder.Length == 0 && name.Length == 0) return project.FileFor(definition);
+
+        if (name.Length == 0) name = definition.Name;
+        if (name.Contains(".."))
+        {
+            _diagnostics.Error($"The file name '{name}' must not contain '..'.");
+            return null;
+        }
+
+        if (name.EndsWith(".fstudio", StringComparison.OrdinalIgnoreCase) || name.EndsWith(ProjectSettings.Extension, StringComparison.OrdinalIgnoreCase))
+        {
+            _diagnostics.Error($"The file name '{name}' is reserved for project files.");
+            return null;
+        }
+
+        if (!name.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)) name += ".yaml";
+
+        var directory = Path.GetFullPath(project.Directory);
+        var file = Path.GetFullPath(Path.Combine(directory, folder, name));
+        if (!FileSandbox.For(directory).Contains(file) || !Projects.Sandbox.Contains(file))
+        {
+            _diagnostics.Error($"{file} is outside the project folder.");
+            return null;
+        }
+
+        if (File.Exists(file))
+        {
+            _diagnostics.Error($"{file} already exists.");
+            return null;
+        }
+
+        return file;
+    }
+
     private void Create()
     {
         var definition = Check();
         if (definition == null || _diagnostics.HasErrors || Projects.Project == null) return;
-        var file = string.IsNullOrWhiteSpace(_file) ? Projects.Project.FileFor(definition) : Path.Combine(Projects.Project.Directory, _file);
+        var file = Target(definition);
+        if (file == null) return;
         Projects.Save(definition, _text, file);
         if (Projects.Project?.Find(definition.Name) == null)
         {

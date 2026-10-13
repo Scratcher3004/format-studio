@@ -71,7 +71,7 @@
             </MudStack>
             <MudExpansionPanels Elevation="0" Class="mt-2">
                 <MudExpansionPanel Text="Browse">
-                    <FolderBrowser Start="@StartFolder" Picked="path => Open(path)" />
+                    <FolderBrowser Start="@StartFolder" Root="@Store.Sandbox.Root" Picked="path => Open(path)" />
                 </MudExpansionPanel>
             </MudExpansionPanels>
         </MudPaper>

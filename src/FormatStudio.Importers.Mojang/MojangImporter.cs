@@ -51,6 +51,7 @@ public sealed partial class MojangImporter
     private readonly SchemaSource _source;
     private readonly List<SchemaSource> _valueSources;
     private readonly Dictionary<string, EnumDef> _previousEnums;
+    private readonly FileSandbox _sandbox;
     private readonly ImportResult _result = new();
 
     private readonly Dictionary<string, string> _names = new(StringComparer.Ordinal);
@@ -78,22 +79,26 @@ public sealed partial class MojangImporter
     private int _defaultArrayLengths;
 
     private MojangImporter(MojangImportSettings settings, SchemaSource source, List<SchemaSource> valueSources,
-        Dictionary<string, EnumDef> previousEnums)
+        Dictionary<string, EnumDef> previousEnums, FileSandbox sandbox)
     {
         _settings = settings;
         _source = source;
         _valueSources = valueSources;
         _previousEnums = previousEnums;
+        _sandbox = sandbox;
     }
 
     /// <summary>Converts the schema. When <paramref name="write"/> is set the files are written to the output folder.</summary>
-    public static ImportResult Run(MojangImportSettings settings, string projectDirectory, bool write, FormatDefaults? defaults = null)
+    /// <param name="sandbox">Where files may be read and written; every path of the import must be inside it.</param>
+    public static ImportResult Run(MojangImportSettings settings, string projectDirectory, bool write, FormatDefaults? defaults = null,
+        FileSandbox? sandbox = null)
     {
+        sandbox ??= FileSandbox.Unrestricted;
         if (string.IsNullOrEmpty(settings.Schema)) throw new FormatDefinitionException("import.mojang.schema is not set");
-        var source = SchemaSource.Load(Path.GetFullPath(settings.Schema, projectDirectory));
-        var valueSources = settings.EnumValuesFrom.Select(from => SchemaSource.Load(Path.GetFullPath(from, projectDirectory))).ToList();
-        var output = Path.GetFullPath(settings.Output, projectDirectory);
-        var importer = new MojangImporter(settings, source, valueSources, LoadPreviousEnums(output));
+        var source = SchemaSource.Load(Path.GetFullPath(settings.Schema, projectDirectory), sandbox);
+        var valueSources = settings.EnumValuesFrom.Select(from => SchemaSource.Load(Path.GetFullPath(from, projectDirectory), sandbox)).ToList();
+        var output = sandbox.Check(Path.GetFullPath(settings.Output, projectDirectory));
+        var importer = new MojangImporter(settings, source, valueSources, LoadPreviousEnums(output, sandbox), sandbox);
         importer.Convert();
         importer.Validate(defaults);
         importer._result.Report = importer.BuildReport();
@@ -686,12 +691,12 @@ public sealed partial class MojangImporter
 
     // ------------------------------------------------------------------ enum values
 
-    private static Dictionary<string, EnumDef> LoadPreviousEnums(string output)
+    private static Dictionary<string, EnumDef> LoadPreviousEnums(string output, FileSandbox sandbox)
     {
         var result = new Dictionary<string, EnumDef>(StringComparer.Ordinal);
         var folder = Path.Combine(output, "enums");
         if (!Directory.Exists(folder)) return result;
-        foreach (var file in Directory.GetFiles(folder, "*.yaml"))
+        foreach (var file in sandbox.EnumerateFiles(folder, "*.yaml"))
         {
             if (DslReader.Read(File.ReadAllText(file), file, []) is EnumDef enumDef && enumDef.Doc?.Contains(IndexMarker) != true)
                 result[enumDef.Name] = enumDef;
@@ -814,7 +819,7 @@ public sealed partial class MojangImporter
         var written = new HashSet<string>(StringComparer.Ordinal);
         foreach (var definition in _result.Definitions)
         {
-            var file = Path.Combine(output, _result.Folders[definition.Name], definition.Name + ".yaml");
+            var file = _sandbox.Check(Path.Combine(output, _result.Folders[definition.Name], definition.Name + ".yaml"));
             written.Add(Path.GetFullPath(file));
             var content = header + DslWriter.Write(definition);
             if (File.Exists(file) && File.ReadAllText(file) == content)
@@ -831,7 +836,7 @@ public sealed partial class MojangImporter
         // Remove files of an earlier import that are gone now. Only files with the generated header are touched.
         if (Directory.Exists(output))
         {
-            foreach (var file in Directory.GetFiles(output, "*.yaml", SearchOption.AllDirectories))
+            foreach (var file in _sandbox.EnumerateFiles(output, "*.yaml", recursive: true).ToList())
             {
                 if (written.Contains(Path.GetFullPath(file))) continue;
                 using (var reader = new StreamReader(file))
@@ -844,7 +849,7 @@ public sealed partial class MojangImporter
             }
         }
 
-        _result.ReportFile = Path.Combine(output, "import-report.md");
+        _result.ReportFile = _sandbox.Check(Path.Combine(output, "import-report.md"));
         File.WriteAllText(_result.ReportFile, _result.Report);
     }
 

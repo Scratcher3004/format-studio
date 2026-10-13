@@ -78,6 +78,82 @@ public class ProjectStoreTests
     }
 
     [Fact]
+    public void WorkspaceCantBeLeft()
+    {
+        var root = TestPaths.NewTempDirectory();
+        var workspace = Path.Combine(root, "ws");
+        var inside = ProjectTemplate.Create(Path.Combine(workspace, "inside"));
+        var outside = ProjectTemplate.Create(Path.Combine(root, "outside"));
+        var state = Path.Combine(root, "state");
+        new ProjectStore(new StudioOptions { StateDirectory = state }).Open(outside);
+
+        var store = new ProjectStore(new StudioOptions { Workspace = workspace, StateDirectory = state });
+
+        Assert.Equal([inside], store.Known().Select(e => e.File));
+        Assert.Throws<FormatDefinitionException>(() => store.Open(outside));
+        Assert.Throws<FormatDefinitionException>(() => store.Open(Path.Combine(workspace, "..", "outside")));
+        Assert.Throws<FormatDefinitionException>(() => store.Create(Path.Combine(root, "new"), null, "little", "varuint32"));
+        Assert.False(Directory.Exists(Path.Combine(root, "new")));
+        Assert.Throws<FormatDefinitionException>(() => new ProjectStore(new StudioOptions { Workspace = workspace, Project = outside, StateDirectory = state }));
+        // The outside project stays in the recent list for runs without the workspace.
+        Assert.Contains(outside, new ProjectStore(new StudioOptions { StateDirectory = state }).Known().Select(e => e.File));
+    }
+
+    [Fact]
+    public void SandboxChecksPathsAndLinks()
+    {
+        var root = TestPaths.NewTempDirectory();
+        var workspace = Path.Combine(root, "ws");
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(Path.Combine(root, "secret"));
+        var sandbox = FileSandbox.For(workspace);
+
+        Assert.True(sandbox.Contains(workspace));
+        Assert.True(sandbox.Contains(Path.Combine(workspace, "new", "file.yaml")));
+        Assert.False(sandbox.Contains(Path.Combine(workspace, "..", "secret")));
+        Assert.False(sandbox.Contains(workspace + "2"));
+        Assert.False(sandbox.Contains(root));
+        Assert.True(FileSandbox.Unrestricted.Contains(root));
+
+        var link = Path.Combine(workspace, "link");
+        try
+        {
+            Directory.CreateSymbolicLink(link, Path.Combine(root, "secret"));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return; // Creating links needs extra rights on Windows.
+        }
+
+        File.WriteAllText(Path.Combine(root, "secret", "a.yaml"), "x");
+        Assert.False(sandbox.Contains(link));
+        Assert.False(sandbox.Contains(Path.Combine(link, "a.yaml")));
+        Assert.Throws<FormatDefinitionException>(() => sandbox.Check(Path.Combine(link, "new.yaml")));
+        Assert.Empty(sandbox.EnumerateDirectories(workspace));
+        Assert.Empty(sandbox.EnumerateFiles(workspace, recursive: true));
+
+        // A broken link would create its target outside when written to.
+        File.CreateSymbolicLink(Path.Combine(workspace, "broken.yaml"), Path.Combine(root, "secret", "missing.yaml"));
+        Assert.False(sandbox.Contains(Path.Combine(workspace, "broken.yaml")));
+    }
+
+    [Fact]
+    public void SandboxedProjectsDontLoadFilesOutside()
+    {
+        var root = TestPaths.NewTempDirectory();
+        var workspace = Path.Combine(root, "ws");
+        var file = ProjectTemplate.Create(Path.Combine(workspace, "p"));
+        File.WriteAllText(file, File.ReadAllText(file).Replace("  - types/**/*.yaml", "  - types/**/*.yaml\n  - ../../**/*.yaml"));
+        File.WriteAllText(Path.Combine(workspace, "p", "types", "Inside.yaml"), "struct: Inside\nfields:\n  - x: u8\n");
+        File.WriteAllText(Path.Combine(root, "Outside.yaml"), "struct: Outside\nfields:\n  - x: u8\n");
+
+        Assert.NotNull(FormatProject.Load(file).Find("Outside"));
+        var project = FormatProject.Load(file, FileSandbox.For(workspace));
+        Assert.NotNull(project.Find("Inside"));
+        Assert.Null(project.Find("Outside"));
+    }
+
+    [Fact]
     public void IdsAreStableAndReadFromUrls()
     {
         var id = ProjectStore.IdOf("/work/My Proto.fstudio.yaml");

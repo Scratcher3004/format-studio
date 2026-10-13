@@ -142,7 +142,17 @@ else
         }
 
         var text = file != null ? DslWriter.Write(parsed) : _text;
-        var written = Projects.Save(_definition, text, file);
+        string written;
+        try
+        {
+            written = Projects.Save(_definition, text, file);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
+        {
+            Snackbar.Add($"Not saved: {e.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
         Snackbar.Add($"Saved {Projects.Project?.Relative(written)}.", MudBlazor.Severity.Success);
         if (parsed.Name != Name) Navigation.NavigateTo(Link($"type/{parsed.Name}"));
         else Load();

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json.Nodes;
+using FormatStudio.Projects;
 
 namespace FormatStudio.Importers.Mojang;
 
@@ -17,8 +18,10 @@ public sealed class SchemaSource
     public int? ProtocolVersion => Documents.Values.Select(d => (int?)d["x-protocol-version"]?.GetValue<int>()).FirstOrDefault(v => v != null);
 
     /// <summary>Loads from a zip (any <c>json/</c> folder inside) or a directory containing the JSON files or a <c>json/</c> folder.</summary>
-    public static SchemaSource Load(string path)
+    public static SchemaSource Load(string path, FileSandbox? sandbox = null)
     {
+        sandbox ??= FileSandbox.Unrestricted;
+        path = sandbox.Check(path);
         var source = new SchemaSource { Origin = path };
         if (File.Exists(path))
         {
@@ -34,7 +37,7 @@ public sealed class SchemaSource
         else if (Directory.Exists(path))
         {
             var directory = Directory.Exists(Path.Combine(path, "json")) ? Path.Combine(path, "json") : path;
-            foreach (var file in Directory.GetFiles(directory, "*.json"))
+            foreach (var file in sandbox.EnumerateFiles(directory, "*.json"))
             {
                 using var stream = File.OpenRead(file);
                 source.Add(Path.GetFileName(file), JsonNode.Parse(stream));
