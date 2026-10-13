@@ -1,5 +1,5 @@
-@page "/roundtrip"
-@inject ProjectService Projects
+@page "/p/{ProjectId}/roundtrip"
+@inherits ProjectComponent
 
 <PageTitle>Round trip - Format Studio</PageTitle>
 
@@ -32,7 +32,7 @@
             @foreach (var result in _failed.Take(200))
             {
                 <tr>
-                    <td><MudLink Href="@($"type/{result.Type}")">@result.Type</MudLink></td>
+                    <td><MudLink Href="@Link($"type/{result.Type}")">@result.Type</MudLink></td>
                     <td>@string.Join("; ", result.Diagnostics.Where(d => d.Severity == Severity.Error).Select(d => d.ToString()))</td>
                     <td class="mono" style="max-width: 480px; overflow-wrap: anywhere">@JsonValues.ToText(result.Value, false)</td>
                 </tr>

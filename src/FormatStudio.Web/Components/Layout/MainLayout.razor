@@ -1,6 +1,6 @@
 @inherits LayoutComponentBase
 @implements IDisposable
-@inject ProjectService Projects
+@inject ProjectContext Context
 
 <MudThemeProvider IsDarkMode="_dark" />
 <MudPopoverProvider />
@@ -9,25 +9,61 @@
 
 <MudLayout>
     <MudAppBar Elevation="1" Dense="true">
-        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => _drawer = !_drawer" />
-        <MudText Typo="Typo.h6" Class="ml-2">Format Studio</MudText>
-        <MudText Typo="Typo.body2" Class="ml-4 mud-text-secondary">@(Projects.Project?.Settings.Name ?? "no project")</MudText>
+        @if (Context.Current != null)
+        {
+            <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => _drawer = !_drawer" />
+        }
+        <MudLink Href="projects" Color="Color.Inherit" Underline="Underline.None" Class="ml-2"><MudText Typo="Typo.h6">Format Studio</MudText></MudLink>
+        <MudMenu Dense="true" Class="ml-4" AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+            <ActivatorContent>
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" Size="Size.Small" EndIcon="@Icons.Material.Filled.ArrowDropDown"
+                           Style="text-transform: none">@ProjectLabel</MudButton>
+            </ActivatorContent>
+            <ChildContent>
+                @foreach (var entry in Context.Store.Known().Take(10))
+                {
+                    <MudMenuItem Href="@ProjectContext.LinkTo(entry.Id)">
+                        <span class="@(entry.Id == Context.Id ? "mud-primary-text" : "")">@entry.Name</span>
+                        <span class="mud-text-secondary mono ml-2" style="font-size: 0.75rem">@entry.File</span>
+                    </MudMenuItem>
+                }
+                <MudDivider />
+                <MudMenuItem Href="projects" Icon="@Icons.Material.Filled.FolderOpen">All projects, open or new...</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
         <MudSpacer />
-        <MudTooltip Text="Reload the project from disk">
-            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Inherit" OnClick="Projects.Reload" />
-        </MudTooltip>
+        @if (Context.Current is { } current)
+        {
+            <MudTooltip Text="Reload the project from disk">
+                <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Inherit" OnClick="current.Reload" />
+            </MudTooltip>
+        }
         <MudIconButton Icon="@(_dark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)" Color="Color.Inherit"
                        OnClick="() => _dark = !_dark" />
     </MudAppBar>
-    <MudDrawer @bind-Open="_drawer" ClipMode="DrawerClipMode.Always" Elevation="1" Width="320px">
-        <NavMenu />
-    </MudDrawer>
+    @if (Context.Current != null)
+    {
+        <MudDrawer @bind-Open="_drawer" ClipMode="DrawerClipMode.Always" Elevation="1" Width="320px">
+            <NavMenu />
+        </MudDrawer>
+    }
     <MudMainContent Class="pa-4">
-        @if (Projects.LoadError != null)
+        @if (Context.Id != null && Context.Current == null)
         {
-            <MudAlert Severity="MudBlazor.Severity.Error" Class="mb-4">Loading @Projects.Path failed: @Projects.LoadError</MudAlert>
+            <MudAlert Severity="MudBlazor.Severity.Warning">
+                There is no project '@Context.Id'. It may have been removed from the recent projects;
+                <MudLink Href="projects">open it again</MudLink>.
+            </MudAlert>
         }
-        @Body
+        else
+        {
+            @if (Context.Current?.LoadError is { } error)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Error" Class="mb-4">Loading @Context.Current.Path failed: @error</MudAlert>
+            }
+            @* A new page instance per project, so that switching projects doesn't keep the previous project's state. *@
+            <div @key="Context.Id">@Body</div>
+        }
     </MudMainContent>
 </MudLayout>
 
@@ -35,9 +71,22 @@
     private bool _drawer = true;
     private bool _dark;
 
-    protected override void OnInitialized() => Projects.Changed += OnChanged;
+    private string ProjectLabel => Context.Current is { } current
+        ? current.Project?.Settings.Name ?? Path.GetFileName(current.Path)
+        : "Choose a project";
+
+    protected override void OnInitialized()
+    {
+        Context.Changed += OnChanged;
+        Context.Store.Changed += OnChanged;
+        Context.Follow();
+    }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose() => Projects.Changed -= OnChanged;
+    public void Dispose()
+    {
+        Context.Changed -= OnChanged;
+        Context.Store.Changed -= OnChanged;
+    }
 }

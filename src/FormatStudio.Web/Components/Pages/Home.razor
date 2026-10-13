@@ -1,5 +1,5 @@
-@page "/"
-@inject ProjectService Projects
+@page "/p/{ProjectId}"
+@inherits ProjectComponent
 
 <PageTitle>Format Studio</PageTitle>
 
@@ -45,7 +45,7 @@
                     {
                         <tr>
                             <td>@sample.Name</td>
-                            <td><MudLink Href="@($"type/{sample.Type}")">@sample.Type</MudLink></td>
+                            <td><MudLink Href="@Link($"type/{sample.Type}")">@sample.Type</MudLink></td>
                             <td class="mono">@sample.Hex</td>
                             <td>@(_sampleResults.TryGetValue(sample, out var result) ? result : "")</td>
                         </tr>

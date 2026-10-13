@@ -1,5 +1,5 @@
-@page "/identify"
-@inject ProjectService Projects
+@page "/p/{ProjectId}/identify"
+@inherits ProjectComponent
 
 <PageTitle>Identify - Format Studio</PageTitle>
 
@@ -40,7 +40,7 @@
             {
                 <tr>
                     <td>@match.Score</td>
-                    <td><MudLink Href="@($"simulate?type={match.Type.Name}")">@match.Type.Name</MudLink></td>
+                    <td><MudLink Href="@Link($"simulate?type={match.Type.Name}")">@match.Type.Name</MudLink></td>
                     <td>@(match.Result.Success ? match.Result.Consumed == _length ? "complete" : "partial" : "error")</td>
                     <td>@match.Result.Consumed / @_length</td>
                     <td>@match.Result.Diagnostics.FirstOrDefault()?.Message</td>

@@ -30,7 +30,7 @@ Requires the .NET 10 SDK.
 ```
 dotnet run --project src/FormatStudio.Cli -- new my-format --endian big
 dotnet run --project src/FormatStudio.Cli -- roundtrip --project samples/java-protocol
-dotnet run --project src/FormatStudio.Web -- --project <absolute path>/samples/java-protocol --urls http://localhost:5180
+dotnet run --project src/FormatStudio.Web -- --workspace samples --urls http://localhost:5180
 ```
 
 ## Repository
@@ -50,6 +50,7 @@ dotnet run --project src/FormatStudio.Web -- --project <absolute path>/samples/j
 
 - [Projects and DSL](docs/dsl.md): project files, definitions, types, expressions, JSON values
 - [Command line and web UI](docs/usage.md)
+- [Projects in the web UI](docs/web-projects.md): start page, project URLs, planned hosted mode
 - [Importers](docs/importers.md)
 - [C# generator](docs/csharp.md): generated code, runtime, checking it against the simulator
 

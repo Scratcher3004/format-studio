@@ -19,6 +19,7 @@
     <ProjectReference Include="..\..\src\FormatStudio.Importers.Mojang\FormatStudio.Importers.Mojang.csproj" />
     <ProjectReference Include="..\..\src\FormatStudio.Runtime\FormatStudio.Runtime.csproj" />
     <ProjectReference Include="..\..\src\FormatStudio.Testing\FormatStudio.Testing.csproj" />
+    <ProjectReference Include="..\..\src\FormatStudio.Web\FormatStudio.Web.csproj" />
   </ItemGroup>
 
 </Project>

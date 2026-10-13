@@ -1,6 +1,6 @@
-@page "/import"
+@page "/p/{ProjectId}/import"
 @using FormatStudio.Importers
-@inject ProjectService Projects
+@inherits ProjectComponent
 @inject ISnackbar Snackbar
 
 <PageTitle>Import - Format Studio</PageTitle>

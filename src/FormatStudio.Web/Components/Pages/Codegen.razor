@@ -1,6 +1,6 @@
-@page "/codegen"
+@page "/p/{ProjectId}/codegen"
 @using FormatStudio.Codegen
-@inject ProjectService Projects
+@inherits ProjectComponent
 @inject ISnackbar Snackbar
 
 <PageTitle>Code generation - Format Studio</PageTitle>

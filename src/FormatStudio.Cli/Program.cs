@@ -36,7 +36,7 @@ const string usage = """
           Runs the project's samples: encodes each value and compares with the expected hex.
       format-studio generate [<target>...] [--no-clean] [--dry-run]
           Runs the project's codegen targets. Output only goes to the target's output folder.
-      format-studio web [--project <p>] [--urls <url>]
+      format-studio web [--project <p>] [--workspace <folder>] [--urls <url>]
           Hint for starting the web UI (FormatStudio.Web).
     """;
 

@@ -2,6 +2,8 @@
 
     <PropertyGroup>
         <RootNamespace>FormatStudio.Web</RootNamespace>
+        <!-- "dotnet run" keeps the caller's folder, so that relative project and workspace paths work as typed. -->
+        <RunWorkingDirectory>$(MSBuildStartupDirectory)</RunWorkingDirectory>
     </PropertyGroup>
 
     <ItemGroup>

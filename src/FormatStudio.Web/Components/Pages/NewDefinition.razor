@@ -1,5 +1,5 @@
-@page "/new"
-@inject ProjectService Projects
+@page "/p/{ProjectId}/new"
+@inherits ProjectComponent
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
 
@@ -56,6 +56,6 @@
             return;
         }
 
-        Navigation.NavigateTo($"type/{definition.Name}");
+        Navigation.NavigateTo(Link($"type/{definition.Name}"));
     }
 }

@@ -1,45 +1,49 @@
 @implements IDisposable
-@inject ProjectService Projects
+@inject ProjectContext Context
 
-<MudNavMenu>
-    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">Overview</MudNavLink>
-    <MudNavLink Href="simulate" Icon="@Icons.Material.Filled.Memory">Simulate</MudNavLink>
-    <MudNavLink Href="identify" Icon="@Icons.Material.Filled.ManageSearch">Identify</MudNavLink>
-    <MudNavLink Href="roundtrip" Icon="@Icons.Material.Filled.Loop">Round trip</MudNavLink>
-    <MudNavLink Href="codegen" Icon="@Icons.Material.Filled.Code">Code generation</MudNavLink>
-    <MudNavLink Href="import" Icon="@Icons.Material.Filled.Download">Import</MudNavLink>
-    <MudNavLink Href="new" Icon="@Icons.Material.Filled.Add">New definition</MudNavLink>
-</MudNavMenu>
-
-<MudDivider Class="my-2" />
-<div class="px-3">
-    <MudTextField T="string" @bind-Value="_filter" Immediate="true" Placeholder="Filter types" Variant="Variant.Outlined" Margin="Margin.Dense"
-                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" />
-</div>
-
-@if (Projects.Project is { } project)
+@* Only shown inside a project; the check keeps a late re-render after leaving the project from failing. *@
+@if (Context.Id != null)
 {
-    <MudNavMenu Dense="true">
-        @foreach (var group in Groups(project))
-        {
-            <MudNavGroup Title="@($"{group.Kind} ({group.Items.Count})")" Expanded="@(!string.IsNullOrEmpty(_filter))">
-                @foreach (var definition in group.Items.Take(MaxShown))
-                {
-                    <MudNavLink Href="@($"type/{definition.Name}")">
-                        <span class="type-link">@definition.Name</span>
-                        @if (definition is StructDef { IsPacket: true } packet)
-                        {
-                            <span class="type-id">@packet.Id</span>
-                        }
-                    </MudNavLink>
-                }
-                @if (group.Items.Count > MaxShown)
-                {
-                    <MudText Typo="Typo.caption" Class="px-4">@(group.Items.Count - MaxShown) more, use the filter</MudText>
-                }
-            </MudNavGroup>
-        }
+    <MudNavMenu>
+        <MudNavLink Href="@Context.Link("")" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">Overview</MudNavLink>
+        <MudNavLink Href="@Context.Link("simulate")" Icon="@Icons.Material.Filled.Memory">Simulate</MudNavLink>
+        <MudNavLink Href="@Context.Link("identify")" Icon="@Icons.Material.Filled.ManageSearch">Identify</MudNavLink>
+        <MudNavLink Href="@Context.Link("roundtrip")" Icon="@Icons.Material.Filled.Loop">Round trip</MudNavLink>
+        <MudNavLink Href="@Context.Link("codegen")" Icon="@Icons.Material.Filled.Code">Code generation</MudNavLink>
+        <MudNavLink Href="@Context.Link("import")" Icon="@Icons.Material.Filled.Download">Import</MudNavLink>
+        <MudNavLink Href="@Context.Link("new")" Icon="@Icons.Material.Filled.Add">New definition</MudNavLink>
     </MudNavMenu>
+
+    <MudDivider Class="my-2" />
+    <div class="px-3">
+        <MudTextField T="string" @bind-Value="_filter" Immediate="true" Placeholder="Filter types" Variant="Variant.Outlined" Margin="Margin.Dense"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" />
+    </div>
+
+    @if (Context.Current?.Project is { } project)
+    {
+        <MudNavMenu Dense="true">
+            @foreach (var group in Groups(project))
+            {
+                <MudNavGroup Title="@($"{group.Kind} ({group.Items.Count})")" Expanded="@(!string.IsNullOrEmpty(_filter))">
+                    @foreach (var definition in group.Items.Take(MaxShown))
+                    {
+                        <MudNavLink Href="@Context.Link($"type/{definition.Name}")">
+                            <span class="type-link">@definition.Name</span>
+                            @if (definition is StructDef { IsPacket: true } packet)
+                            {
+                                <span class="type-id">@packet.Id</span>
+                            }
+                        </MudNavLink>
+                    }
+                    @if (group.Items.Count > MaxShown)
+                    {
+                        <MudText Typo="Typo.caption" Class="px-4">@(group.Items.Count - MaxShown) more, use the filter</MudText>
+                    }
+                </MudNavGroup>
+            }
+        </MudNavMenu>
+    }
 }
 
 @code {
@@ -53,9 +57,9 @@
             .OrderBy(g => Array.IndexOf(["packet", "struct", "variant", "enum", "bitfield", "alias"], g.Key))
             .Select(g => (g.Key + "s", g.OrderBy(d => d is StructDef { IsPacket: true } p ? p.Id : 0).ThenBy(d => d.Name, StringComparer.Ordinal).ToList()));
 
-    protected override void OnInitialized() => Projects.Changed += OnChanged;
+    protected override void OnInitialized() => Context.Changed += OnChanged;
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
 
-    public void Dispose() => Projects.Changed -= OnChanged;
+    public void Dispose() => Context.Changed -= OnChanged;
 }

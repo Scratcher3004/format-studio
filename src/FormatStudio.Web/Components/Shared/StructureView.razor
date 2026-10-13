@@ -1,4 +1,5 @@
 @using FormatStudio.Dsl
+@inherits ProjectComponent
 @* A read-only table of a definition's fields, members or cases, with links to the types used. *@
 
 @switch (Definition)
@@ -82,7 +83,7 @@
     }
 
     /// <summary>The type expression with each named type as a link.</summary>
-    private static RenderFragment TypeLinks(TypeRef type) => __builder =>
+    private RenderFragment TypeLinks(TypeRef type) => __builder =>
     {
         var text = TypeExpressions.TryFormat(type) ?? type.ToString();
         var names = Names(type).Distinct().ToList();
@@ -97,7 +98,7 @@
             }
 
             @text[position..next.Index]
-            <MudLink Href="@($"type/{next.Name}")">@next.Name</MudLink>
+            <MudLink Href="@Link($"type/{next.Name}")">@next.Name</MudLink>
             position = next.Index + next.Name.Length;
         }
     };

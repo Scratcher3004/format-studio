@@ -1,6 +1,6 @@
-@page "/type/{Name}"
+@page "/p/{ProjectId}/type/{Name}"
 @using FormatStudio.Dsl
-@inject ProjectService Projects
+@inherits ProjectComponent
 @inject ISnackbar Snackbar
 @inject NavigationManager Navigation
 
@@ -83,7 +83,7 @@ else
                 <tbody>
                     @foreach (var (user, where) in _references)
                     {
-                        <tr><td><MudLink Href="@($"type/{user.Name}")">@user.Name</MudLink></td><td>@user.Kind</td><td class="mono">@where</td></tr>
+                        <tr><td><MudLink Href="@Link($"type/{user.Name}")">@user.Name</MudLink></td><td>@user.Kind</td><td class="mono">@where</td></tr>
                     }
                 </tbody>
             </MudSimpleTable>
@@ -144,7 +144,7 @@ else
         var text = file != null ? DslWriter.Write(parsed) : _text;
         var written = Projects.Save(_definition, text, file);
         Snackbar.Add($"Saved {Projects.Project?.Relative(written)}.", MudBlazor.Severity.Success);
-        if (parsed.Name != Name) Navigation.NavigateTo($"type/{parsed.Name}");
+        if (parsed.Name != Name) Navigation.NavigateTo(Link($"type/{parsed.Name}"));
         else Load();
     }
 

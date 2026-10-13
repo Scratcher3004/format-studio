@@ -199,21 +199,25 @@ public sealed class FormatProject
         return project;
     }
 
+    /// <summary>The full path of a project file, or of the single <c>*.fstudio.yaml</c> in a directory.</summary>
+    public static string ResolveFile(string path)
+    {
+        path = Path.GetFullPath(path);
+        if (!System.IO.Directory.Exists(path))
+            return File.Exists(path) ? path : throw new FileNotFoundException($"{path} doesn't exist", path);
+        var candidates = System.IO.Directory.GetFiles(path, "*" + ProjectSettings.Extension);
+        return candidates.Length switch
+        {
+            1 => candidates[0],
+            0 => throw new FormatDefinitionException($"No *{ProjectSettings.Extension} in {path}"),
+            _ => throw new FormatDefinitionException($"Several project files in {path}; pass one explicitly"),
+        };
+    }
+
     /// <summary>Loads a project file, or the single <c>*.fstudio.yaml</c> in a directory.</summary>
     public static FormatProject Load(string path)
     {
-        path = Path.GetFullPath(path);
-        if (System.IO.Directory.Exists(path))
-        {
-            var candidates = System.IO.Directory.GetFiles(path, "*" + ProjectSettings.Extension);
-            path = candidates.Length switch
-            {
-                1 => candidates[0],
-                0 => throw new FormatDefinitionException($"No *{ProjectSettings.Extension} in {path}"),
-                _ => throw new FormatDefinitionException($"Several project files in {path}; pass one explicitly"),
-            };
-        }
-
+        path = ResolveFile(path);
         var settings = ProjectSettings.Parse(File.ReadAllText(path), path);
         var project = new FormatProject(settings, Path.GetDirectoryName(path)!, path);
         project.LoadSources();

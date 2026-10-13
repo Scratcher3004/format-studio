@@ -52,28 +52,7 @@ internal static class Commands
     {
         var line = CommandLine.Parse(args, ["name", "endian", "length"], NoFlags);
         if (line.Positional.Count != 1) throw new UsageException("Usage: format-studio new <folder>");
-        var directory = Path.GetFullPath(line.Positional[0]);
-        var name = line.Single("name") ?? Path.GetFileName(directory);
-        var file = Path.Combine(directory, name + ProjectSettings.Extension);
-        if (File.Exists(file)) throw new UsageException($"{file} already exists.");
-
-        var yaml = $"""
-            name: {name}
-            defaults:
-              endian: {line.Single("endian") ?? "little"}
-              length: {line.Single("length") ?? "varuint32"}
-              string: utf8
-            sources:
-              - types/**/*.yaml
-              - packets/**/*.yaml
-            samples:
-              - samples/**/*.yaml
-            """;
-        ProjectSettings.Parse(yaml, file);
-        Directory.CreateDirectory(Path.Combine(directory, "types"));
-        Directory.CreateDirectory(Path.Combine(directory, "packets"));
-        Directory.CreateDirectory(Path.Combine(directory, "samples"));
-        File.WriteAllText(file, yaml + "\n");
+        var file = ProjectTemplate.Create(line.Positional[0], line.Single("name"), line.Single("endian") ?? "little", line.Single("length") ?? "varuint32");
         Console.WriteLine($"Created {file}");
         return 0;
     }
@@ -393,11 +372,14 @@ internal static class Commands
 
     public static int Web(string[] args)
     {
-        var line = CommandLine.Parse(args, ["project", "urls"], NoFlags);
-        var project = line.Single("project") ?? FindProject(Directory.GetCurrentDirectory()) ?? "<project>";
-        Console.WriteLine("Start the web UI with:");
-        Console.WriteLine($"  dotnet run --project Tools/FormatStudio/FormatStudio.Web -- --project \"{Path.GetFullPath(project)}\"" +
-                          (line.Single("urls") is { } urls ? $" --urls {urls}" : ""));
+        var line = CommandLine.Parse(args, ["project", "workspace", "urls"], NoFlags);
+        var options = new List<string>();
+        if (line.Single("urls") is { } urls) options.Add($"--urls {urls}");
+        if (line.Single("project") is { } project) options.Add($"--project \"{Path.GetFullPath(project)}\"");
+        if (line.Single("workspace") is { } workspace) options.Add($"--workspace \"{Path.GetFullPath(workspace)}\"");
+        Console.WriteLine("Start the web UI from the format-studio folder with:");
+        Console.WriteLine("  dotnet run --project src/FormatStudio.Web" + (options.Count > 0 ? " -- " + string.Join(" ", options) : ""));
+        Console.WriteLine("Without --project the start page lists the recent projects and can open or create one.");
         return 0;
     }
 }

@@ -1,0 +1,71 @@
+@* Browses the server's folders; picking a folder or a project file reports its full path. *@
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-1">
+    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="_folder == null" OnClick="Up" title="Parent folder" />
+    <MudText Typo="Typo.body2" Class="mono" Style="overflow-wrap: anywhere">@(_folder ?? "Drives")</MudText>
+    <MudSpacer />
+    @if (_folder != null)
+    {
+        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => Picked.InvokeAsync(_folder)">Use this folder</MudButton>
+    }
+</MudStack>
+@if (_error != null)
+{
+    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true">@_error</MudAlert>
+}
+<MudList T="string" Dense="true" Style="max-height: 320px; overflow-y: auto">
+    @foreach (var file in _files)
+    {
+        <MudListItem T="string" Icon="@Icons.Material.Filled.Description" IconColor="Color.Primary" OnClick="() => Picked.InvokeAsync(file)">
+            @Path.GetFileName(file)
+        </MudListItem>
+    }
+    @foreach (var folder in _folders)
+    {
+        <MudListItem T="string" Icon="@Icons.Material.Filled.Folder" OnClick="() => Show(folder)">@(_folder == null ? folder : Path.GetFileName(folder))</MudListItem>
+    }
+</MudList>
+
+@code {
+    /// <summary>The folder shown first; the user's home folder if not set.</summary>
+    [Parameter] public string? Start { get; set; }
+    [Parameter] public EventCallback<string> Picked { get; set; }
+
+    private string? _folder;
+    private string? _error;
+    private List<string> _folders = [];
+    private List<string> _files = [];
+
+    protected override void OnInitialized() =>
+        Show(Start is { } start && Directory.Exists(start) ? Path.GetFullPath(start) : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+
+    private void Up() => Show(_folder == null ? null : Path.GetDirectoryName(_folder));
+
+    /// <summary>Shows a folder, or the drives (Windows) / the root (elsewhere) for null.</summary>
+    private void Show(string? folder)
+    {
+        _error = null;
+        if (folder == null && !OperatingSystem.IsWindows()) folder = "/";
+        try
+        {
+            if (folder == null)
+            {
+                _folders = Directory.GetLogicalDrives().ToList();
+                _files = [];
+            }
+            else
+            {
+                var directory = new DirectoryInfo(folder);
+                _folders = directory.EnumerateDirectories().Where(d => !d.Name.StartsWith('.'))
+                    .Select(d => d.FullName).Order(StringComparer.OrdinalIgnoreCase).ToList();
+                _files = directory.EnumerateFiles("*" + ProjectSettings.Extension).Select(f => f.FullName).Order(StringComparer.Ordinal).ToList();
+            }
+
+            _folder = folder;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _error = e.Message;
+        }
+    }
+}

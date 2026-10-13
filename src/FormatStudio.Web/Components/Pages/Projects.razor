@@ -1,0 +1,166 @@
+@page "/"
+@page "/projects"
+@implements IDisposable
+@inject ProjectStore Store
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>Projects - Format Studio</PageTitle>
+
+<MudText Typo="Typo.h5" Class="mb-3">Projects</MudText>
+
+<MudPaper Outlined="true" Class="pa-3 mb-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+        <MudText Typo="Typo.h6">Known projects</MudText>
+        <MudSpacer />
+        @if (Store.Options.Workspace != null)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mono">workspace @Store.Options.Workspace</MudText>
+            <MudTooltip Text="Search the workspace again">
+                <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" OnClick="Store.ScanWorkspace" />
+            </MudTooltip>
+        }
+    </MudStack>
+    @if (_known.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="mud-text-secondary">
+            No projects yet. Open or create one below, or start the web UI with <span class="mono">--workspace &lt;folder&gt;</span>
+            to list the projects in a folder.
+        </MudText>
+    }
+    else
+    {
+        <MudSimpleTable Dense="true" Hover="true">
+            <thead><tr><th>Project</th><th>File</th><th>Last opened</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var entry in _known)
+                {
+                    <tr>
+                        <td><MudLink Href="@ProjectContext.LinkTo(entry.Id)" OnClick="() => Touch(entry)">@entry.Name</MudLink></td>
+                        <td class="mono">@entry.File</td>
+                        <td>
+                            @(entry.Opened?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "")
+                            @if (entry.InWorkspace)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="ml-1">workspace</MudChip>
+                            }
+                        </td>
+                        <td>
+                            @if (entry.Opened != null)
+                            {
+                                <MudTooltip Text="Remove from the recent projects (the files stay)">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="() => Store.Forget(entry.Id)" />
+                                </MudTooltip>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+    }
+</MudPaper>
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" md="6">
+        <MudPaper Outlined="true" Class="pa-3">
+            <MudText Typo="Typo.h6" Class="mb-2">Open</MudText>
+            <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2">
+                <MudTextField T="string" @bind-Value="_openPath" Label="Project file or folder" Variant="Variant.Outlined" Margin="Margin.Dense"
+                              HelperText="A *.fstudio.yaml, or a folder with exactly one" OnKeyUp="@(e => e.Key == "Enter" ? Open(_openPath) : Task.CompletedTask)" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-2" OnClick="() => Open(_openPath)">Open</MudButton>
+            </MudStack>
+            <MudExpansionPanels Elevation="0" Class="mt-2">
+                <MudExpansionPanel Text="Browse">
+                    <FolderBrowser Start="@StartFolder" Picked="path => Open(path)" />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudPaper Outlined="true" Class="pa-3">
+            <MudText Typo="Typo.h6" Class="mb-2">New</MudText>
+            <MudTextField T="string" @bind-Value="_newFolder" Label="Folder" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2"
+                          HelperText="Created if it doesn't exist; must not contain a project yet" />
+            <MudTextField T="string" @bind-Value="_newName" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2"
+                          HelperText="Default: the folder name" />
+            <MudStack Row="true" Spacing="2">
+                <MudSelect T="string" @bind-Value="_newEndian" Label="Endian" Variant="Variant.Outlined" Margin="Margin.Dense">
+                    <MudSelectItem Value="@("little")">little</MudSelectItem>
+                    <MudSelectItem Value="@("big")">big</MudSelectItem>
+                </MudSelect>
+                <MudTextField T="string" @bind-Value="_newLength" Label="Length prefix" Variant="Variant.Outlined" Margin="Margin.Dense"
+                              HelperText="e.g. varuint32, u16, u32be" />
+            </MudStack>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" OnClick="Create" Disabled="string.IsNullOrWhiteSpace(_newFolder)">
+                Create
+            </MudButton>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private IReadOnlyList<ProjectEntry> _known = [];
+    private string? _openPath;
+    private string? _newFolder;
+    private string? _newName;
+    private string _newEndian = "little";
+    private string _newLength = "varuint32";
+
+    private string? StartFolder => Store.Options.Workspace ?? (_known.Count > 0 ? Path.GetDirectoryName(_known[0].File) : null);
+
+    protected override void OnInitialized()
+    {
+        // "/" goes straight to the project given with --project; "/projects" always shows this page.
+        if (Store.Initial is { } initial && new Uri(Navigation.Uri).AbsolutePath == "/")
+        {
+            Navigation.NavigateTo(ProjectContext.LinkTo(initial.Id), replace: true);
+            return;
+        }
+
+        _known = Store.Known();
+        Store.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        _known = Store.Known();
+        StateHasChanged();
+    });
+
+    /// <summary>Moves a project to the top of the recent list when it is opened from the table.</summary>
+    private void Touch(ProjectEntry entry)
+    {
+        try
+        {
+            Store.Open(entry.File);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException)
+        {
+            // The project page shows why it can't be loaded.
+        }
+    }
+
+    private Task Open(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return Task.CompletedTask;
+        Go(() => Store.Open(path.Trim().Trim('"')));
+        return Task.CompletedTask;
+    }
+
+    private void Create() => Go(() => Store.Create(_newFolder!.Trim().Trim('"'), _newName, _newEndian, _newLength.Trim()));
+
+    private void Go(Func<ProjectEntry> action)
+    {
+        try
+        {
+            Navigation.NavigateTo(ProjectContext.LinkTo(action().Id));
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or ArgumentException
+                                      or YamlDotNet.Core.YamlException or System.FormatException)
+        {
+            Snackbar.Add(e.Message, MudBlazor.Severity.Error);
+        }
+    }
+
+    public void Dispose() => Store.Changed -= OnChanged;
+}
