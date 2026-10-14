@@ -178,6 +178,11 @@ public enum LengthKind
     Eof,
     /// <summary>A zero terminator (strings and bytes only).</summary>
     Zero,
+    /// <summary>
+    /// Arrays only: elements follow until one for which <see cref="LengthSpec.Expression"/>, evaluated over that
+    /// element's fields, is true. That element is the last one.
+    /// </summary>
+    Until,
 }
 
 public sealed record LengthSpec(LengthKind Kind, PrimitiveRef? Prefix = null, int Fixed = 0, string? Expression = null)
@@ -193,6 +198,7 @@ public sealed record LengthSpec(LengthKind Kind, PrimitiveRef? Prefix = null, in
         LengthKind.Fixed => Fixed.ToString(System.Globalization.CultureInfo.InvariantCulture),
         LengthKind.Expression => Expression!,
         LengthKind.Eof => "eof",
+        LengthKind.Until => "until " + Expression,
         _ => "zero",
     };
 }

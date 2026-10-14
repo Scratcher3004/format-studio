@@ -45,6 +45,8 @@ public sealed class RandomValues
                 _random.NextBytes(buffer);
                 return JsonValue.Create(Hex.Format(buffer));
             }
+            case ArrayRef { Length.Kind: LengthKind.Until } until:
+                return UntilArray(until, scope, deep, depth);
             case ArrayRef array:
             {
                 var count = Count(array.Length, scope, deep, field?.MaxItems, field?.MinItems);
@@ -183,8 +185,7 @@ public sealed class RandomValues
                     // External tag: pick the case selected by the earlier field, or set that field to match the case.
                     try
                     {
-                        var tag = _context.Evaluator.EvaluateLong(Expr.Parse(named.Tag), scope);
-                        variantCase = variant.Cases.FirstOrDefault(c => _context.CaseTag(variant, c) == tag) ?? variantCase;
+                        variantCase = _context.FindCase(variant, _context.Evaluator.Evaluate(Expr.Parse(named.Tag), scope)) ?? variantCase;
                     }
                     catch (ExprException)
                     {
@@ -193,11 +194,14 @@ public sealed class RandomValues
                     if (Expr.Parse(named.Tag) is NameExpr tagField && scope.Definition.Fields.FirstOrDefault(f => f.Name == tagField.Name) is
                             { Computed: null, Const: null } tagFieldDef)
                     {
-                        var tagValue = _context.CaseTag(variant, variantCase) ?? 0;
-                        scope.Value[tagField.Name] = _project.Unalias(tagFieldDef.Type) is NamedRef tagRef && _project.Find(tagRef.Name) is EnumDef e
-                            && e.FindByValue(tagValue) is { } member
-                            ? JsonValue.Create(member.Name)
-                            : JsonValues.FromInteger(tagValue);
+                        scope.Value[tagField.Name] = _context.CaseTag(variant, variantCase) switch
+                        {
+                            string text => JsonValue.Create(text),
+                            long number when _project.Unalias(tagFieldDef.Type) is NamedRef tagRef && _project.Find(tagRef.Name) is EnumDef e
+                                && e.FindByValue(number) is { } member => JsonValue.Create(member.Name),
+                            long number => JsonValues.FromInteger(number),
+                            _ => JsonValue.Create(0),
+                        };
                     }
                 }
 
@@ -227,6 +231,45 @@ public sealed class RandomValues
             }
             default:
                 return null;
+        }
+    }
+
+    /// <summary>
+    /// Elements for which the end condition is false, then one for which it is true. Elements are drawn at random until
+    /// one fits, so a condition that is rarely true (e.g. a sentinel byte) takes a few hundred attempts.
+    /// </summary>
+    private JsonArray UntilArray(ArrayRef array, StructScope? scope, bool deep, int depth)
+    {
+        var structDef = (StructDef)_project.Find(((NamedRef)_project.Unalias(array.Element)).Name)!;
+        var condition = Expr.Parse(array.Length.Expression!);
+        var items = new JsonArray();
+        var before = deep ? 0 : _random.Next(MaxItems);
+        for (var i = 0; i <= before; i++)
+        {
+            var last = i == before;
+            JsonNode? item = null;
+            for (var attempt = 0; attempt < 2000 && item == null; attempt++)
+            {
+                var candidate = Generate(array.Element, null, scope, depth + 1);
+                if (candidate is JsonObject obj && Ends(obj) == last) item = candidate;
+            }
+
+            if (item != null) items.Add(item);
+            else if (!last) i = before - 1;
+        }
+
+        return items;
+
+        bool Ends(JsonObject element)
+        {
+            try
+            {
+                return _context.Evaluator.EvaluateBool(condition, new StructScope(_context, structDef, element, scope));
+            }
+            catch (ExprException)
+            {
+                return false;
+            }
         }
     }
 

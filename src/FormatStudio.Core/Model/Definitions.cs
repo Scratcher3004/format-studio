@@ -89,13 +89,24 @@ public sealed class EnumDef : TypeDef
 public sealed class VariantCase
 {
     public required string Name { get; set; }
-    /// <summary>Numeric tag, or null when <see cref="TagMember"/> names an enum member.</summary>
+    /// <summary>Numeric tag, or null when <see cref="TagMember"/> gives the tag.</summary>
     public long? TagValue { get; set; }
+    /// <summary>The enum member name of the tag, or the tag itself when the tags are strings.</summary>
     public string? TagMember { get; set; }
     /// <summary>The payload, or null for a case without data.</summary>
     public TypeRef? Type { get; set; }
     public string? Title { get; set; }
     public string? Doc { get; set; }
+}
+
+public enum VariantTagKind
+{
+    /// <summary>Numbers.</summary>
+    Integer,
+    /// <summary>Members of the enum named by <see cref="VariantDef.Tag"/>.</summary>
+    Enum,
+    /// <summary>Strings, e.g. registry names.</summary>
+    String,
 }
 
 /// <summary>
@@ -104,7 +115,7 @@ public sealed class VariantCase
 /// </summary>
 public sealed class VariantDef : TypeDef
 {
-    /// <summary>A primitive or a reference to an enum. Null when the tag is always external.</summary>
+    /// <summary>A primitive, a string type or a reference to an enum. Null when the tag is always external.</summary>
     public TypeRef? Tag { get; set; }
     public List<VariantCase> Cases { get; } = [];
 

@@ -139,6 +139,48 @@ public class CodecTests
     }
 
     [Fact]
+    public void StringTags()
+    {
+        var project = Project(Endian.Big,
+            "alias: Id\ntype: string\n",
+            "variant: Source\ntag: Id\ncases:\n  - name: block\n    tag: minecraft:block\n    type: i32\n  - name: none\n    tag: minecraft:none\n",
+            "variant: Data\ncases:\n  - name: text\n    tag: \"mod:text\"\n    type: string\n  - name: flag\n    tag: \"mod:flag\"\n    type: bool\n",
+            "struct: Entry\nfields:\n  - kind: Id\n  - id: u8\n  - name: data\n    type: Data\n    tag: kind\n");
+        Assert.Equal("0f6d696e6563726166743a626c6f636b00000007", Encode(project, "Source", """{"block": 7}"""));
+        Assert.Equal("""{"none":null}""", Decode(project, "Source", "0e6d696e6563726166743a6e6f6e65")!.ToJsonString());
+        Assert.Equal("""{"kind":"mod:flag","id":3,"data":{"flag":true}}""", Decode(project, "Entry", "086d6f643a666c61670301")!.ToJsonString());
+        Assert.Equal("086d6f643a74657874" + "05" + "0161", Encode(project, "Entry", """{"kind": "mod:text", "id": 5, "data": {"text": "a"}}"""));
+        Assert.False(new Codec(project).Encode("Entry", JsonNode.Parse("""{"kind": "mod:flag", "id": 5, "data": {"text": "a"}}""")).Success);
+        Assert.Contains(new Codec(project).Decode("Source", Hex.Parse("0178")).Diagnostics, d => d.Message.Contains("no case with tag 'x'"));
+    }
+
+    [Fact]
+    public void ArraysUntilAnElement()
+    {
+        var project = Project(Endian.Big,
+            "struct: Item\nfields:\n  - index: u8\n  - name: value\n    type: i16\n    if: index != 255\n",
+            "struct: Items\nfields:\n  - name: items\n    type: {array: Item, until: \"index == 255\"}\n  - after: u8\n");
+        Assert.Equal("010007" + "02ffff" + "ff" + "09",
+            Encode(project, "Items", """{"items": [{"index": 1, "value": 7}, {"index": 2, "value": -1}, {"index": 255}], "after": 9}"""));
+        Assert.Equal("""{"items":[{"index":255}],"after":9}""", Decode(project, "Items", "ff09")!.ToJsonString());
+
+        var codec = new Codec(project);
+        Assert.Contains(codec.Encode("Items", JsonNode.Parse("""{"items": [{"index": 1, "value": 7}], "after": 9}""")).Diagnostics,
+            d => d.Message.Contains("The last element must end the array"));
+        Assert.Contains(codec.Encode("Items", JsonNode.Parse("""{"items": [{"index": 255}, {"index": 255}], "after": 9}""")).Diagnostics,
+            d => d.Message.Contains("a reader stops after this element"));
+        Assert.False(codec.Encode("Items", JsonNode.Parse("""{"items": [], "after": 9}""")).Success);
+        Assert.Contains(codec.Decode("Items", Hex.Parse("010007")).Diagnostics, d => d.Message.Contains("The data ends before an element where index == 255"));
+
+        var random = new RandomValues(project, seed: 3);
+        for (var i = 0; i < 20; i++)
+        {
+            var result = Simulator.RoundTripValue(codec, Codec.ParseType("Items"), random.Generate(Codec.ParseType("Items")));
+            Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        }
+    }
+
+    [Fact]
     public void BitfieldMatchesTheJavaPositionExample()
     {
         var project = Project(Endian.Big, "bitfield: Position\ntype: i64\nfields:\n  - {name: x, bits: 26, signed: true}\n  - {name: z, bits: 26, signed: true}\n  - {name: y, bits: 12, signed: true}\n");

@@ -192,6 +192,17 @@ public sealed class FormatProject
         throw new FormatDefinitionException($"Alias cycle at {type}");
     }
 
+    /// <summary>
+    /// What a variant's tags are: the tag type decides, and an external tag (no tag type) is a string tag when a case
+    /// gives its tag as text.
+    /// </summary>
+    public VariantTagKind TagKind(VariantDef variant) => variant.Tag switch
+    {
+        null => variant.Cases.Any(c => c.TagMember != null) ? VariantTagKind.String : VariantTagKind.Integer,
+        NamedRef named when Find(named.Name) is EnumDef => VariantTagKind.Enum,
+        var tag => Unalias(tag) is StringRef ? VariantTagKind.String : VariantTagKind.Integer,
+    };
+
     public static FormatProject InMemory(IEnumerable<TypeDef> definitions, ProjectSettings? settings = null)
     {
         var project = new FormatProject(settings ?? new ProjectSettings(), System.IO.Directory.GetCurrentDirectory());

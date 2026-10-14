@@ -158,6 +158,10 @@ public sealed class Validator
                 }
 
                 break;
+            case ArrayRef { Length.Kind: LengthKind.Until } array:
+                CheckUntil(array, source, path);
+                CheckType(array.Element, source, path + "[]", null);
+                break;
             case ArrayRef array:
                 CheckLength(array.Length, source, path, earlier, allowZero: false);
                 CheckType(array.Element, source, path + "[]", null);
@@ -206,36 +210,60 @@ public sealed class Validator
             case LengthKind.Fixed when length.Fixed < 0:
                 _diagnostics.Error("A fixed length can't be negative", source, path);
                 break;
+            case LengthKind.Until:
+                _diagnostics.Error("'until' only applies to arrays", source, path);
+                break;
         }
+    }
+
+    /// <summary>The end condition of an array is evaluated over the fields of each element, which must be a struct.</summary>
+    private void CheckUntil(ArrayRef array, SourceLocation? source, string path)
+    {
+        if (_project.Unalias(array.Element) is not NamedRef element || _project.Find(element.Name) is not StructDef structDef)
+        {
+            _diagnostics.Error("An array with 'until' needs struct elements, whose fields the condition uses", source, path);
+            return;
+        }
+
+        CheckExpression(array.Length.Expression, structDef.Fields.Select(f => f.Name).ToHashSet(StringComparer.Ordinal), null, source, path, "until");
     }
 
     private void CheckVariant(VariantDef variant)
     {
-        EnumDef? tagEnum = null;
-        if (variant.Tag is NamedRef tagRef)
-        {
-            tagEnum = _project.Find(tagRef.Name) as EnumDef;
-            if (tagEnum == null) _diagnostics.Error($"Variant {variant.Name}: the tag '{tagRef.Name}' must be an enum", variant.Source);
-        }
-        else if (variant.Tag is PrimitiveRef primitive && !Primitives.IsInteger(primitive.Kind))
-        {
+        var kind = _project.TagKind(variant);
+        var tagEnum = variant.Tag is NamedRef tagRef ? _project.Find(tagRef.Name) as EnumDef : null;
+        var resolvedTag = variant.Tag != null && kind != VariantTagKind.Enum ? _project.Unalias(variant.Tag) : null;
+        if (variant.Tag is NamedRef named && tagEnum == null && resolvedTag is not (StringRef or PrimitiveRef))
+            _diagnostics.Error($"Variant {variant.Name}: the tag '{named.Name}' must be an enum, an integer or a string", variant.Source);
+        else if (resolvedTag is PrimitiveRef primitive && !Primitives.IsInteger(primitive.Kind))
             _diagnostics.Error($"Variant {variant.Name}: the tag must be an integer type", variant.Source);
-        }
+        else if (resolvedTag is StringRef { Length.Kind: LengthKind.Eof or LengthKind.Expression })
+            _diagnostics.Error($"Variant {variant.Name}: a string tag needs a length prefix, a fixed length or a terminator", variant.Source);
 
-        var tags = new Dictionary<long, string>();
+        var tags = new Dictionary<object, string>();
         foreach (var variantCase in variant.Cases)
         {
             var path = $"{variant.Name}.{variantCase.Name}";
-            long? tag = variantCase.TagValue;
-            if (variantCase.TagMember != null)
+            object? tag = variantCase.TagValue;
+            switch (kind)
             {
-                if (tagEnum == null) _diagnostics.Error($"Case tag '{variantCase.TagMember}' needs an enum tag type", variant.Source, path);
-                else if (tagEnum.FindByName(variantCase.TagMember) is { } member) tag = member.Value;
-                else _diagnostics.Error($"'{variantCase.TagMember}' is not a member of {tagEnum.Name}", variant.Source, path);
+                case VariantTagKind.String when variantCase.TagMember == null:
+                    _diagnostics.Error($"Case {variantCase.Name} needs a string tag", variant.Source, path);
+                    break;
+                case VariantTagKind.String:
+                    tag = variantCase.TagMember;
+                    break;
+                case VariantTagKind.Enum when variantCase.TagMember != null:
+                    if (tagEnum!.FindByName(variantCase.TagMember) is { } member) tag = member.Value;
+                    else _diagnostics.Error($"'{variantCase.TagMember}' is not a member of {tagEnum.Name}", variant.Source, path);
+                    break;
+                case VariantTagKind.Integer when variantCase.TagMember != null:
+                    _diagnostics.Error($"Case tag '{variantCase.TagMember}' needs an enum or a string tag type", variant.Source, path);
+                    break;
             }
 
-            if (tag is { } value && !tags.TryAdd(value, variantCase.Name))
-                _diagnostics.Error($"Cases {tags[value]} and {variantCase.Name} have the same tag {value}", variant.Source, path);
+            if (tag != null && !tags.TryAdd(tag, variantCase.Name))
+                _diagnostics.Error($"Cases {tags[tag]} and {variantCase.Name} have the same tag {tag}", variant.Source, path);
             if (variantCase.Type != null) CheckType(variantCase.Type, variant.Source, path, null);
         }
     }

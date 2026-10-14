@@ -48,6 +48,26 @@ public class CodegenTests
     }
 
     [Fact]
+    public void UntilArraysAndStringTagsMatchTheSimulator()
+    {
+        var directory = TestPaths.NewTempDirectory();
+        File.WriteAllText(Path.Combine(directory, "p.fstudio.yaml"), "name: p\ndefaults:\n  endian: big\n  length: varint32\nsources: [types/*.yaml]\n");
+        Directory.CreateDirectory(Path.Combine(directory, "types"));
+        File.WriteAllText(Path.Combine(directory, "types", "Item.yaml"), "struct: Item\nfields:\n  - more: bool\n  - value: i16\n");
+        File.WriteAllText(Path.Combine(directory, "types", "Source.yaml"),
+            "variant: Source\ntag: string\ncases:\n  - {name: block, tag: \"minecraft:block\", type: i32}\n  - {name: none, tag: \"minecraft:none\"}\n");
+        File.WriteAllText(Path.Combine(directory, "types", "Data.yaml"),
+            "variant: Data\ncases:\n  - {name: text, tag: \"mod:text\", type: string}\n  - {name: flag, tag: \"mod:flag\", type: bool}\n");
+        File.WriteAllText(Path.Combine(directory, "types", "A.yaml"),
+            "struct: A\nfields:\n  - name: items\n    type: {array: Item, until: \"!more\"}\n  - source: Source\n  - kind: string\n" +
+            "  - name: data\n    type: Data\n    tag: kind\n  - after: u8\n");
+        var project = FormatProject.Load(directory);
+        Assert.False(project.Diagnostics.HasErrors, string.Join("\n", project.Diagnostics));
+        var failures = GeneratedCodeVerifier.CheckAgainstSimulator(project, Target, typeof(FormatReader).Assembly, iterations: 40);
+        Assert.True(failures.Count == 0, string.Join("\n", failures.Take(20)));
+    }
+
+    [Fact]
     public void GeneratedDispatchCallsTheVisitor()
     {
         var project = FormatProject.Load(TestPaths.JavaSample);

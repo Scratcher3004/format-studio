@@ -172,6 +172,23 @@ public class DslTests
     }
 
     [Fact]
+    public void UntilArraysAndStringTags()
+    {
+        var array = Assert.IsType<ArrayRef>(DslReader.ReadType("{array: Item, until: \"index == 255\"}"));
+        Assert.Equal(new LengthSpec(LengthKind.Until, Expression: "index == 255"), array.Length);
+        Assert.Null(TypeExpressions.TryFormat(array));
+        AssertStable(Read("struct: S\nfields:\n  - name: items\n    type: {array: Item, until: \"!slot.more\"}\n"));
+
+        var variant = Assert.IsType<VariantDef>(Read("variant: V\ntag: string\ncases:\n  - name: a\n    tag: minecraft:a\n    type: u8\n"));
+        Assert.Equal("minecraft:a", variant.Cases[0].TagMember);
+        AssertStable(variant);
+
+        var diagnostics = new DiagnosticBag();
+        Assert.Null(DslReader.Read("struct: S\nfields:\n  - name: string\n", "name.yaml", diagnostics));
+        Assert.Contains("{name: name, type: T}", diagnostics[0].Message);
+    }
+
+    [Fact]
     public void ErrorsHaveLocations()
     {
         var diagnostics = new DiagnosticBag();
@@ -244,5 +261,25 @@ public class DslTests
         Assert.Contains(errors, e => e.Contains("uses 'later'"));
         Assert.Contains(errors, e => e.Contains("have the same tag 1"));
         Assert.Contains(errors, e => e.Contains("the use site needs 'tag'"));
+    }
+
+    [Fact]
+    public void ValidatorChecksUntilArraysAndStringTags()
+    {
+        var project = FormatProject.InMemory([
+            Read("struct: Item\nfields:\n  - index: u8\n"),
+            Read("struct: S\nfields:\n  - name: ok\n    type: {array: Item, until: \"index == 0\"}\n  - name: unknown\n    type: {array: Item, until: \"missing\"}\n" +
+                 "  - name: primitive\n    type: {array: u8, until: \"x\"}\n"),
+            Read("variant: Strings\ntag: string\ncases:\n  - name: a\n    tag: x\n  - name: b\n    tag: x\n  - name: c\n    tag: 3\n"),
+            Read("variant: Numbers\ntag: u8\ncases:\n  - name: a\n    tag: text\n"),
+        ]);
+        Validation.Validator.Validate(project);
+        var errors = project.Diagnostics.Where(d => d.Severity == Severity.Error).Select(d => d.Message).ToList();
+        Assert.Contains(errors, e => e.Contains("The until expression uses 'missing'"));
+        Assert.Contains(errors, e => e.Contains("needs struct elements"));
+        Assert.Contains(errors, e => e.Contains("have the same tag x"));
+        Assert.Contains(errors, e => e.Contains("Case c needs a string tag"));
+        Assert.Contains(errors, e => e.Contains("needs an enum or a string tag type"));
+        Assert.Equal(5, errors.Count);
     }
 }

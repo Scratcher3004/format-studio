@@ -92,6 +92,12 @@ public sealed class Codec(FormatProject project)
 
     internal static string Describe(TypeRef type) => TypeExpressions.TryFormat(type) ?? type.ToString();
 
+    /// <summary>The struct whose fields the end condition of an <c>until</c> array uses.</summary>
+    internal StructDef ElementStruct(ArrayRef array) =>
+        project.Unalias(array.Element) is NamedRef named && project.Find(named.Name) is StructDef structDef
+            ? structDef
+            : throw new FormatDefinitionException($"An array with 'until' needs struct elements, not {Describe(array.Element)}");
+
     // ------------------------------------------------------------------ decoding
 
     private sealed class Decoder(Codec codec, WireReader reader, ValueContext context, DiagnosticBag diagnostics)
@@ -161,6 +167,24 @@ public sealed class Codec(FormatProject project)
                     var hex = Hex.Format(reader.Take(count));
                     node.Display = count <= 32 ? hex : $"{count} bytes";
                     return JsonValue.Create(hex);
+                }
+                case ArrayRef { Length.Kind: LengthKind.Until } until:
+                {
+                    var condition = Expr.Parse(until.Length.Expression!);
+                    var elementDef = codec.ElementStruct(until);
+                    var items = new JsonArray();
+                    while (true)
+                    {
+                        if (reader.Remaining == 0) throw reader.Error($"The data ends before an element where {until.Length.Expression}");
+                        if (items.Count >= codec.MaxCount) throw reader.Error($"More than {codec.MaxCount} elements");
+                        var itemPath = $"{path}[{items.Count}]";
+                        var item = Read(until.Element, scope, Child(node, $"[{items.Count}]", itemPath, until.Element), itemPath);
+                        items.Add(item);
+                        if (item is JsonObject obj && context.Evaluator.EvaluateBool(condition, new StructScope(context, elementDef, obj, scope))) break;
+                    }
+
+                    node.Display = $"{items.Count} items";
+                    return items;
                 }
                 case ArrayRef array:
                 {
@@ -369,23 +393,27 @@ public sealed class Codec(FormatProject project)
                 }
                 case VariantDef variant:
                 {
-                    long tag;
+                    object? tag;
                     if (named.Tag != null)
                     {
                         if (scope == null) throw reader.Error("External variant tag outside a struct");
-                        tag = context.Evaluator.EvaluateLong(Expr.Parse(named.Tag), scope);
+                        tag = context.Evaluator.Evaluate(Expr.Parse(named.Tag), scope);
                     }
                     else
                     {
                         var tagNode = Child(node, "tag", path + ".tag", variant.Tag!);
                         var tagValue = Read(variant.Tag!, scope, tagNode, path + ".tag");
-                        tag = (long)(variant.Tag is NamedRef tagRef && Project.Find(tagRef.Name) is EnumDef tagEnum
-                            ? context.EnumValue(tagEnum, tagValue) ?? throw reader.Error($"Unknown tag {tagValue}")
-                            : JsonValues.Number(tagValue)!.Value);
+                        tag = Project.TagKind(variant) switch
+                        {
+                            VariantTagKind.String => JsonValues.String(tagValue),
+                            VariantTagKind.Enum => context.EnumValue((EnumDef)Project.Find(((NamedRef)variant.Tag!).Name)!, tagValue)
+                                ?? throw reader.Error($"Unknown tag {tagValue}"),
+                            _ => JsonValues.Number(tagValue),
+                        };
                     }
 
-                    var variantCase = variant.Cases.FirstOrDefault(c => context.CaseTag(variant, c) == tag)
-                        ?? throw reader.Error($"{variant.Name} has no case with tag {tag}");
+                    var variantCase = context.FindCase(variant, tag)
+                        ?? throw reader.Error($"{variant.Name} has no case with tag {(tag is string text ? $"'{text}'" : tag)}");
                     node.Display = variantCase.Name;
                     if (variantCase.Type == null) return new JsonObject { [variantCase.Name] = null };
                     var casePath = $"{path}.{variantCase.Name}";
@@ -515,6 +543,25 @@ public sealed class Codec(FormatProject project)
 
                     WriteCount(bytesRef.Length, bytes.Length, scope);
                     writer.WriteBytes(bytes);
+                    break;
+                }
+                case ArrayRef { Length.Kind: LengthKind.Until } until:
+                {
+                    var items = value as JsonArray ?? throw Error($"Expected an array, got {Show(value)}");
+                    if (items.Count == 0) throw Error($"The array needs at least its last element, where {until.Length.Expression}");
+                    var condition = Expr.Parse(until.Length.Expression!);
+                    var elementDef = codec.ElementStruct(until);
+                    for (var i = 0; i < items.Count; i++)
+                    {
+                        var itemPath = $"{path}[{i}]";
+                        Write(until.Element, items[i], scope, itemPath);
+                        var ends = items[i] is JsonObject obj && context.Evaluator.EvaluateBool(condition, new StructScope(context, elementDef, obj, scope));
+                        if (ends && i < items.Count - 1)
+                            throw new EncodeException($"{until.Length.Expression} is true here, so a reader stops after this element", itemPath);
+                        if (!ends && i == items.Count - 1)
+                            throw new EncodeException($"The last element must end the array: {until.Length.Expression} is false", itemPath);
+                    }
+
                     break;
                 }
                 case ArrayRef array:
@@ -718,17 +765,21 @@ public sealed class Codec(FormatProject project)
                     if (named.Tag != null)
                     {
                         if (scope == null) throw Error("External variant tag outside a struct");
-                        var expected = context.Evaluator.EvaluateLong(Expr.Parse(named.Tag), scope);
-                        if (expected != tag) throw Error($"The tag expression '{named.Tag}' is {expected}, but case {caseName} has tag {tag}");
+                        var expected = ValueContext.NormalizeTag(context.Evaluator.Evaluate(Expr.Parse(named.Tag), scope));
+                        if (!Equals(expected, tag)) throw Error($"The tag expression '{named.Tag}' is {expected ?? "null"}, but case {caseName} has tag {tag}");
+                    }
+                    else if (tag is string text)
+                    {
+                        Write(variant.Tag!, JsonValue.Create(text), scope, path + ".tag");
                     }
                     else if (variant.Tag is NamedRef tagRef && Project.Find(tagRef.Name) is EnumDef tagEnum)
                     {
                         var wire = tagRef.As ?? tagEnum.Type;
-                        writer.WriteInteger(wire.Kind, codec.EndianOf(wire), tag);
+                        writer.WriteInteger(wire.Kind, codec.EndianOf(wire), (long)tag);
                     }
-                    else if (variant.Tag is PrimitiveRef tagPrimitive)
+                    else if (Project.Unalias(variant.Tag!) is PrimitiveRef tagPrimitive)
                     {
-                        writer.WriteInteger(tagPrimitive.Kind, codec.EndianOf(tagPrimitive), tag);
+                        writer.WriteInteger(tagPrimitive.Kind, codec.EndianOf(tagPrimitive), (long)tag);
                     }
 
                     if (variantCase.Type != null) Write(variantCase.Type, caseValue, scope, $"{path}.{caseName}");
