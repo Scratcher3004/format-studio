@@ -182,7 +182,12 @@ public sealed class DslReader
         CheckKeys(map, FieldKeys, "a field");
         var typeNode = Get(map, "type");
         var constNode = Get(map, "const");
-        if (typeNode == null) throw Fail(node, "A field needs a 'type'");
+        if (typeNode == null)
+        {
+            throw Fail(node, map.Children.Count == 1 && Get(map, "name") != null
+                ? "A field needs a 'type'. '- name: T' is the long form without a type; a field called 'name' needs '- {name: name, type: T}'"
+                : "A field needs a 'type'");
+        }
 
         var field = new FieldDef
         {
@@ -303,7 +308,13 @@ public sealed class DslReader
         switch (kind)
         {
             case "array":
-                CheckKeys(map, ["array", "length"], "an array type");
+                CheckKeys(map, ["array", "length", "until"], "an array type");
+                if (Get(map, "until") is { } until)
+                {
+                    if (Get(map, "length") != null) throw Fail(node, "An array has either 'length' or 'until'");
+                    return new ArrayRef(ParseType(value), new LengthSpec(LengthKind.Until, Expression: Scalar(until, "until")));
+                }
+
                 return new ArrayRef(ParseType(value), length);
             case "string":
                 CheckKeys(map, ["string", "length"], "a string type");
@@ -396,8 +407,8 @@ public sealed class DslReader
     {
         CheckKeys(map, ["variant", "tag", "cases"], "a variant");
         var definition = new VariantDef { Name = name, Tag = Get(map, "tag") is { } tag ? ParseType(tag) : null };
-        if (definition.Tag is not (null or PrimitiveRef or NamedRef))
-            throw Fail(Get(map, "tag")!, "A variant tag must be a primitive or an enum");
+        if (definition.Tag is not (null or PrimitiveRef or NamedRef or StringRef))
+            throw Fail(Get(map, "tag")!, "A variant tag must be a primitive, a string or an enum");
 
         if (Get(map, "cases") is { } cases)
         {
@@ -425,7 +436,8 @@ public sealed class DslReader
                 }
                 else
                 {
-                    variantCase.TagMember = Identifier(tagNode, "enum member");
+                    // An enum member name or a string tag; the validator checks it against the tag type.
+                    variantCase.TagMember = Scalar(tagNode, "tag");
                 }
 
                 if (definition.Cases.Any(c => c.Name == variantCase.Name)) throw Fail(caseNode, $"Duplicate case '{variantCase.Name}'");

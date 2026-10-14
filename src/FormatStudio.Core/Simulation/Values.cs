@@ -219,11 +219,11 @@ internal sealed class ValueContext
                         var (caseName, caseValue) = obj.First();
                         var variantCase = variant.Cases.FirstOrDefault(c => c.Name == caseName);
                         if (variantCase == null) return null;
-                        return new VariantValue(CaseTag(variant, variantCase) ?? 0, caseName,
+                        return new VariantValue(ExprTag(variant, variantCase), caseName,
                             variantCase.Type != null ? ToExprValue(caseValue, variantCase.Type, parent) : null);
                     case VariantDef variant when JsonValues.String(node) is { } caseOnly:
                         var bare = variant.Cases.FirstOrDefault(c => c.Name == caseOnly);
-                        return bare == null ? null : new VariantValue(CaseTag(variant, bare) ?? 0, caseOnly, null);
+                        return bare == null ? null : new VariantValue(ExprTag(variant, bare), caseOnly, null);
                     case BitfieldDef bitfield when node is JsonObject obj:
                         return new DictionaryScope(bitfield.Members.ToDictionary(m => m.Name, m => m.Type switch
                         {
@@ -261,12 +261,43 @@ internal sealed class ValueContext
         return JsonValues.Number(node);
     }
 
-    public long? CaseTag(VariantDef variant, VariantCase variantCase)
+    /// <summary>The tag of a case: a long, or a string for string tags. Null when it can't be resolved.</summary>
+    public object? CaseTag(VariantDef variant, VariantCase variantCase)
     {
-        if (variantCase.TagValue is { } value) return value;
-        return variant.Tag is NamedRef tagRef && Project.Find(tagRef.Name) is EnumDef enumDef
-            && enumDef.FindByName(variantCase.TagMember!) is { } member
-            ? member.Value
-            : null;
+        switch (Project.TagKind(variant))
+        {
+            case VariantTagKind.String:
+                return variantCase.TagMember;
+            case VariantTagKind.Enum when variantCase.TagMember != null:
+                return Project.Find(((NamedRef)variant.Tag!).Name) is EnumDef enumDef && enumDef.FindByName(variantCase.TagMember) is { } member
+                    ? member.Value
+                    : null;
+            default:
+                return variantCase.TagValue;
+        }
     }
+
+    /// <summary>The tag as an expression value: a decimal or a string.</summary>
+    private object ExprTag(VariantDef variant, VariantCase variantCase) => CaseTag(variant, variantCase) switch
+    {
+        long number => (decimal)number,
+        { } text => text,
+        null => 0m,
+    };
+
+    /// <summary>The case with the given tag (a number or a string, as read or evaluated).</summary>
+    public VariantCase? FindCase(VariantDef variant, object? tag)
+    {
+        var key = NormalizeTag(tag);
+        return key == null ? null : variant.Cases.FirstOrDefault(c => Equals(CaseTag(variant, c), key));
+    }
+
+    /// <summary>Tags as longs or strings, so that a decimal from an expression equals the long of a case.</summary>
+    public static object? NormalizeTag(object? tag) => tag switch
+    {
+        decimal d when d == decimal.Truncate(d) && d >= long.MinValue && d <= long.MaxValue => (long)d,
+        long or string => tag,
+        int i => (long)i,
+        _ => null,
+    };
 }

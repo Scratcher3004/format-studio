@@ -467,6 +467,13 @@ internal sealed class Emitter(FormatProject project, CSharpOptions options)
             {
                 if (call.Arguments.Count != 1) throw new CodegenException($"{call.Function}() takes one argument");
                 var argument = Translate(call.Arguments[0], context);
+                if (call.Function == "tagof" && argument.Type != null && project.Unalias(argument.Type) is NamedRef tagged
+                    && Definition(tagged.Name) is VariantDef taggedVariant && project.TagKind(taggedVariant) == VariantTagKind.String)
+                {
+                    var tagText = $"{Global(tagged.Name)}.TagOf({argument.Raw}.Kind)";
+                    return new Value(tagText, tagText, Kind.Text, null);
+                }
+
                 var code = call.Function switch
                 {
                     "len" => argument.MayBeNull ? $"(long)({argument.Raw}?.Length ?? 0)" : $"(long){argument.Raw}.Length",
@@ -749,6 +756,20 @@ internal sealed class Emitter(FormatProject project, CSharpOptions options)
                 var elementType = Type(array.Element, true);
                 var result = Temp("array");
                 var elementContext = new Context { Reader = reader, Writer = context.Writer, Resolve = context.Resolve };
+                if (array.Length.Kind == LengthKind.Until)
+                {
+                    var list = Temp("list");
+                    var item = Temp("item");
+                    w.Line($"var {list} = new global::System.Collections.Generic.List<{elementType}>();");
+                    w.Open("while (true)");
+                    w.Line($"var {item} = {Read(array.Element, w, elementContext)};");
+                    w.Line($"{list}.Add({item});");
+                    w.Line($"if ({Condition(array.Length.Expression!, ElementContext(array, item))}) break;");
+                    w.Close();
+                    w.Line($"var {result} = {list}.ToArray();");
+                    return result;
+                }
+
                 if (array.Length.Kind == LengthKind.Eof)
                 {
                     var list = Temp("list");
@@ -810,6 +831,8 @@ internal sealed class Emitter(FormatProject project, CSharpOptions options)
                         return Read(alias.Target, w, context);
                     case EnumDef enumDef:
                         return $"({Global(enumDef.Name)}){reader}.Read{Method(named.As ?? enumDef.Type)}()";
+                    case VariantDef variant when named.Tag != null && project.TagKind(variant) == VariantTagKind.String:
+                        return $"{Global(named.Name)}.Read(ref {reader}, {Global(named.Name)}.CaseOf({Expression(named.Tag, context, out _)}))";
                     case VariantDef variant when named.Tag != null:
                         return $"{Global(named.Name)}.Read(ref {reader}, ({VariantTagType(variant, true)}){Expression(named.Tag, context, out _)})";
                     default:
@@ -818,6 +841,22 @@ internal sealed class Emitter(FormatProject project, CSharpOptions options)
             default:
                 throw new CodegenException($"Unsupported type {type}");
         }
+    }
+
+    /// <summary>Names in the end condition of an <c>until</c> array are the fields of the element.</summary>
+    private Context ElementContext(ArrayRef array, string item)
+    {
+        if (project.Unalias(array.Element) is not NamedRef named || Definition(named.Name) is not StructDef structDef)
+            throw new CodegenException($"An array with 'until' needs struct elements, not {Describe(array.Element)}");
+        return new Context
+        {
+            Resolve = n => structDef.Fields.FirstOrDefault(f => f.Name == n) switch
+            {
+                null => null,
+                { IsInput: false } => throw new CodegenException($"The until condition of {structDef.Name}[] uses '{n}', which is not stored in {structDef.Name}"),
+                var f => FieldValue($"{item}.{Member(f.Name, structDef.Name)}", f.Type, f.If != null),
+            },
+        };
     }
 
     private static string NewArray(string elementType, string count)
@@ -980,12 +1019,32 @@ internal sealed class Emitter(FormatProject project, CSharpOptions options)
             isClass ? "A class because it contains itself." : null);
         w.Open($"public {(isClass ? "sealed partial class" : "partial struct")} {name} : {options.SerializableInterface}<{name}>");
 
+        var stringTags = project.TagKind(variant) == VariantTagKind.String;
+        var resolvedTag = variant.Tag != null ? project.Unalias(variant.Tag) : null;
         if (tagType == "Case")
         {
-            var underlying = variant.Tag is PrimitiveRef primitive ? PrimitiveType(primitive.Kind) : "long";
+            // String tags are mapped to the case index; CaseOf and TagOf convert.
+            var underlying = stringTags ? "int" : resolvedTag is PrimitiveRef primitive ? PrimitiveType(primitive.Kind) : "long";
             w.Open($"public enum Case : {underlying}");
-            foreach (var variantCase in variant.Cases) w.Line($"{Id(variantCase.Name)} = {variantCase.TagValue},");
+            for (var i = 0; i < variant.Cases.Count; i++)
+                w.Line($"{Id(variant.Cases[i].Name)} = {(stringTags ? i : variant.Cases[i].TagValue)},");
             w.Close();
+            w.Line();
+        }
+
+        if (stringTags)
+        {
+            w.Line("/// <summary>The case of a tag.</summary>");
+            w.Open("public static Case CaseOf(string tag) => tag switch");
+            foreach (var variantCase in variant.Cases) w.Line($"{Literal(variantCase.TagMember!)} => Case.{Id(variantCase.Name)},");
+            w.Line($"_ => throw new {options.ExceptionType}($\"Unknown {name} tag '{{tag}}'\"),");
+            w.Close(";");
+            w.Line();
+            w.Line("/// <summary>The tag of a case.</summary>");
+            w.Open("public static string TagOf(Case kind) => kind switch");
+            foreach (var variantCase in variant.Cases) w.Line($"Case.{Id(variantCase.Name)} => {Literal(variantCase.TagMember!)},");
+            w.Line($"_ => throw new {options.ExceptionType}($\"Unknown {name} case {{kind}}\"),");
+            w.Close(";");
             w.Line();
         }
 
@@ -1010,18 +1069,14 @@ internal sealed class Emitter(FormatProject project, CSharpOptions options)
 
         w.Line();
         w.Open($"public static {name} Read(ref {options.ReaderType} reader)");
-        switch (variant.Tag)
-        {
-            case NamedRef tag when Definition(tag.Name) is EnumDef enumDef:
-                w.Line($"return Read(ref reader, ({Global(enumDef.Name)})reader.Read{Method(tag.As ?? enumDef.Type)}());");
-                break;
-            case PrimitiveRef primitive:
-                w.Line($"return Read(ref reader, ({Global(name)}.Case)reader.Read{Method(primitive)}());");
-                break;
-            default:
-                w.Line($"throw new {options.ExceptionType}(\"{name} needs its tag from the enclosing type\");");
-                break;
-        }
+        if (variant.Tag is NamedRef tagRef && Definition(tagRef.Name) is EnumDef tagEnum)
+            w.Line($"return Read(ref reader, ({Global(tagEnum.Name)})reader.Read{Method(tagRef.As ?? tagEnum.Type)}());");
+        else if (variant.Tag != null && stringTags)
+            w.Line($"return Read(ref reader, CaseOf({Read(variant.Tag, w, new Context { Resolve = _ => null })}));");
+        else if (resolvedTag is PrimitiveRef primitive)
+            w.Line($"return Read(ref reader, ({Global(name)}.Case)reader.Read{Method(primitive)}());");
+        else
+            w.Line($"throw new {options.ExceptionType}(\"{name} needs its tag from the enclosing type\");");
 
         w.Close();
         w.Line();
@@ -1049,15 +1104,18 @@ internal sealed class Emitter(FormatProject project, CSharpOptions options)
 
         var readOnly = isClass ? "" : "readonly ";
         w.Open($"public {readOnly}void Write(ref {options.WriterType} writer)");
-        switch (variant.Tag)
+        if (variant.Tag is NamedRef writeTag && Definition(writeTag.Name) is EnumDef writeEnum)
         {
-            case NamedRef tag when Definition(tag.Name) is EnumDef enumDef:
-                var wire = tag.As ?? enumDef.Type;
-                w.Line($"writer.Write{Method(wire)}(({PrimitiveType(wire.Kind)})Kind);");
-                break;
-            case PrimitiveRef primitive:
-                w.Line($"writer.Write{Method(primitive)}(({PrimitiveType(primitive.Kind)})Kind);");
-                break;
+            var wire = writeTag.As ?? writeEnum.Type;
+            w.Line($"writer.Write{Method(wire)}(({PrimitiveType(wire.Kind)})Kind);");
+        }
+        else if (variant.Tag != null && stringTags)
+        {
+            Write(variant.Tag, "TagOf(Kind)", w, new Context { Resolve = _ => null });
+        }
+        else if (resolvedTag is PrimitiveRef writePrimitive)
+        {
+            w.Line($"writer.Write{Method(writePrimitive)}(({PrimitiveType(writePrimitive.Kind)})Kind);");
         }
 
         w.Line("WriteContent(ref writer);");

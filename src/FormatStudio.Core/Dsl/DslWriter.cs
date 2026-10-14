@@ -129,6 +129,10 @@ public static class DslWriter
             case BytesRef bytes:
                 map.Add("bytes", bytes.Length.Kind == LengthKind.Default ? "default" : LengthValue(bytes.Length));
                 break;
+            case ArrayRef { Length.Kind: LengthKind.Until } array:
+                map.Add("array", Type(array.Element));
+                map.Add("until", array.Length.Expression!);
+                break;
             case ArrayRef array:
                 map.Add("array", Type(array.Element));
                 AddLength(map, array.Length);

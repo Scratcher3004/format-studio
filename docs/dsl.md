@@ -71,13 +71,19 @@ values:
   adventure: {value: 2, doc: Can't break blocks.}
 
 variant: ParticleData   # tagged union
-tag: varuint32          # tag read before the value; a primitive or {type: SomeEnum, as: u8}
+tag: varuint32          # tag read before the value; a primitive, a string type or {type: SomeEnum, as: u8}
 cases:                  # without "tag:" the field using the variant must give one
   - name: block
-    tag: 2              # a number, or an enum member name when the tag is an enum
+    tag: 2              # a number, an enum member name when the tag is an enum, or the text for string tags
     type: varint32
   - name: none
     tag: 3              # no type: the case has no data
+
+variant: PositionSource # string tags, e.g. registry names
+tag: string             # a string type or an alias of one
+cases:
+  - {name: block, tag: "minecraft:block", type: BlockPos}
+  - {name: entity, tag: "minecraft:entity", type: EntitySource}
 
 alias: Identifier
 type: {string: utf8, length: u16}
@@ -112,6 +118,12 @@ Mapping forms: `{array: T, length: L}`, `{string: mutf8, length: L}` (`length: z
 length-delimited section), `{fixed: i32, fraction: 5}` (fixed point), `{nbt: java-network}`,
 `{type: Enum, as: zigzag32}`, `{type: Variant, tag: "expression"}`. A length `L` is a number, a primitive (prefix),
 `eof`, `zero`, `default` or an expression.
+
+`{array: Item, until: "index == 255"}` is a list without a count that ends with the first element for which the
+condition is true; that element is part of the list (a sentinel such as Java's entity data terminator, or a
+continuation bit as in `until: "!slot.more"`). The elements must be structs, and the condition uses their fields
+(`_parent` is the struct holding the array). An external variant tag (`tag: "expression"`) whose cases have text tags
+compares strings, e.g. a recipe type name stored before the recipe id.
 
 ### Expressions
 

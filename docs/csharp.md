@@ -18,10 +18,15 @@ are referenced but not generated), `validateRanges`, `validateEnums`, and the ru
 - Packets implement the packet interface with `static uint PacketId`; `<registry>.Dispatch(id, ref reader, ref visitor)`
   switches over the ids without boxing.
 - Variants are tagged structs: `Kind` (the tag enum, or a nested `Case` enum), one field per case,
-  `FromCase(...)` factories, `Read(ref reader, kind)` / `WriteContent` for external tags.
+  `FromCase(...)` factories, `Read(ref reader, kind)` / `WriteContent` for external tags. With string tags the `Case`
+  values are the case indexes, and `CaseOf(tag)` / `TagOf(kind)` convert.
+- Arrays with `until` are read element by element until the condition holds for the last one read.
 - Aliases are inlined, computed and const fields are not exposed, conditional fields are nullable.
 - Counts are checked against the remaining bytes and `maxItems` before allocating.
 - NBT is kept as raw bytes (`byte[]`).
+- Not supported: `_parent` and `_root` in expressions, and members of bit fields (`flags.hasMax`). The registry
+  dispatches by id alone, so packets that share an id in different groups (protocol states, directions) are reported
+  and only the first is dispatched.
 
 The output only goes to the target's folder inside the project, and only files starting with the generated-file
 marker are replaced or deleted (others are reported and left alone). Copying the reviewed output into a source tree is

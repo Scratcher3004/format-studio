@@ -10,7 +10,8 @@ public interface IExprScope
 }
 
 /// <summary>A variant value during evaluation, so that <c>tagof(x)</c> works.</summary>
-public sealed record VariantValue(decimal Tag, string Case, object? Value);
+/// <param name="Tag">A decimal, or a string for string tags.</param>
+public sealed record VariantValue(object Tag, string Case, object? Value);
 
 /// <summary>
 /// Evaluates expressions. Values are null, bool, decimal (integers and enum values), double, string, byte[],

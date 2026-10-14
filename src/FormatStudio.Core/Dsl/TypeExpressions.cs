@@ -97,7 +97,7 @@ public static partial class TypeExpressions
                 return "nbt";
             case OptionalRef optional:
                 return TryFormat(optional.Inner) is { } inner ? inner + "?" : null;
-            case ArrayRef array when array.Length.Kind != LengthKind.Zero:
+            case ArrayRef array when array.Length.Kind is not (LengthKind.Zero or LengthKind.Until):
                 if (array.Length.Expression is { } expression && (expression.Contains('[') || expression.Contains(']')))
                     return null;
                 return TryFormat(array.Element) is { } element ? $"{element}[{FormatLength(array.Length)}]" : null;
