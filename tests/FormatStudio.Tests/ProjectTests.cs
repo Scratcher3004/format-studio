@@ -1,3 +1,4 @@
+using FormatStudio.Dsl;
 using FormatStudio.Model;
 using FormatStudio.Projects;
 using FormatStudio.Simulation;
@@ -45,5 +46,23 @@ public class ProjectTests
             .Select(r => $"{r.Type}: {string.Join("; ", r.Diagnostics.Where(d => d.Severity == Severity.Error))}")
             .ToList();
         Assert.True(failures.Count == 0, string.Join("\n", failures.Take(20)));
+    }
+
+    [Theory]
+    [InlineData("enum: NewEnum\ntype: u8\nvalues: {a: 0}\n", "types/enums/NewEnum.yaml", "enums/NewEnum.yaml")]
+    [InlineData("alias: NewAlias\ntype: u8\n", "types/aliases/NewAlias.yaml", "aliases/NewAlias.yaml")]
+    [InlineData("struct: NewStruct\nfields:\n  - x: u8\n", "types/NewStruct.yaml", "types/NewStruct.yaml")]
+    [InlineData("packet: NewPacket\nid: 0\nfields:\n  - x: u8\n", "packets/NewPacket.yaml", "packets/NewPacket.yaml")]
+    public void NewDefinitionsGoToAFolderOfTheirKindThatIsLoaded(string yaml, string inJavaSample, string withDefaultSources)
+    {
+        var definition = DslReader.Read(yaml, "new.yaml", new DiagnosticBag())!;
+        definition.Source = null;
+
+        var java = FormatProject.Load(TestPaths.JavaSample);
+        Assert.Equal(inJavaSample, java.Relative(java.FileFor(definition)));
+        Assert.True(java.IsSource(java.FileFor(definition)));
+
+        var plain = FormatProject.InMemory([]);
+        Assert.Equal(withDefaultSources, plain.Relative(plain.FileFor(definition)));
     }
 }

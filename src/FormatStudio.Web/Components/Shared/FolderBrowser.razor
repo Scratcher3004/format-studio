@@ -1,4 +1,4 @@
-@* Browses the server's folders (or only those under Root); picking a folder or a listed file reports its full path. *@
+@* Browses the server's folders (or only those under Root); picking a folder or a listed file reports its full path. With PickOnOpen, opening a folder picks it. *@
 
 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-1">
     <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="AtTop" OnClick="Up" title="Parent folder" />
@@ -8,14 +8,17 @@
     {
         <MudIconButton Icon="@Icons.Material.Filled.CreateNewFolder" Size="Size.Small" OnClick="() => _newFolder = _newFolder == null ? string.Empty : null"
                        title="New folder" />
-        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => Picked.InvokeAsync(_folder)">Use this folder</MudButton>
+        @if (!PickOnOpen)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => Picked.InvokeAsync(_folder)">Use this folder</MudButton>
+        }
     }
 </MudStack>
 @if (_newFolder != null)
 {
     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
         <MudTextField T="string" @bind-Value="_newFolder" Label="New folder name" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
-                      OnKeyUp="@(e => { if (e.Key == "Enter") CreateFolder(); })" />
+                      OnKeyUp="@(async e => { if (e.Key == "Enter") await CreateFolder(); })" />
         <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateFolder"
                    Disabled="string.IsNullOrWhiteSpace(_newFolder)">Create</MudButton>
         <MudButton Size="Size.Small" OnClick="() => _newFolder = null">Cancel</MudButton>
@@ -34,7 +37,7 @@
     }
     @foreach (var folder in _folders)
     {
-        <MudListItem T="string" Icon="@Icons.Material.Filled.Folder" OnClick="() => Show(folder)">@(_folder == null ? folder : Path.GetFileName(folder))</MudListItem>
+        <MudListItem T="string" Icon="@Icons.Material.Filled.Folder" OnClick="() => Open(folder)">@(_folder == null ? folder : Path.GetFileName(folder))</MudListItem>
     }
 </MudList>
 
@@ -49,6 +52,8 @@
     [Parameter] public string? Root { get; set; }
     /// <summary>The files listed besides the folders; null lists none.</summary>
     [Parameter] public string? FilePattern { get; set; } = "*" + ProjectSettings.Extension;
+    /// <summary>Opening a folder (also going up or creating one) picks it, instead of a "Use this folder" button.</summary>
+    [Parameter] public bool PickOnOpen { get; set; }
 
     private FileSandbox _sandbox = FileSandbox.Unrestricted;
     private string? _folder;
@@ -68,9 +73,13 @@
 
     private string Shown => _folder == null ? "Drives" : _sandbox.Root == null ? _folder : Path.GetRelativePath(_sandbox.Root, _folder);
 
-    private void Up()
+    private Task Up() => AtTop ? Task.CompletedTask : Open(Path.GetDirectoryName(_folder));
+
+    /// <summary>Shows a folder the user chose and, with <see cref="PickOnOpen"/>, picks it.</summary>
+    private Task Open(string? folder)
     {
-        if (!AtTop) Show(Path.GetDirectoryName(_folder));
+        Show(folder);
+        return PickOnOpen && _error == null && _folder != null ? Picked.InvokeAsync(_folder) : Task.CompletedTask;
     }
 
     /// <summary>Shows a folder, or the drives (Windows) / the root (elsewhere) for null.</summary>
@@ -103,7 +112,7 @@
     }
 
     /// <summary>Creates a folder in the shown one and shows it.</summary>
-    private void CreateFolder()
+    private async Task CreateFolder()
     {
         if (_folder == null || string.IsNullOrWhiteSpace(_newFolder)) return;
         var name = _newFolder.Trim();
@@ -123,7 +132,7 @@
             }
 
             Directory.CreateDirectory(path);
-            Show(path);
+            await Open(path);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatDefinitionException)
         {

@@ -51,7 +51,7 @@ The editor of new and existing definitions has two views of the same YAML, switc
 
 - **Builder** (the default): forms for every kind. Packets and structs get a field list (add, duplicate, reorder,
   remove) where each field opens to a type builder (primitives with byte order, references with `as`/`tag`,
-  strings, bytes, arrays, optionals, maps, sized values, fixed point, NBT, all with their lengths, or a type typed
+  strings, bytes, arrays (also ending on a condition, `until`), optionals, maps, sized values, fixed point, NBT, all with their lengths, or a type typed
   as text) and the field options (`const`, `computed`, `if`, `default`, `min`/`max`, `minLength`/`maxLength`,
   `pattern`, `minItems`/`maxItems`, `title`, `doc`). Changes in the builder rewrite the YAML, which drops comments.
 - **YAML**: the file as text. YAML with errors can't be opened in the builder until they are fixed.

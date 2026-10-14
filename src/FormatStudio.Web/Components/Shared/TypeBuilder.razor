@@ -59,7 +59,7 @@
                 <LengthEditor Value="bytes.Length" ValueChanged="l => Changed(new BytesRef(l))" AllowZero="true" />
                 break;
             case ArrayRef array:
-                <LengthEditor Value="array.Length" ValueChanged="l => Changed(array with { Length = l })" Label="Count" />
+                <LengthEditor Value="array.Length" ValueChanged="l => Changed(array with { Length = l })" Label="Count" AllowUntil="true" />
                 break;
             case MapRef map:
                 <LengthEditor Value="map.Length" ValueChanged="l => Changed(map with { Length = l })" Label="Count" />

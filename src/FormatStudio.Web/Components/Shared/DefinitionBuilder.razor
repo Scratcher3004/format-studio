@@ -94,7 +94,7 @@
                     <MudTextField T="string" Value="variantCase.Name" ValueChanged="n => Set(() => variantCase.Name = n?.Trim() ?? string.Empty)" Label="Case"
                                   Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Error="@(!TypeExpressions.IsIdentifier(variantCase.Name))" />
                     <MudTextField T="string" Value="@(variantCase.TagMember ?? variantCase.TagValue?.ToString())" ValueChanged="v => Set(() => SetTag(variantCase, v))"
-                                  Label="Tag" HelperText="A number or an enum member" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="max-width: 180px" />
+                                  Label="Tag" HelperText="@TagHelp(variant)" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="max-width: 180px" />
                     <MudSwitch T="bool" Value="variantCase.Type != null" ValueChanged="d => Set(() => variantCase.Type = d ? new PrimitiveRef(PrimitiveKind.VarInt32) : null)"
                                Label="Has data" Color="Color.Primary" Class="mt-1" />
                     <MudTextField T="string" Value="variantCase.Doc" ValueChanged="v => Set(() => variantCase.Doc = Blank(v))" Label="Documentation"
@@ -244,10 +244,32 @@
         enumDef.Members.Add(new EnumMember { Name = FreeName(enumDef.Members.Select(m => m.Name), "value"), Value = value });
     }
 
-    private static void AddCase(VariantDef variant)
+    /// <summary>Whether the tags are text: the tag type is a string (or an alias of one), or an external tag's cases give text.</summary>
+    private bool StringTags(VariantDef variant)
     {
+        var tag = variant.Tag;
+        if (tag == null) return variant.Cases.Any(c => c.TagMember != null);
+        for (var depth = 0; depth < 32 && tag is NamedRef named && Find?.Invoke(named.Name) is AliasDef alias; depth++) tag = alias.Target;
+        return tag is StringRef;
+    }
+
+    private string TagHelp(VariantDef variant) => variant.Tag is NamedRef named && Find?.Invoke(named.Name) is EnumDef ? "A member of the enum"
+        : StringTags(variant) ? "The text, e.g. minecraft:block"
+        : variant.Tag == null ? "A number, or text for string tags"
+        : "A number";
+
+    /// <summary>New cases get the next number, or their name as the tag when the tags are text.</summary>
+    private void AddCase(VariantDef variant)
+    {
+        var name = FreeName(variant.Cases.Select(c => c.Name), "case");
+        if (StringTags(variant))
+        {
+            variant.Cases.Add(new VariantCase { Name = name, TagMember = name });
+            return;
+        }
+
         var tags = variant.Cases.Select(c => c.TagValue ?? -1).ToList();
-        variant.Cases.Add(new VariantCase { Name = FreeName(variant.Cases.Select(c => c.Name), "case"), TagValue = tags.Count == 0 ? 0 : tags.Max() + 1 });
+        variant.Cases.Add(new VariantCase { Name = name, TagValue = tags.Count == 0 ? 0 : tags.Max() + 1 });
     }
 
     private static void AddBits(BitfieldDef bitfield) =>

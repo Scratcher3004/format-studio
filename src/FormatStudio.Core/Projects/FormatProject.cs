@@ -348,15 +348,50 @@ public sealed class FormatProject
         }
     }
 
-    /// <summary>The file a definition is saved to: its source file, or <c>&lt;kind&gt;s/&lt;Name&gt;.yaml</c> for new ones.</summary>
-    public string FileFor(TypeDef definition) => definition.Source?.File is { } file && file != "<input>"
-        ? Path.Combine(Directory, file)
-        : Path.Combine(Directory, definition.Kind switch
+    /// <summary>
+    /// The file a definition is saved to: its source file, or for new ones <c>&lt;folder&gt;/&lt;Name&gt;.yaml</c> in the
+    /// folder of its kind (<see cref="KindFolder"/>). If the sources don't load that folder, the kind folder goes below
+    /// the folder of a source pattern (or into that folder), e.g. <c>types/enums</c> for <c>sources: [types/**/*.yaml, ...]</c>.
+    /// </summary>
+    public string FileFor(TypeDef definition)
+    {
+        if (definition.Source?.File is { } file && file != "<input>") return Path.Combine(Directory, file);
+
+        var kindFolder = KindFolder(definition.Kind);
+        var name = definition.Name + ".yaml";
+        var candidates = Settings.Sources.Where(s => !s.StartsWith('!'))
+            .Select(pattern => pattern.IndexOfAny(['*', '?', '[']) is var wildcard and >= 0 ? pattern[..wildcard] : Path.GetDirectoryName(pattern) ?? "")
+            .Select(prefix => prefix.TrimEnd('/', '\\'))
+            .Where(prefix => prefix.Length > 0 && !prefix.Contains(".."))
+            .SelectMany(prefix => Path.GetFileName(prefix) == kindFolder ? [prefix] : new[] { Path.Combine(prefix, kindFolder), prefix })
+            .Prepend(kindFolder)
+            .Select(folder => Path.Combine(Directory, folder, name));
+        return candidates.FirstOrDefault(IsSource) ?? Path.Combine(Directory, kindFolder, name);
+    }
+
+    /// <summary>The folder for new definitions of a kind: <c>packets</c>, <c>types</c> for structs, otherwise the kind's plural.</summary>
+    public static string KindFolder(string kind) => kind switch
+    {
+        "packet" => "packets",
+        "struct" => "types",
+        "alias" => "aliases",
+        _ => kind + "s",
+    };
+
+    /// <summary>Whether the source patterns include a file of the project, i.e. it is loaded as a definition when it exists.</summary>
+    public bool IsSource(string file)
+    {
+        var relative = Relative(Path.GetFullPath(file, Directory));
+        if (relative.StartsWith("../", StringComparison.Ordinal) || relative == "..") return false;
+        var matcher = new Matcher(StringComparison.Ordinal);
+        foreach (var pattern in Settings.Sources)
         {
-            "packet" => "packets",
-            "struct" => "types",
-            _ => definition.Kind + "s",
-        }, definition.Name + ".yaml");
+            if (pattern.StartsWith('!')) matcher.AddExclude(pattern[1..]);
+            else matcher.AddInclude(pattern);
+        }
+        matcher.AddExclude("**/*" + ProjectSettings.Extension);
+        return matcher.Match(relative).HasMatches;
+    }
 
     /// <summary>Writes a definition back to its file and replaces it in the project.</summary>
     public string Save(TypeDef definition)

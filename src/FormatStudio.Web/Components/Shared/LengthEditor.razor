@@ -1,4 +1,4 @@
-@* A length of a string, bytes, array, map or sized value: default, prefix, fixed, expression, eof or zero. *@
+@* A length of a string, bytes, array, map or sized value: default, prefix, fixed, expression, eof, zero or (arrays) until a condition. *@
 <MudSelect T="LengthKind" Value="Value.Kind" ValueChanged="SetKind" Label="@Label" Variant="Variant.Outlined" Margin="Margin.Dense"
            Dense="true" Style="min-width: 130px; max-width: 150px">
     @foreach (var kind in Kinds)
@@ -19,6 +19,12 @@
         <MudTextField T="string" Value="Value.Expression" ValueChanged="e => Changed(new LengthSpec(LengthKind.Expression, Expression: e?.Trim() ?? string.Empty))"
                       Label="Expression" Placeholder="count * 2" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="min-width: 160px" />
         break;
+    case LengthKind.Until:
+        <MudTextField T="string" Value="Value.Expression" ValueChanged="e => Changed(new LengthSpec(LengthKind.Until, Expression: e?.Trim() ?? string.Empty))"
+                      Label="Last element when" Placeholder="index == 255" HelperText="Over the element's fields; the elements must be structs"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="min-width: 200px"
+                      Error="string.IsNullOrWhiteSpace(Value.Expression)" />
+        break;
 }
 
 @code {
@@ -27,10 +33,17 @@
     [Parameter] public string Label { get; set; } = "Length";
     /// <summary>Zero termination only exists for strings and bytes.</summary>
     [Parameter] public bool AllowZero { get; set; }
+    /// <summary>Ending on a condition over the last element only exists for arrays.</summary>
+    [Parameter] public bool AllowUntil { get; set; }
 
     private static readonly PrimitiveRef Fallback = new(PrimitiveKind.VarUInt32);
 
-    private IEnumerable<LengthKind> Kinds => Enum.GetValues<LengthKind>().Where(k => AllowZero || k != LengthKind.Zero || Value.Kind == k);
+    private IEnumerable<LengthKind> Kinds => Enum.GetValues<LengthKind>().Where(k => Value.Kind == k || k switch
+    {
+        LengthKind.Zero => AllowZero,
+        LengthKind.Until => AllowUntil,
+        _ => true,
+    });
 
     private static string KindName(LengthKind kind) => kind switch
     {
@@ -39,6 +52,7 @@
         LengthKind.Fixed => "Fixed",
         LengthKind.Expression => "Expression",
         LengthKind.Eof => "Until end",
+        LengthKind.Until => "Until condition",
         _ => "Zero terminated",
     };
 
@@ -49,6 +63,7 @@
         LengthKind.Fixed => new LengthSpec(LengthKind.Fixed, Fixed: 1),
         LengthKind.Expression => new LengthSpec(LengthKind.Expression, Expression: ""),
         LengthKind.Eof => LengthSpec.Eof,
+        LengthKind.Until => new LengthSpec(LengthKind.Until, Expression: ""),
         _ => LengthSpec.Zero,
     });
 

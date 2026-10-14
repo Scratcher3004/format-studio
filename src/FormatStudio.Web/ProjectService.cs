@@ -101,7 +101,7 @@ public sealed class ProjectService
         if (folder.Length == 0) return null;
         var overrideFolder = System.IO.Path.GetFullPath(System.IO.Path.Combine(Project.Directory, folder)) + System.IO.Path.DirectorySeparatorChar;
         if (System.IO.Path.GetFullPath(Project.FileFor(definition)).StartsWith(overrideFolder, StringComparison.Ordinal)) return null;
-        var kindFolder = definition.Kind switch { "packet" => "packets", "struct" => "types", var kind => kind + "s" };
+        var kindFolder = FormatProject.KindFolder(definition.Kind);
         return System.IO.Path.Combine(overrideFolder, kindFolder, definition.Name + ".yaml");
     }
 
