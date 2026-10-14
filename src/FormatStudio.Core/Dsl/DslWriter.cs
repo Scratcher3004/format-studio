@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using FormatStudio.Model;
 
 namespace FormatStudio.Dsl;
@@ -15,7 +17,7 @@ public static class DslWriter
             case StructDef structDef:
                 if (structDef.IsPacket)
                 {
-                    map.AddIf("id", structDef.Id);
+                    map.AddIf("id", Integer(structDef.Id, structDef.IdBase));
                     map.AddIf("groups", structDef.Groups.Cast<object?>().ToList());
                 }
 
@@ -34,11 +36,11 @@ public static class DslWriter
                 {
                     if (member.Title == null && member.Doc == null)
                     {
-                        values.Add(member.Name, member.Value);
+                        values.Add(member.Name, Integer(member.Value, member.Base));
                     }
                     else
                     {
-                        var memberMap = new YMap { { "value", member.Value } };
+                        var memberMap = new YMap { { "value", Integer(member.Value, member.Base) } };
                         memberMap.AddIf("title", member.Title);
                         memberMap.AddIf("doc", member.Doc);
                         values.Add(member.Name, memberMap);
@@ -53,7 +55,7 @@ public static class DslWriter
                 if (variant.Tag != null) map.Add("tag", Type(variant.Tag));
                 map.Add("cases", variant.Cases.Select(c =>
                 {
-                    var caseMap = new YMap { { "name", c.Name }, { "tag", c.TagMember ?? (object?)c.TagValue } };
+                    var caseMap = new YMap { { "name", c.Name }, { "tag", (object?)c.TagMember ?? Integer(c.TagValue, c.TagBase) } };
                     if (c.Type != null) caseMap.Add("type", Type(c.Type));
                     caseMap.AddIf("title", c.Title);
                     caseMap.AddIf("doc", c.Doc);
@@ -96,11 +98,11 @@ public static class DslWriter
         map.AddIf("title", field.Title);
         map.AddIf("doc", field.Doc);
         map.AddIf("if", field.If);
-        if (field.Const != null) map.Add("const", field.Const);
+        if (field.Const != null) map.Add("const", Value(field.Const, field.ConstBase));
         map.AddIf("computed", field.Computed);
-        if (field.Default != null) map.Add("default", field.Default);
-        map.AddIf("min", field.Min);
-        map.AddIf("max", field.Max);
+        if (field.Default != null) map.Add("default", Value(field.Default, field.DefaultBase));
+        map.AddIf("min", Number(field.Min, field.MinBase));
+        map.AddIf("max", Number(field.Max, field.MaxBase));
         map.AddIf("minLength", field.MinLength);
         map.AddIf("maxLength", field.MaxLength);
         map.AddIf("minItems", field.MinItems);
@@ -108,6 +110,18 @@ public static class DslWriter
         map.AddIf("pattern", field.Pattern);
         return map;
     }
+
+    private static YamlInteger? Integer(long? value, NumberBase numberBase) => value is { } v ? new YamlInteger(v, numberBase) : null;
+
+    /// <summary>Integral numbers in their base, others as they are.</summary>
+    private static object? Number(decimal? value, NumberBase numberBase) =>
+        numberBase != NumberBase.Decimal && value is { } v && v == decimal.Truncate(v) && v is >= long.MinValue and <= long.MaxValue ? new YamlInteger((long)v, numberBase) : value;
+
+    /// <summary>An integer value in its base, any other value as it is.</summary>
+    private static object Value(JsonNode value, NumberBase numberBase) =>
+        numberBase != NumberBase.Decimal && value is JsonValue json && json.GetValueKind() == JsonValueKind.Number && json.TryGetValue<long>(out var integer)
+            ? new YamlInteger(integer, numberBase)
+            : value;
 
     /// <summary>The short string form when possible, otherwise the mapping form.</summary>
     public static object Type(TypeRef type)

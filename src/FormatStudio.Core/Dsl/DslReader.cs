@@ -90,9 +90,16 @@ public sealed class DslReader
         throw Fail(node, $"Expected an integer for {what}, got '{text}'");
     }
 
+    /// <summary>The base a plain integer scalar is written in, decimal for anything else.</summary>
+    private static NumberBase BaseOf(YamlNode? node) =>
+        node is YamlScalarNode { Style: ScalarStyle.Plain or ScalarStyle.Any, Value: { } text } && YamlValues.TryParseInteger(text, out _, out var numberBase)
+            ? numberBase
+            : NumberBase.Decimal;
+
     private decimal Number(YamlNode node, string what)
     {
         var text = Scalar(node, what);
+        if (YamlValues.TryParseInteger(text, out var integer, out _)) return integer;
         if (decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var result)) return result;
         throw Fail(node, $"Expected a number for {what}, got '{text}'");
     }
@@ -143,7 +150,12 @@ public sealed class DslReader
         var definition = new StructDef { Name = name, IsPacket = packet };
         if (packet)
         {
-            definition.Id = Get(map, "id") is { } id ? Integer(id, "id") : null;
+            if (Get(map, "id") is { } id)
+            {
+                definition.Id = Integer(id, "id");
+                definition.IdBase = BaseOf(id);
+            }
+
             if (Get(map, "groups") is { } groups)
             {
                 if (groups is YamlSequenceNode sequence)
@@ -198,9 +210,13 @@ public sealed class DslReader
             If = OptionalString(map, "if"),
             Computed = OptionalString(map, "computed"),
             Const = constNode != null ? YamlValues.ToJson(constNode) : null,
+            ConstBase = BaseOf(constNode),
             Default = Get(map, "default") is { } defaultNode ? YamlValues.ToJson(defaultNode) : null,
+            DefaultBase = BaseOf(Get(map, "default")),
             Min = Get(map, "min") is { } min ? Number(min, "min") : null,
+            MinBase = BaseOf(Get(map, "min")),
             Max = Get(map, "max") is { } max ? Number(max, "max") : null,
+            MaxBase = BaseOf(Get(map, "max")),
             MinLength = Get(map, "minLength") is { } minLength ? (int)Integer(minLength, "minLength") : null,
             MaxLength = Get(map, "maxLength") is { } maxLength ? (int)Integer(maxLength, "maxLength") : null,
             MinItems = Get(map, "minItems") is { } minItems ? (int)Integer(minItems, "minItems") : null,
@@ -386,12 +402,14 @@ public sealed class DslReader
                 {
                     CheckKeys(memberMap, ["value"], "an enum member");
                     member.Value = Get(memberMap, "value") is { } v ? Integer(v, "value") : next;
+                    member.Base = BaseOf(Get(memberMap, "value"));
                     member.Title = OptionalString(memberMap, "title");
                     member.Doc = OptionalString(memberMap, "doc");
                 }
                 else
                 {
                     member.Value = value is YamlScalarNode { Value: "" or null, Style: ScalarStyle.Plain } ? next : Integer(value, "value");
+                    member.Base = BaseOf(value);
                 }
 
                 if (definition.FindByName(member.Name) != null) throw Fail(key, $"Duplicate enum member '{member.Name}'");
@@ -433,6 +451,7 @@ public sealed class DslReader
                 else if (YamlValues.InterpretPlain(Scalar(tagNode, "tag")) is JsonValue value && value.TryGetValue<long>(out var number))
                 {
                     variantCase.TagValue = number;
+                    variantCase.TagBase = BaseOf(tagNode);
                 }
                 else
                 {

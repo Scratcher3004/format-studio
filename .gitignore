@@ -6,3 +6,5 @@ obj/
 TestResults/
 # Output of "format-studio generate" in the samples
 samples/*/generated/
+
+AGENTS.device.md

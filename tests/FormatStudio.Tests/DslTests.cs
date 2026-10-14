@@ -189,6 +189,72 @@ public class DslTests
     }
 
     [Fact]
+    public void IntegersKeepTheirBase()
+    {
+        const string packetText = """
+            packet: P
+            id: 0x1F
+            fields:
+              - name: magic
+                type: u32
+                const: 0xCAFE
+              - name: mask
+                type: u8
+                default: 0b1010
+                min: -0x10
+                max: 200
+            """;
+        var packet = Assert.IsType<StructDef>(Read(packetText));
+        Assert.Equal(NumberBase.Hex, packet.IdBase);
+        Assert.Equal(0xCAFE, packet.Fields[0].Const!.GetValue<long>());
+        Assert.Equal(NumberBase.Hex, packet.Fields[0].ConstBase);
+        Assert.Equal(10, packet.Fields[1].Default!.GetValue<long>());
+        Assert.Equal(NumberBase.Binary, packet.Fields[1].DefaultBase);
+        Assert.Equal(-16, packet.Fields[1].Min);
+        Assert.Equal(NumberBase.Hex, packet.Fields[1].MinBase);
+        Assert.Equal(NumberBase.Decimal, packet.Fields[1].MaxBase);
+        Assert.Equal(packetText.Replace("\r\n", "\n") + "\n", DslWriter.Write(packet));
+
+        Assert.Equal(NumberBase.Decimal, Assert.IsType<StructDef>(Read("packet: Q\nid: 39\nfields: []\n")).IdBase);
+
+        var enumDef = Assert.IsType<EnumDef>(Read("enum: E\ntype: u8\nflags: true\nvalues:\n  a: 0b1\n  b: 0x02\n  c: 4\n"));
+        Assert.Equal([NumberBase.Binary, NumberBase.Hex, NumberBase.Decimal], enumDef.Members.Select(m => m.Base));
+        Assert.Contains("a: 0b1\n  b: 0x02\n  c: 4\n", DslWriter.Write(enumDef));
+
+        var variant = Assert.IsType<VariantDef>(Read("variant: V\ntag: u8\ncases:\n  - name: a\n    tag: 0x10\n  - name: b\n"));
+        Assert.Equal(NumberBase.Hex, variant.Cases[0].TagBase);
+        Assert.Equal(17, variant.Cases[1].TagValue);
+        Assert.Contains("tag: 0x10", DslWriter.Write(variant));
+        AssertStable(variant);
+    }
+
+    [Theory]
+    [InlineData("0", 0L, NumberBase.Decimal, "0")]
+    [InlineData("-42", -42L, NumberBase.Decimal, "-42")]
+    [InlineData("0x1f", 31L, NumberBase.Hex, "0x1F")]
+    [InlineData("0x7", 7L, NumberBase.Hex, "0x07")]
+    [InlineData("-0x10", -16L, NumberBase.Hex, "-0x10")]
+    [InlineData("0b0101", 5L, NumberBase.Binary, "0b101")]
+    [InlineData("-0b1", -1L, NumberBase.Binary, "-0b1")]
+    [InlineData("0x7FFFFFFFFFFFFFFF", long.MaxValue, NumberBase.Hex, "0x7FFFFFFFFFFFFFFF")]
+    [InlineData("-0x8000000000000000", long.MinValue, NumberBase.Hex, "-0x8000000000000000")]
+    public void IntegerLiterals(string text, long value, NumberBase numberBase, string formatted)
+    {
+        Assert.True(YamlValues.TryParseInteger(text, out var parsed, out var parsedBase));
+        Assert.Equal(value, parsed);
+        Assert.Equal(numberBase, parsedBase);
+        Assert.Equal(formatted, YamlValues.FormatInteger(value, numberBase));
+        Assert.Equal(value, YamlValues.InterpretPlain(text)!.GetValue<long>());
+    }
+
+    [Theory]
+    [InlineData("0x")]
+    [InlineData("0b2")]
+    [InlineData("0x8000000000000000")]
+    [InlineData("12abc")]
+    public void InvalidIntegerLiterals(string text) => Assert.False(YamlValues.TryParseInteger(text, out _, out _));
+
+    [Fact]
     public void ErrorsHaveLocations()
     {
         var diagnostics = new DiagnosticBag();
@@ -212,6 +278,8 @@ public class DslTests
     [InlineData("123")]
     [InlineData("1.5")]
     [InlineData("0x10")]
+    [InlineData("0b10")]
+    [InlineData("-0x10")]
     [InlineData("null")]
     [InlineData("a: b")]
     [InlineData("- item")]

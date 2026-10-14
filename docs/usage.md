@@ -53,7 +53,10 @@ The editor of new and existing definitions has two views of the same YAML, switc
   remove) where each field opens to a type builder (primitives with byte order, references with `as`/`tag`,
   strings, bytes, arrays (also ending on a condition, `until`), optionals, maps, sized values, fixed point, NBT, all with their lengths, or a type typed
   as text) and the field options (`const`, `computed`, `if`, `default`, `min`/`max`, `minLength`/`maxLength`,
-  `pattern`, `minItems`/`maxItems`, `title`, `doc`). Changes in the builder rewrite the YAML, which drops comments.
+  `pattern`, `minItems`/`maxItems`, `title`, `doc`). Packet ids, enum values, numeric variant tags and integer
+  `const`/`default`/`min`/`max` have a dec/hex/bin toggle at the end of the input; typing `0x..` or `0b..` switches
+  as well. The choice is stored in the YAML as the form of the number. Changes in the builder rewrite the YAML, which
+  drops comments.
 - **YAML**: the file as text. YAML with errors can't be opened in the builder until they are fixed.
 
 Validation runs on every change. Next to the editor, **sample data** (pasted hex or an uploaded file, at most

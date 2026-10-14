@@ -7,6 +7,14 @@ public sealed record SourceLocation(string File, int Line = 0, int Column = 0)
     public override string ToString() => Line > 0 ? $"{File}:{Line}:{Column}" : File;
 }
 
+/// <summary>How an integer is written in the DSL (<c>39</c>, <c>0x27</c>, <c>0b100111</c>). The editor shows it the same way.</summary>
+public enum NumberBase
+{
+    Decimal,
+    Hex,
+    Binary,
+}
+
 /// <summary>A named definition: one DSL file.</summary>
 public abstract class TypeDef
 {
@@ -32,13 +40,17 @@ public sealed class FieldDef
 
     /// <summary>The field always has this value. It is written as is and checked when read.</summary>
     public JsonNode? Const { get; set; }
+    public NumberBase ConstBase { get; set; }
 
     /// <summary>The value is calculated from this expression when encoding (e.g. <c>len(items)</c>).</summary>
     public string? Computed { get; set; }
 
     public JsonNode? Default { get; set; }
+    public NumberBase DefaultBase { get; set; }
     public decimal? Min { get; set; }
+    public NumberBase MinBase { get; set; }
     public decimal? Max { get; set; }
+    public NumberBase MaxBase { get; set; }
     public int? MinLength { get; set; }
     public int? MaxLength { get; set; }
     public int? MinItems { get; set; }
@@ -57,6 +69,7 @@ public sealed class StructDef : TypeDef
     public List<FieldDef> Fields { get; } = [];
     public bool IsPacket { get; set; }
     public long? Id { get; set; }
+    public NumberBase IdBase { get; set; } = NumberBase.Hex;
     /// <summary>Free-form packet groups, e.g. a direction or a protocol state.</summary>
     public List<string> Groups { get; } = [];
 
@@ -67,6 +80,7 @@ public sealed class EnumMember
 {
     public required string Name { get; set; }
     public long Value { get; set; }
+    public NumberBase Base { get; set; }
     public string? Title { get; set; }
     public string? Doc { get; set; }
 }
@@ -91,6 +105,7 @@ public sealed class VariantCase
     public required string Name { get; set; }
     /// <summary>Numeric tag, or null when <see cref="TagMember"/> gives the tag.</summary>
     public long? TagValue { get; set; }
+    public NumberBase TagBase { get; set; }
     /// <summary>The enum member name of the tag, or the tag itself when the tags are strings.</summary>
     public string? TagMember { get; set; }
     /// <summary>The payload, or null for a case without data.</summary>

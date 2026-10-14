@@ -4,6 +4,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using FormatStudio.Model;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
@@ -15,8 +16,11 @@ public static partial class YamlValues
     [GeneratedRegex("^[-+]?[0-9]+$")]
     private static partial Regex IntegerRegex();
 
-    [GeneratedRegex("^0x[0-9a-fA-F]+$")]
+    [GeneratedRegex("^[-+]?0x[0-9a-fA-F]+$")]
     private static partial Regex HexRegex();
+
+    [GeneratedRegex("^[-+]?0b[01]+$")]
+    private static partial Regex BinaryRegex();
 
     [GeneratedRegex(@"^[-+]?([0-9]*\.[0-9]+|[0-9]+\.[0-9]*|[0-9]+)([eE][-+]?[0-9]+)?$")]
     private static partial Regex FloatRegex();
@@ -43,13 +47,53 @@ public static partial class YamlValues
             return JsonValue.Create(decimal.Parse(text, CultureInfo.InvariantCulture));
         }
 
-        if (HexRegex().IsMatch(text) && ulong.TryParse(text[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var hex))
-            return hex <= long.MaxValue ? JsonValue.Create((long)hex) : JsonValue.Create(hex);
+        if (HexRegex().IsMatch(text) || BinaryRegex().IsMatch(text))
+        {
+            if (TryParseInteger(text, out var integer, out _)) return JsonValue.Create(integer);
+            if (text[0] != '-' && ParseMagnitude(text.TrimStart('+')[2..], text.Contains('x') ? 16 : 2) is { } large)
+                return JsonValue.Create(large);
+        }
 
         if (FloatRegex().IsMatch(text))
             return JsonValue.Create(double.Parse(text, CultureInfo.InvariantCulture));
 
         return JsonValue.Create(text);
+    }
+
+    /// <summary>Reads a decimal, hex (<c>0x1F</c>) or binary (<c>0b101</c>) integer, optionally signed, and the base it was written in.</summary>
+    public static bool TryParseInteger(string? text, out long value, out NumberBase numberBase)
+    {
+        value = 0;
+        numberBase = NumberBase.Decimal;
+        text = text?.Trim();
+        if (string.IsNullOrEmpty(text)) return false;
+        if (IntegerRegex().IsMatch(text))
+            return long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out value);
+
+        var hex = HexRegex().IsMatch(text);
+        if (!hex && !BinaryRegex().IsMatch(text)) return false;
+        var negative = text[0] == '-';
+        var digits = text.TrimStart('-', '+')[2..];
+        if (ParseMagnitude(digits, hex ? 16 : 2) is not { } magnitude) return false;
+        if (negative ? magnitude > (ulong)long.MaxValue + 1 : magnitude > long.MaxValue) return false;
+        value = unchecked(negative ? (long)(0 - magnitude) : (long)magnitude);
+        numberBase = hex ? NumberBase.Hex : NumberBase.Binary;
+        return true;
+    }
+
+    private static ulong? ParseMagnitude(string digits, int radix) =>
+        ulong.TryParse(digits, radix == 16 ? NumberStyles.AllowHexSpecifier : NumberStyles.AllowBinarySpecifier,
+            CultureInfo.InvariantCulture, out var result) ? result : null;
+
+    /// <summary>Writes an integer in the base, e.g. <c>0x1F</c>, <c>-0x10</c> or <c>0b101</c>. <see cref="TryParseInteger"/> reads it back.</summary>
+    public static string FormatInteger(long value, NumberBase numberBase)
+    {
+        if (numberBase == NumberBase.Decimal) return value.ToString(CultureInfo.InvariantCulture);
+        var magnitude = unchecked(value < 0 ? 0 - (ulong)value : (ulong)value);
+        var digits = numberBase == NumberBase.Hex
+            ? "0x" + magnitude.ToString("X2", CultureInfo.InvariantCulture)
+            : "0b" + Convert.ToString(unchecked((long)magnitude), 2);
+        return value < 0 ? "-" + digits : digits;
     }
 
     /// <summary>True when the text, written as a plain scalar, would not read back as this string.</summary>
@@ -81,6 +125,9 @@ public static partial class YamlValues
         return stream.Documents.Count == 0 ? null : ToJson(stream.Documents[0].RootNode);
     }
 }
+
+/// <summary>An integer that <see cref="YamlEmitter"/> writes in the given base.</summary>
+public sealed record YamlInteger(long Value, NumberBase Base);
 
 /// <summary>An ordered YAML mapping for <see cref="YamlEmitter"/>.</summary>
 public sealed class YMap : List<KeyValuePair<string, object?>>
@@ -239,6 +286,7 @@ public static class YamlEmitter
         null => "null",
         bool b => b ? "true" : "false",
         RawNumber number => number.Text,
+        YamlInteger integer => YamlValues.FormatInteger(integer.Value, integer.Base),
         string s => NeedsQuoting(s, flow) ? Quote(s) : s,
         double d => double.IsPositiveInfinity(d) ? ".inf" : double.IsNegativeInfinity(d) ? "-.inf" : double.IsNaN(d) ? ".nan"
             : d.ToString("R", CultureInfo.InvariantCulture),

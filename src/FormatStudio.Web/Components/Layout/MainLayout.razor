@@ -14,22 +14,17 @@
             <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="() => _drawer = !_drawer" />
         }
         <MudLink Href="projects" Color="Color.Inherit" Underline="Underline.None" Class="ml-2"><MudText Typo="Typo.h6">Format Studio</MudText></MudLink>
-        <MudMenu Dense="true" Class="ml-4" AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
-            <ActivatorContent>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Size="Size.Small" EndIcon="@Icons.Material.Filled.ArrowDropDown"
-                           Style="text-transform: none">@ProjectLabel</MudButton>
-            </ActivatorContent>
-            <ChildContent>
-                @foreach (var entry in Context.Store.Known().Take(10))
-                {
-                    <MudMenuItem Href="@ProjectContext.LinkTo(entry.Id)">
-                        <span class="@(entry.Id == Context.Id ? "mud-primary-text" : "")">@entry.Name</span>
-                        <span class="mud-text-secondary mono ml-2" style="font-size: 0.75rem">@entry.File</span>
-                    </MudMenuItem>
-                }
-                <MudDivider />
-                <MudMenuItem Href="projects" Icon="@Icons.Material.Filled.FolderOpen">All projects, open or new...</MudMenuItem>
-            </ChildContent>
+        <MudMenu Dense="true" Label="@ProjectLabel" Variant="@Variant.Text" EndIcon="@Icons.Material.Filled.ArrowDropDown"
+                 Class="ml-4" Color="@Color.Inherit">
+            @foreach (var entry in Context.Store.Known().Take(10))
+            {
+                <MudMenuItem Href="@ProjectContext.LinkTo(entry.Id)">
+                    <span class="@(entry.Id == Context.Id ? "mud-primary-text" : "")">@entry.Name</span>
+                    <span class="mud-text-secondary mono ml-2" style="font-size: 0.75rem">@entry.File</span>
+                </MudMenuItem>
+            }
+            <MudDivider />
+            <MudMenuItem Href="projects" Icon="@Icons.Material.Filled.FolderOpen">All projects, open or new...</MudMenuItem>
         </MudMenu>
         <MudSpacer />
         @if (Context.Current is { } current)

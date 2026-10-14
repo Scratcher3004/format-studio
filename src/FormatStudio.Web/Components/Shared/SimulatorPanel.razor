@@ -68,11 +68,26 @@
     {
         if (_lastType == Type) return;
         _lastType = Type;
-        _json = _hex = "";
+        _hex = "";
         _bytes = null;
         _root = _selected = null;
         _diagnostics = [];
         _message = null;
+        _json = DefaultJson() ?? "";
+    }
+
+    /// <summary>A zero/empty value of the type as a template to edit, or null when the type does not parse.</summary>
+    private string? DefaultJson()
+    {
+        if (Projects.Project is not { } project) return null;
+        try
+        {
+            return JsonValues.ToText(new DefaultValues(project).Generate(Codec.ParseType(Type)));
+        }
+        catch (Exception e) when (e is System.FormatException or Expressions.ExprException or FormatDefinitionException)
+        {
+            return null;
+        }
     }
 
     private Codec? Codec => Projects.Project is { } project ? new Codec(project) : null;

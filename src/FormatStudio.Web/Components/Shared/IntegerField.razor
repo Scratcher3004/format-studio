@@ -1,0 +1,45 @@
+@using FormatStudio.Dsl
+@* An integer input with a dec/hex/bin toggle. Typed digits are decimal and keep the base shown; 0x.. or 0b.. switches it. *@
+<MudTextField T="string" Value="@(_invalid ?? Format(Value))" ValueChanged="SetText" Label="@Label" HelperText="@HelperText" Placeholder="@Placeholder"
+              Variant="Variant" Margin="Margin.Dense" Class="mono" Style="@Style" Error="@(_invalid != null)" ErrorText="Not an integer"
+              Adornment="Adornment.End" AdornmentIcon="@NumberBases.Icon(Base)" AdornmentAriaLabel="@NumberBases.Hint(Base)"
+              OnAdornmentClick="() => BaseChanged.InvokeAsync(NumberBases.Next(Base))" IconSize="Size.Medium" />
+
+@code {
+    [Parameter] public long? Value { get; set; }
+    [Parameter] public EventCallback<long?> ValueChanged { get; set; }
+    [Parameter] public NumberBase Base { get; set; }
+    [Parameter] public EventCallback<NumberBase> BaseChanged { get; set; }
+    /// <summary>Whether the input may be blank (a null value).</summary>
+    [Parameter] public bool AllowEmpty { get; set; }
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string? HelperText { get; set; }
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public Variant Variant { get; set; } = Variant.Text;
+    [Parameter] public string? Style { get; set; }
+
+    /// <summary>Text that does not parse, kept so it can be corrected.</summary>
+    private string? _invalid;
+
+    private string? Format(long? value) => value is { } v ? YamlValues.FormatInteger(v, Base) : null;
+
+    private async Task SetText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text) && AllowEmpty)
+        {
+            _invalid = null;
+            await ValueChanged.InvokeAsync(null);
+            return;
+        }
+
+        if (!YamlValues.TryParseInteger(text, out var value, out var numberBase))
+        {
+            _invalid = text ?? "";
+            return;
+        }
+
+        _invalid = null;
+        if (numberBase != NumberBase.Decimal && numberBase != Base) await BaseChanged.InvokeAsync(numberBase);
+        await ValueChanged.InvokeAsync(value);
+    }
+}

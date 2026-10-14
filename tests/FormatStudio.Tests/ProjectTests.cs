@@ -49,6 +49,21 @@ public class ProjectTests
     }
 
     [Theory]
+    [MemberData(nameof(Projects))]
+    public void DefaultValuesEncode(string path)
+    {
+        var project = FormatProject.Load(path);
+        var codec = new Codec(project);
+        var defaults = new DefaultValues(project);
+        var failures = project.Types.Values.OfType<StructDef>()
+            .Select(s => (s.Name, Result: codec.Encode(new NamedRef(s.Name), defaults.Generate(new NamedRef(s.Name)))))
+            .Where(r => !r.Result.Success)
+            .Select(r => $"{r.Name}: {string.Join("; ", r.Result.Diagnostics.Where(d => d.Severity == Severity.Error))}")
+            .ToList();
+        Assert.True(failures.Count == 0, string.Join("\n", failures.Take(20)));
+    }
+
+    [Theory]
     [InlineData("enum: NewEnum\ntype: u8\nvalues: {a: 0}\n", "types/enums/NewEnum.yaml", "enums/NewEnum.yaml")]
     [InlineData("alias: NewAlias\ntype: u8\n", "types/aliases/NewAlias.yaml", "aliases/NewAlias.yaml")]
     [InlineData("struct: NewStruct\nfields:\n  - x: u8\n", "types/NewStruct.yaml", "types/NewStruct.yaml")]

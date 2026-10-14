@@ -10,7 +10,7 @@
         <span class="field-badges">
             @if (Field.Const != null)
             {
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">= @FormatValue(Field.Const)</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">= @FormatValue(Field.Const, Field.ConstBase)</MudChip>
             }
             @if (Field.Computed != null)
             {
@@ -40,8 +40,11 @@
                 </MudSelect>
                 @if (Field.Const != null)
                 {
-                    <MudTextField T="string" Value="@FormatValue(Field.Const)" ValueChanged="v => Set(() => Field.Const = ParseValue(v) ?? Field.Const)"
-                                  Label="Constant value" HelperText="Written as is, checked when read" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" />
+                    <MudTextField T="string" Value="@FormatValue(Field.Const, Field.ConstBase)" ValueChanged="v => Set(() => SetConst(v))"
+                                  Label="Constant value" HelperText="Written as is, checked when read" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono"
+                                  Adornment="@(IsInteger(Field.Const) ? Adornment.End : Adornment.None)" AdornmentIcon="@NumberBases.Icon(Field.ConstBase)"
+                                  AdornmentAriaLabel="@NumberBases.Hint(Field.ConstBase)" IconSize="Size.Medium"
+                                  OnAdornmentClick="() => Set(() => Field.ConstBase = NumberBases.Next(Field.ConstBase))" />
                 }
                 @if (Field.Computed != null)
                 {
@@ -54,12 +57,24 @@
                               Margin="Margin.Dense" Class="mono grow" />
                 @if (Field.IsInput)
                 {
-                    <MudTextField T="string" Value="@FormatValue(Field.Default)" ValueChanged="v => Set(() => Field.Default = ParseValue(v))"
-                                  Label="Default" HelperText="Used when the value is missing" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" />
+                    <MudTextField T="string" Value="@FormatValue(Field.Default, Field.DefaultBase)" ValueChanged="v => Set(() => SetDefault(v))"
+                                  Label="Default" HelperText="Used when the value is missing" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono"
+                                  Adornment="@(IsInteger(Field.Default) ? Adornment.End : Adornment.None)" AdornmentIcon="@NumberBases.Icon(Field.DefaultBase)"
+                                  AdornmentAriaLabel="@NumberBases.Hint(Field.DefaultBase)" IconSize="Size.Medium"
+                                  OnAdornmentClick="() => Set(() => Field.DefaultBase = NumberBases.Next(Field.DefaultBase))" />
                 }
             </div>
 
-            @if (Category is TypeCategory.Number || Field.Min != null || Field.Max != null)
+            @if (Category is TypeCategory.Integer && IsWhole(Field.Min) && IsWhole(Field.Max))
+            {
+                <div class="builder-row mt-2">
+                    <IntegerField Value="@((long?)Field.Min)" ValueChanged="v => Set(() => Field.Min = v)" Base="Field.MinBase" BaseChanged="b => Set(() => Field.MinBase = b)"
+                                  AllowEmpty="true" Label="Min" Variant="Variant.Outlined" Style="max-width: 200px" />
+                    <IntegerField Value="@((long?)Field.Max)" ValueChanged="v => Set(() => Field.Max = v)" Base="Field.MaxBase" BaseChanged="b => Set(() => Field.MaxBase = b)"
+                                  AllowEmpty="true" Label="Max" Variant="Variant.Outlined" Style="max-width: 200px" />
+                </div>
+            }
+            else if (Category is TypeCategory.Number or TypeCategory.Integer || Field.Min != null || Field.Max != null)
             {
                 <div class="builder-row mt-2">
                     <MudNumericField T="decimal?" Value="Field.Min" ValueChanged="v => Set(() => Field.Min = v)" Label="Min" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 160px" />
@@ -114,7 +129,7 @@
 
     private enum ValueKind { Input, Const, Computed }
 
-    private enum TypeCategory { Other, Number, Text, Bytes, List }
+    private enum TypeCategory { Other, Integer, Number, Text, Bytes, List }
 
     private ValueKind KindOfValue => Field.Const != null ? ValueKind.Const : Field.Computed != null ? ValueKind.Computed : ValueKind.Input;
 
@@ -142,7 +157,9 @@
                         type = alias.Target;
                         continue;
                     case PrimitiveRef primitive:
-                        return primitive.Kind is PrimitiveKind.Bool or PrimitiveKind.Uuid ? TypeCategory.Other : TypeCategory.Number;
+                        return primitive.Kind is PrimitiveKind.Bool or PrimitiveKind.Uuid ? TypeCategory.Other
+                            : Primitives.IsInteger(primitive.Kind) ? TypeCategory.Integer
+                            : TypeCategory.Number;
                     case FixedPointRef:
                         return TypeCategory.Number;
                     case StringRef:
@@ -161,13 +178,35 @@
     }
 
     /// <summary>A value as YAML: plain strings unquoted, everything else in JSON (which YAML reads as well).</summary>
-    private static string? FormatValue(JsonNode? value) => value switch
+    private static string? FormatValue(JsonNode? value, NumberBase numberBase) => value switch
     {
         null => null,
+        JsonValue when IsInteger(value) => YamlValues.FormatInteger(value.GetValue<long>(), numberBase),
         JsonValue text when text.GetValueKind() == System.Text.Json.JsonValueKind.String && !YamlValues.NeedsQuotes(text.GetValue<string>())
             => text.GetValue<string>(),
         _ => value.ToJsonString(),
     };
+
+    private static bool IsInteger(JsonNode? value) =>
+        value is JsonValue json && json.GetValueKind() == System.Text.Json.JsonValueKind.Number && json.TryGetValue<long>(out _);
+
+    private static bool IsWhole(decimal? value) => value is not { } v || (v == decimal.Truncate(v) && v is >= long.MinValue and <= long.MaxValue);
+
+    /// <summary>The base a typed value chooses: 0x or 0b; plain digits keep the base shown.</summary>
+    private static NumberBase BaseOf(string? text, NumberBase current) =>
+        YamlValues.TryParseInteger(text, out _, out var numberBase) && numberBase != NumberBase.Decimal ? numberBase : current;
+
+    private void SetConst(string? text)
+    {
+        Field.Const = ParseValue(text) ?? Field.Const;
+        Field.ConstBase = BaseOf(text, Field.ConstBase);
+    }
+
+    private void SetDefault(string? text)
+    {
+        Field.Default = ParseValue(text);
+        Field.DefaultBase = BaseOf(text, Field.DefaultBase);
+    }
 
     private static JsonNode? ParseValue(string? text)
     {

@@ -9,8 +9,8 @@
         <MudSwitch T="bool" Value="header.IsPacket" ValueChanged="p => Set(() => header.IsPacket = p)" Label="Packet" Color="Color.Primary" Class="mt-1" />
         @if (header.IsPacket)
         {
-            <MudTextField T="string" Value="@FormatId(header.Id)" ValueChanged="v => Set(() => header.Id = ParseId(v))" Label="Id"
-                          Placeholder="0x27" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="max-width: 110px" />
+            <IntegerField Value="header.Id" ValueChanged="v => Set(() => header.Id = v)" Base="header.IdBase" BaseChanged="b => Set(() => header.IdBase = b)"
+                          AllowEmpty="true" Label="Id" Placeholder="0x27" Variant="Variant.Outlined" Style="max-width: 150px" />
             <MudTextField T="string" Value="@string.Join(", ", header.Groups)" ValueChanged="v => Set(() => SetGroups(header, v))"
                           Label="Groups" Placeholder="play, clientbound" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
         }
@@ -56,7 +56,8 @@
                     <tr @key="member">
                         <td><MudTextField T="string" Value="member.Name" ValueChanged="n => Set(() => member.Name = n?.Trim() ?? string.Empty)" Margin="Margin.Dense" Class="mono"
                                           Error="@(!TypeExpressions.IsIdentifier(member.Name))" /></td>
-                        <td><MudNumericField T="long" Value="member.Value" ValueChanged="v => Set(() => member.Value = v)" Margin="Margin.Dense" Style="max-width: 140px" /></td>
+                        <td><IntegerField Value="member.Value" ValueChanged="v => Set(() => member.Value = v ?? member.Value)" Base="member.Base"
+                                          BaseChanged="b => Set(() => member.Base = b)" Style="max-width: 180px" /></td>
                         <td><MudTextField T="string" Value="member.Doc" ValueChanged="v => Set(() => member.Doc = Blank(v))" Margin="Margin.Dense" /></td>
                         <td><RowButtons Index="index" Count="enumDef.Members.Count" Moved="d => Set(() => Move(enumDef.Members, index, d))"
                                         Removed="() => Set(() => enumDef.Members.RemoveAt(index))" /></td>
@@ -93,8 +94,11 @@
                 <div class="builder-row">
                     <MudTextField T="string" Value="variantCase.Name" ValueChanged="n => Set(() => variantCase.Name = n?.Trim() ?? string.Empty)" Label="Case"
                                   Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Error="@(!TypeExpressions.IsIdentifier(variantCase.Name))" />
-                    <MudTextField T="string" Value="@(variantCase.TagMember ?? variantCase.TagValue?.ToString())" ValueChanged="v => Set(() => SetTag(variantCase, v))"
-                                  Label="Tag" HelperText="@TagHelp(variant)" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="max-width: 180px" />
+                    <MudTextField T="string" Value="@FormatTag(variantCase)" ValueChanged="v => Set(() => SetTag(variantCase, v))"
+                                  Label="Tag" HelperText="@TagHelp(variant)" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="max-width: 200px"
+                                  Adornment="@(variantCase.TagValue != null ? Adornment.End : Adornment.None)" AdornmentIcon="@NumberBases.Icon(variantCase.TagBase)"
+                                  AdornmentAriaLabel="@NumberBases.Hint(variantCase.TagBase)" IconSize="Size.Medium"
+                                  OnAdornmentClick="() => Set(() => variantCase.TagBase = NumberBases.Next(variantCase.TagBase))" />
                     <MudSwitch T="bool" Value="variantCase.Type != null" ValueChanged="d => Set(() => variantCase.Type = d ? new PrimitiveRef(PrimitiveKind.VarInt32) : null)"
                                Label="Has data" Color="Color.Primary" Class="mt-1" />
                     <MudTextField T="string" Value="variantCase.Doc" ValueChanged="v => Set(() => variantCase.Doc = Blank(v))" Label="Documentation"
@@ -169,14 +173,8 @@
 
     private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 
-    private static string? FormatId(long? id) => id is { } value ? "0x" + value.ToString("x2") : null;
-
-    private static long? ParseId(string? text)
-    {
-        text = text?.Trim();
-        if (string.IsNullOrEmpty(text)) return null;
-        return YamlValues.InterpretPlain(text) is JsonValue value && value.TryGetValue<long>(out var id) ? id : null;
-    }
+    private static string? FormatTag(VariantCase variantCase) =>
+        variantCase.TagMember ?? (variantCase.TagValue is { } tag ? YamlValues.FormatInteger(tag, variantCase.TagBase) : null);
 
     private static void SetGroups(StructDef structDef, string? text)
     {
@@ -187,9 +185,18 @@
     private static void SetTag(VariantCase variantCase, string? text)
     {
         text = text?.Trim() ?? "";
-        var number = YamlValues.InterpretPlain(text) is JsonValue value && value.TryGetValue<long>(out var tag) ? tag : (long?)null;
-        variantCase.TagValue = number;
-        variantCase.TagMember = number == null && text.Length > 0 ? text : null;
+        if (YamlValues.TryParseInteger(text, out var tag, out var numberBase))
+        {
+            variantCase.TagValue = tag;
+            // Plain digits keep the base shown; a 0x or 0b prefix chooses one.
+            if (numberBase != NumberBase.Decimal) variantCase.TagBase = numberBase;
+            variantCase.TagMember = null;
+        }
+        else
+        {
+            variantCase.TagValue = null;
+            variantCase.TagMember = text.Length > 0 ? text : null;
+        }
     }
 
     private static void Move<T>(List<T> items, int index, int delta)
@@ -223,10 +230,14 @@
             Type = field.Type,
             If = field.If,
             Const = field.Const?.DeepClone(),
+            ConstBase = field.ConstBase,
             Computed = field.Computed,
             Default = field.Default?.DeepClone(),
+            DefaultBase = field.DefaultBase,
             Min = field.Min,
+            MinBase = field.MinBase,
             Max = field.Max,
+            MaxBase = field.MaxBase,
             MinLength = field.MinLength,
             MaxLength = field.MaxLength,
             MinItems = field.MinItems,
@@ -241,7 +252,12 @@
         var values = enumDef.Members.Select(m => m.Value).ToList();
         var value = values.Count == 0 ? enumDef.Flags ? 1 : 0
             : enumDef.Flags ? Math.Max(1, values.Max() << 1) : values.Max() + 1;
-        enumDef.Members.Add(new EnumMember { Name = FreeName(enumDef.Members.Select(m => m.Name), "value"), Value = value });
+        enumDef.Members.Add(new EnumMember
+        {
+            Name = FreeName(enumDef.Members.Select(m => m.Name), "value"),
+            Value = value,
+            Base = enumDef.Members.Count > 0 ? enumDef.Members[^1].Base : enumDef.Flags ? NumberBase.Hex : NumberBase.Decimal,
+        });
     }
 
     /// <summary>Whether the tags are text: the tag type is a string (or an alias of one), or an external tag's cases give text.</summary>
@@ -269,7 +285,8 @@
         }
 
         var tags = variant.Cases.Select(c => c.TagValue ?? -1).ToList();
-        variant.Cases.Add(new VariantCase { Name = name, TagValue = tags.Count == 0 ? 0 : tags.Max() + 1 });
+        var numberBase = variant.Cases.LastOrDefault(c => c.TagValue != null)?.TagBase ?? NumberBase.Decimal;
+        variant.Cases.Add(new VariantCase { Name = name, TagValue = tags.Count == 0 ? 0 : tags.Max() + 1, TagBase = numberBase });
     }
 
     private static void AddBits(BitfieldDef bitfield) =>

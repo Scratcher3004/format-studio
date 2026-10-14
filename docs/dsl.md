@@ -56,6 +56,10 @@ fields:
     const: 3                    # always this value
 ```
 
+Integers (ids, enum values, variant tags, `const`, `default`, `min`, `max`) may be written in decimal (`39`), hex
+(`0x27`) or binary (`0b100111`), optionally with a sign. The writer keeps the form of each value, and the builder shows
+it the same way.
+
 Field keys: `name`, `type`, `title`, `doc`, `if`, `const`, `computed`, `default`, `min`, `max`, `minLength`,
 `maxLength`, `minItems`, `maxItems`, `pattern`, plus the type shortcuts `length`, `as`, `tag` and `encoding`, which
 apply to the field's type.
