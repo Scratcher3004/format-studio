@@ -1,0 +1,13 @@
+@* Move up, move down and remove buttons of a row in a builder list. *@
+<span class="row-buttons">
+    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="Index == 0" OnClick="() => Moved.InvokeAsync(-1)" title="Move up" />
+    <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" Disabled="Index == Count - 1" OnClick="() => Moved.InvokeAsync(1)" title="Move down" />
+    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="() => Removed.InvokeAsync()" title="Remove" />
+</span>
+
+@code {
+    [Parameter] public int Index { get; set; }
+    [Parameter] public int Count { get; set; }
+    [Parameter] public EventCallback<int> Moved { get; set; }
+    [Parameter] public EventCallback Removed { get; set; }
+}

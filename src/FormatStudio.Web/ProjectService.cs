@@ -3,6 +3,7 @@ using FormatStudio.Dsl;
 using FormatStudio.Importers;
 using FormatStudio.Model;
 using FormatStudio.Projects;
+using FormatStudio.Simulation;
 using FormatStudio.Validation;
 
 namespace FormatStudio.Web;
@@ -72,6 +73,10 @@ public sealed class ProjectService
         if (definition != null && Project != null) diagnostics.AddRange(Validator.Validate(Project, definition));
         return (definition, diagnostics);
     }
+
+    /// <summary>Decodes bytes as a definition that is still being edited, with the rest of the project as it is.</summary>
+    public DecodeResult Preview(TypeDef draft, byte[] bytes) =>
+        new Codec(Project!.With(draft)).Decode(new NamedRef(draft.Name), bytes);
 
     /// <summary>Writes the text to the definition's file (or to <paramref name="file"/>) and reloads.</summary>
     public string Save(TypeDef original, string text, string? file = null)

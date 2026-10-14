@@ -135,7 +135,7 @@
             return;
         }
 
-        _hex = FormatHex(result.Bytes);
+        _hex = Hex.FormatLines(result.Bytes);
         Show($"Encoded {result.Bytes.Length} bytes.", MudBlazor.Severity.Success);
         Annotate(codec, type, result.Bytes, updateJson: false);
     }
@@ -193,11 +193,4 @@
             result.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
     }
 
-    private static string FormatHex(byte[] bytes)
-    {
-        var lines = new List<string>();
-        for (var i = 0; i < bytes.Length; i += 16)
-            lines.Add(string.Join(' ', bytes.Skip(i).Take(16).Select(b => b.ToString("x2"))));
-        return string.Join('\n', lines);
-    }
 }

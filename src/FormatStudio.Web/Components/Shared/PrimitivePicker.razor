@@ -1,0 +1,36 @@
+@* A primitive type and, for fixed-width numbers, its byte order. *@
+<MudSelect T="PrimitiveKind" Value="Value.Kind" ValueChanged="SetKind" Label="@Label" Variant="Variant.Outlined" Margin="Margin.Dense"
+           Dense="true" Style="min-width: 120px; max-width: 140px">
+    @foreach (var kind in Enum.GetValues<PrimitiveKind>().Where(k => !IntegersOnly || Primitives.IsInteger(k)))
+    {
+        <MudSelectItem Value="kind">@Primitives.Name(kind)</MudSelectItem>
+    }
+</MudSelect>
+@if (Primitives.HasEndian(Value.Kind))
+{
+    <MudSelect T="Endian?" Value="Value.Endian" ValueChanged="e => Changed(Value with { Endian = e })" Label="Byte order" Variant="Variant.Outlined"
+               Margin="Margin.Dense" Dense="true" Style="min-width: 110px; max-width: 130px" ToStringFunc="EndianName">
+        <MudSelectItem T="Endian?" Value="null">Default</MudSelectItem>
+        <MudSelectItem T="Endian?" Value="Endian.Little">Little</MudSelectItem>
+        <MudSelectItem T="Endian?" Value="Endian.Big">Big</MudSelectItem>
+    </MudSelect>
+}
+
+@code {
+    [Parameter, EditorRequired] public PrimitiveRef Value { get; set; } = new(PrimitiveKind.U8);
+    [Parameter] public EventCallback<PrimitiveRef> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Primitive";
+    [Parameter] public bool IntegersOnly { get; set; }
+
+    private static string EndianName(Endian? endian) => endian switch
+    {
+        Endian.Little => "Little",
+        Endian.Big => "Big",
+        _ => "Default",
+    };
+
+    /// <summary>Keeps the byte order when the new kind has one.</summary>
+    private Task SetKind(PrimitiveKind kind) => Changed(new PrimitiveRef(kind, Primitives.HasEndian(kind) ? Value.Endian : null));
+
+    private Task Changed(PrimitiveRef primitive) => ValueChanged.InvokeAsync(primitive);
+}

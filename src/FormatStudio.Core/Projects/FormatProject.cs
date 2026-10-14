@@ -182,6 +182,18 @@ public sealed class FormatProject
 
     public bool Remove(string name) => _types.Remove(name);
 
+    /// <summary>
+    /// A copy of the project with <paramref name="definition"/> added, or replacing the one with its name, e.g. to decode
+    /// with a definition that is still being edited. The definitions themselves are shared, not copied.
+    /// </summary>
+    public FormatProject With(TypeDef definition)
+    {
+        var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox };
+        foreach (var type in _types.Values) copy.Add(type);
+        copy.Add(definition);
+        return copy;
+    }
+
     /// <summary>Follows aliases until a non-alias type expression.</summary>
     public TypeRef Unalias(TypeRef type)
     {

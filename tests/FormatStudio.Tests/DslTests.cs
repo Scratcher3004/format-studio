@@ -245,4 +245,33 @@ public class DslTests
         Assert.Contains(errors, e => e.Contains("have the same tag 1"));
         Assert.Contains(errors, e => e.Contains("the use site needs 'tag'"));
     }
+
+    [Theory]
+    [InlineData("Foo[count * 2]")]
+    [InlineData("{string: mutf8, length: u16}")]
+    [InlineData("{string: default, length: zero}")]
+    [InlineData("{array: {string: ascii, length: u8}, length: \"a[0]\"}")]
+    [InlineData("{map: {key: string, value: \"Foo[4]\"}, length: eof}")]
+    [InlineData("{optional: {sized: Foo, length: \"len, 2\"}}")]
+    [InlineData("{type: Mode, as: zigzag32}")]
+    [InlineData("{type: Data, tag: \"kind == 1 ? 2 : 3\"}")]
+    [InlineData("{fixed: i32, fraction: 5}")]
+    public void FormatTypeReadsBack(string text)
+    {
+        var type = DslReader.ReadType(text);
+        var formatted = DslWriter.FormatType(type);
+        Assert.DoesNotContain('\n', formatted);
+        Assert.Equal(type, DslReader.ReadType(formatted));
+    }
+
+    [Fact]
+    public void WithAddsADraftWithoutChangingTheProject()
+    {
+        var project = FormatProject.InMemory([Read("struct: A\nfields:\n  - x: u8\n")]);
+        var draft = Read("struct: A\nfields:\n  - x: u16\n");
+        var copy = project.With(draft);
+        Assert.Same(draft, copy.Find("A"));
+        Assert.NotSame(draft, project.Find("A"));
+        Assert.Same(project.Settings, copy.Settings);
+    }
 }

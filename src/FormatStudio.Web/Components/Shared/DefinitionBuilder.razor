@@ -1,0 +1,271 @@
+@using FormatStudio.Dsl
+@* Edits a definition in place: the common header, then the fields, members or cases of its kind. *@
+<div class="builder-row mb-2">
+    <MudTextField T="string" Value="Definition.Name" ValueChanged="n => Set(() => Definition.Name = n?.Trim() ?? string.Empty)"
+                  Label="@($"{Capitalize(Definition.Kind)} name")" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono"
+                  Error="@(!TypeExpressions.IsIdentifier(Definition.Name))" ErrorText="A name is [A-Za-z_][A-Za-z0-9_]*" Style="min-width: 200px" />
+    @if (Definition is StructDef header)
+    {
+        <MudSwitch T="bool" Value="header.IsPacket" ValueChanged="p => Set(() => header.IsPacket = p)" Label="Packet" Color="Color.Primary" Class="mt-1" />
+        @if (header.IsPacket)
+        {
+            <MudTextField T="string" Value="@FormatId(header.Id)" ValueChanged="v => Set(() => header.Id = ParseId(v))" Label="Id"
+                          Placeholder="0x27" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="max-width: 110px" />
+            <MudTextField T="string" Value="@string.Join(", ", header.Groups)" ValueChanged="v => Set(() => SetGroups(header, v))"
+                          Label="Groups" Placeholder="play, clientbound" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+        }
+    }
+    <MudTextField T="string" Value="Definition.Title" ValueChanged="v => Set(() => Definition.Title = Blank(v))" Label="Title"
+                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+</div>
+<MudTextField T="string" Value="Definition.Doc" ValueChanged="v => Set(() => Definition.Doc = Blank(v))" Label="Documentation" Sizing="InputSizing.Auto"
+              Lines="1" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3" />
+
+@switch (Definition)
+{
+    case StructDef structDef:
+        <MudText Typo="Typo.subtitle2" Class="mb-1">Fields (@structDef.Fields.Count)</MudText>
+        @for (var i = 0; i < structDef.Fields.Count; i++)
+        {
+            var index = i;
+            var field = structDef.Fields[i];
+            <FieldEditor @key="field" Field="field" Index="index" Count="structDef.Fields.Count" TypeNames="TypeNames" Find="Find"
+                         InitiallyOpen="ReferenceEquals(field, _added)" Changed="Notify"
+                         Moved="d => Set(() => Move(structDef.Fields, index, d))"
+                         Duplicated="() => Set(() => structDef.Fields.Insert(index + 1, Copy(field, structDef)))"
+                         Removed="() => Set(() => structDef.Fields.RemoveAt(index))" />
+        }
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" Class="mt-2" OnClick="() => AddField(structDef)">
+            Add field
+        </MudButton>
+        break;
+
+    case EnumDef enumDef:
+        <div class="builder-row mb-2">
+            <PrimitivePicker Value="enumDef.Type" ValueChanged="p => Set(() => enumDef.Type = p)" Label="Wire type" IntegersOnly="true" />
+            <MudSwitch T="bool" Value="enumDef.Flags" ValueChanged="f => Set(() => enumDef.Flags = f)" Label="Flags" Color="Color.Primary" Class="mt-1" />
+            <MudSwitch T="bool" Value="enumDef.AllowUnknown" ValueChanged="a => Set(() => enumDef.AllowUnknown = a)" Label="Allow unknown values" Color="Color.Primary" Class="mt-1" />
+        </div>
+        <MudSimpleTable Dense="true" Class="builder-table">
+            <thead><tr><th>Name</th><th>Value</th><th>Documentation</th><th></th></tr></thead>
+            <tbody>
+                @for (var i = 0; i < enumDef.Members.Count; i++)
+                {
+                    var index = i;
+                    var member = enumDef.Members[i];
+                    <tr @key="member">
+                        <td><MudTextField T="string" Value="member.Name" ValueChanged="n => Set(() => member.Name = n?.Trim() ?? string.Empty)" Margin="Margin.Dense" Class="mono"
+                                          Error="@(!TypeExpressions.IsIdentifier(member.Name))" /></td>
+                        <td><MudNumericField T="long" Value="member.Value" ValueChanged="v => Set(() => member.Value = v)" Margin="Margin.Dense" Style="max-width: 140px" /></td>
+                        <td><MudTextField T="string" Value="member.Doc" ValueChanged="v => Set(() => member.Doc = Blank(v))" Margin="Margin.Dense" /></td>
+                        <td><RowButtons Index="index" Count="enumDef.Members.Count" Moved="d => Set(() => Move(enumDef.Members, index, d))"
+                                        Removed="() => Set(() => enumDef.Members.RemoveAt(index))" /></td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" Class="mt-2" OnClick="() => Set(() => AddMember(enumDef))">
+            Add value
+        </MudButton>
+        break;
+
+    case VariantDef variant:
+        <div class="builder-row mb-2">
+            <MudSwitch T="bool" Value="variant.Tag != null" ValueChanged="t => Set(() => variant.Tag = t ? new PrimitiveRef(PrimitiveKind.VarUInt32) : null)"
+                       Label="Tag is read before the value" Color="Color.Primary" Class="mt-1" />
+        </div>
+        @if (variant.Tag != null)
+        {
+            <div class="mb-2">
+                <TypeBuilder Value="variant.Tag" ValueChanged="t => Set(() => variant.Tag = t)" Label="Tag type" TypeNames="TypeNames" Find="Find" />
+            </div>
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Class="mb-2 d-block">Fields using this variant give the tag as an expression (<span class="mono">tag:</span>).</MudText>
+        }
+        <MudText Typo="Typo.subtitle2" Class="mb-1">Cases (@variant.Cases.Count)</MudText>
+        @for (var i = 0; i < variant.Cases.Count; i++)
+        {
+            var index = i;
+            var variantCase = variant.Cases[i];
+            <div class="field-editor field-open" @key="variantCase">
+                <div class="builder-row">
+                    <MudTextField T="string" Value="variantCase.Name" ValueChanged="n => Set(() => variantCase.Name = n?.Trim() ?? string.Empty)" Label="Case"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Error="@(!TypeExpressions.IsIdentifier(variantCase.Name))" />
+                    <MudTextField T="string" Value="@(variantCase.TagMember ?? variantCase.TagValue?.ToString())" ValueChanged="v => Set(() => SetTag(variantCase, v))"
+                                  Label="Tag" HelperText="A number or an enum member" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="max-width: 180px" />
+                    <MudSwitch T="bool" Value="variantCase.Type != null" ValueChanged="d => Set(() => variantCase.Type = d ? new PrimitiveRef(PrimitiveKind.VarInt32) : null)"
+                               Label="Has data" Color="Color.Primary" Class="mt-1" />
+                    <MudTextField T="string" Value="variantCase.Doc" ValueChanged="v => Set(() => variantCase.Doc = Blank(v))" Label="Documentation"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+                    <RowButtons Index="index" Count="variant.Cases.Count" Moved="d => Set(() => Move(variant.Cases, index, d))"
+                                Removed="() => Set(() => variant.Cases.RemoveAt(index))" />
+                </div>
+                @if (variantCase.Type != null)
+                {
+                    <div class="type-nested">
+                        <TypeBuilder Value="variantCase.Type" ValueChanged="t => Set(() => variantCase.Type = t)" Label="Data" TypeNames="TypeNames" Find="Find" />
+                    </div>
+                }
+            </div>
+        }
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" Class="mt-2" OnClick="() => Set(() => AddCase(variant))">
+            Add case
+        </MudButton>
+        break;
+
+    case AliasDef alias:
+        <TypeBuilder Value="alias.Target" ValueChanged="t => Set(() => alias.Target = t)" Label="Type" TypeNames="TypeNames" Find="Find" ShowText="true" />
+        break;
+
+    case BitfieldDef bitfield:
+        <div class="builder-row mb-2">
+            <PrimitivePicker Value="bitfield.Base" ValueChanged="p => Set(() => bitfield.Base = p)" Label="Stored as" IntegersOnly="true" />
+            <MudSwitch T="bool" Value="bitfield.LsbFirst" ValueChanged="l => Set(() => bitfield.LsbFirst = l)" Label="First member in the lowest bits"
+                       Color="Color.Primary" Class="mt-1" />
+            <MudText Typo="Typo.body2" Class="mt-2" Color="@(UsedBits(bitfield) > Primitives.Bits(bitfield.Base.Kind) ? Color.Error : Color.Default)">
+                @UsedBits(bitfield) of @Primitives.Bits(bitfield.Base.Kind) bits used
+            </MudText>
+        </div>
+        <MudSimpleTable Dense="true" Class="builder-table">
+            <thead><tr><th>Name</th><th>Bits</th><th>Signed</th><th>Read as</th><th>Documentation</th><th></th></tr></thead>
+            <tbody>
+                @for (var i = 0; i < bitfield.Members.Count; i++)
+                {
+                    var index = i;
+                    var member = bitfield.Members[i];
+                    <tr @key="member">
+                        <td><MudTextField T="string" Value="member.Name" ValueChanged="n => Set(() => member.Name = n?.Trim() ?? string.Empty)" Margin="Margin.Dense" Class="mono"
+                                          Error="@(!TypeExpressions.IsIdentifier(member.Name))" /></td>
+                        <td><MudNumericField T="int" Value="member.Bits" ValueChanged="b => Set(() => member.Bits = b)" Min="1" Max="64" Margin="Margin.Dense" Style="max-width: 90px" /></td>
+                        <td><MudCheckBox T="bool" Value="member.Signed" ValueChanged="s => Set(() => member.Signed = s)" Size="Size.Small" /></td>
+                        <td><MudAutocomplete T="string" Value="member.Type" ValueChanged="t => Set(() => member.Type = Blank(t))" SearchFunc="SearchBitType"
+                                             CoerceValue="true" Placeholder="number" Margin="Margin.Dense" Dense="true" /></td>
+                        <td><MudTextField T="string" Value="member.Doc" ValueChanged="v => Set(() => member.Doc = Blank(v))" Margin="Margin.Dense" /></td>
+                        <td><RowButtons Index="index" Count="bitfield.Members.Count" Moved="d => Set(() => Move(bitfield.Members, index, d))"
+                                        Removed="() => Set(() => bitfield.Members.RemoveAt(index))" /></td>
+                    </tr>
+                }
+            </tbody>
+        </MudSimpleTable>
+        <MudButton Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.Add" Class="mt-2" OnClick="() => Set(() => AddBits(bitfield))">
+            Add member
+        </MudButton>
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public TypeDef Definition { get; set; } = null!;
+    [Parameter] public IReadOnlyList<string> TypeNames { get; set; } = [];
+    [Parameter] public Func<string, TypeDef?>? Find { get; set; }
+    /// <summary>Raised after every change of the definition (which is edited in place).</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+
+    /// <summary>The field added last, which opens expanded.</summary>
+    private FieldDef? _added;
+
+    private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+
+    private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    private static string? FormatId(long? id) => id is { } value ? "0x" + value.ToString("x2") : null;
+
+    private static long? ParseId(string? text)
+    {
+        text = text?.Trim();
+        if (string.IsNullOrEmpty(text)) return null;
+        return YamlValues.InterpretPlain(text) is JsonValue value && value.TryGetValue<long>(out var id) ? id : null;
+    }
+
+    private static void SetGroups(StructDef structDef, string? text)
+    {
+        structDef.Groups.Clear();
+        structDef.Groups.AddRange((text ?? "").Split([',', ' '], StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static void SetTag(VariantCase variantCase, string? text)
+    {
+        text = text?.Trim() ?? "";
+        var number = YamlValues.InterpretPlain(text) is JsonValue value && value.TryGetValue<long>(out var tag) ? tag : (long?)null;
+        variantCase.TagValue = number;
+        variantCase.TagMember = number == null && text.Length > 0 ? text : null;
+    }
+
+    private static void Move<T>(List<T> items, int index, int delta)
+    {
+        var target = index + delta;
+        if (target < 0 || target >= items.Count) return;
+        (items[index], items[target]) = (items[target], items[index]);
+    }
+
+    private static string FreeName(IEnumerable<string> taken, string prefix)
+    {
+        var names = taken.ToHashSet(StringComparer.Ordinal);
+        for (var i = names.Count + 1; ; i++)
+            if (!names.Contains(prefix + i)) return prefix + i;
+    }
+
+    private async Task AddField(StructDef structDef)
+    {
+        _added = new FieldDef { Name = FreeName(structDef.Fields.Select(f => f.Name), "field"), Type = new PrimitiveRef(PrimitiveKind.VarInt32) };
+        structDef.Fields.Add(_added);
+        await Changed.InvokeAsync();
+    }
+
+    private FieldDef Copy(FieldDef field, StructDef structDef)
+    {
+        _added = new FieldDef
+        {
+            Name = FreeName(structDef.Fields.Select(f => f.Name), field.Name),
+            Title = field.Title,
+            Doc = field.Doc,
+            Type = field.Type,
+            If = field.If,
+            Const = field.Const?.DeepClone(),
+            Computed = field.Computed,
+            Default = field.Default?.DeepClone(),
+            Min = field.Min,
+            Max = field.Max,
+            MinLength = field.MinLength,
+            MaxLength = field.MaxLength,
+            MinItems = field.MinItems,
+            MaxItems = field.MaxItems,
+            Pattern = field.Pattern,
+        };
+        return _added;
+    }
+
+    private static void AddMember(EnumDef enumDef)
+    {
+        var values = enumDef.Members.Select(m => m.Value).ToList();
+        var value = values.Count == 0 ? enumDef.Flags ? 1 : 0
+            : enumDef.Flags ? Math.Max(1, values.Max() << 1) : values.Max() + 1;
+        enumDef.Members.Add(new EnumMember { Name = FreeName(enumDef.Members.Select(m => m.Name), "value"), Value = value });
+    }
+
+    private static void AddCase(VariantDef variant)
+    {
+        var tags = variant.Cases.Select(c => c.TagValue ?? -1).ToList();
+        variant.Cases.Add(new VariantCase { Name = FreeName(variant.Cases.Select(c => c.Name), "case"), TagValue = tags.Count == 0 ? 0 : tags.Max() + 1 });
+    }
+
+    private static void AddBits(BitfieldDef bitfield) =>
+        bitfield.Members.Add(new BitFieldMember { Name = FreeName(bitfield.Members.Select(m => m.Name), "bits"), Bits = 1 });
+
+    private static int UsedBits(BitfieldDef bitfield) => bitfield.Members.Sum(m => m.Bits);
+
+    private Task<IEnumerable<string>> SearchBitType(string? text, CancellationToken token)
+    {
+        var options = TypeNames.Where(n => Find?.Invoke(n) is EnumDef).Prepend("bool");
+        return Task.FromResult(string.IsNullOrWhiteSpace(text) ? options : options.Where(n => n.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private Task Notify() => Changed.InvokeAsync();
+
+    private Task Set(Action change)
+    {
+        change();
+        return Changed.InvokeAsync();
+    }
+}

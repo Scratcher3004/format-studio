@@ -6,32 +6,33 @@
 <PageTitle>New definition - Format Studio</PageTitle>
 
 <MudText Typo="Typo.h5" Class="mb-2">New definition</MudText>
-<MudStack Row="true" Spacing="2" Class="mb-2">
+<MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-3">
+    <MudText Typo="Typo.body2">Start from:</MudText>
     @foreach (var (kind, template) in Templates)
     {
         <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="() => _text = template">@kind</MudButton>
     }
 </MudStack>
-<textarea class="code-editor" rows="20" spellcheck="false" @bind="_text" @bind:event="oninput"></textarea>
-<MudStack Row="true" Spacing="2" Class="my-2">
-    <MudTextField T="string" @bind-Value="_folder" Label="Folder, relative to the project" Variant="Variant.Outlined" Margin="Margin.Dense"
-                  HelperText="Empty: a folder per kind" />
-    <MudTextField T="string" @bind-Value="_file" Label="File name" Variant="Variant.Outlined" Margin="Margin.Dense"
-                  HelperText="Empty: the definition's name; .yaml is added" />
-</MudStack>
-@if (Projects.Project != null)
-{
-    <MudExpansionPanels Elevation="0" Class="mb-2">
-        <MudExpansionPanel Text="Browse">
-            <FolderBrowser Root="@Projects.Project.Directory" FilePattern="*.yaml" Picked="Pick" />
-        </MudExpansionPanel>
-    </MudExpansionPanels>
-}
-<MudStack Row="true" Spacing="2">
-    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Rule" OnClick="() => Check()">Validate</MudButton>
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Create">Create</MudButton>
-</MudStack>
-<DiagnosticList Items="_diagnostics" />
+<DefinitionEditor @bind-Text="_text" FileName="@FileName" Rows="20">
+    <Actions>
+        <MudStack Row="true" Spacing="2" Class="my-2">
+            <MudTextField T="string" @bind-Value="_folder" Label="Folder, relative to the project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                          HelperText="Empty: a folder per kind" />
+            <MudTextField T="string" @bind-Value="_file" Label="File name" Variant="Variant.Outlined" Margin="Margin.Dense"
+                          HelperText="Empty: the definition's name; .yaml is added" />
+        </MudStack>
+        @if (Projects.Project != null)
+        {
+            <MudExpansionPanels Elevation="0" Class="mb-2">
+                <MudExpansionPanel Text="Browse">
+                    <FolderBrowser Root="@Projects.Project.Directory" FilePattern="*.yaml" Picked="Pick" />
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Create">Create</MudButton>
+        <DiagnosticList Items="_diagnostics" />
+    </Actions>
+</DefinitionEditor>
 
 @code {
     private static readonly (string Kind, string Template)[] Templates =
@@ -49,12 +50,25 @@
     private string? _file;
     private DiagnosticBag _diagnostics = [];
 
+    private string FileName => string.IsNullOrWhiteSpace(_file) ? "new.yaml" : _file.Trim();
+
+    /// <summary>The definition to create, or null after reporting why it can't be. The editor shows its parse and validation problems.</summary>
     private TypeDef? Check()
     {
-        var (definition, diagnostics) = Projects.Check(_text, string.IsNullOrWhiteSpace(_file) ? "new.yaml" : _file.Trim());
-        _diagnostics = diagnostics;
-        if (definition != null && Projects.Project?.Find(definition.Name) != null)
+        _diagnostics = [];
+        var (definition, diagnostics) = Projects.Check(_text, FileName);
+        if (definition == null || diagnostics.HasErrors)
+        {
+            Snackbar.Add("Not created: fix the errors first.", MudBlazor.Severity.Error);
+            return null;
+        }
+
+        if (Projects.Project?.Find(definition.Name) != null)
+        {
             _diagnostics.Error($"'{definition.Name}' already exists; edit it on its page.");
+            return null;
+        }
+
         return definition;
     }
 
@@ -78,7 +92,12 @@
         var project = Projects.Project!;
         var folder = _folder?.Trim().Trim('"') ?? "";
         var name = _file?.Trim().Trim('"') ?? "";
-        if (folder.Length == 0 && name.Length == 0) return project.FileFor(definition);
+        if (folder.Length == 0 && name.Length == 0)
+        {
+            // The source is the placeholder file name used for diagnostics; without it FileFor picks the folder of the kind.
+            definition.Source = null;
+            return project.FileFor(definition);
+        }
 
         if (name.Length == 0) name = definition.Name;
         if (name.Contains(".."))
@@ -115,7 +134,7 @@
     private void Create()
     {
         var definition = Check();
-        if (definition == null || _diagnostics.HasErrors || Projects.Project == null) return;
+        if (definition == null || Projects.Project == null) return;
         var file = Target(definition);
         if (file == null) return;
         Projects.Save(definition, _text, file);

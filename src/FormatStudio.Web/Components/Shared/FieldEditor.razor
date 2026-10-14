@@ -1,0 +1,192 @@
+@using FormatStudio.Dsl
+@* One field of a struct or packet: a summary row that expands to the type builder and the field options. *@
+<div class="field-editor @(_open ? "field-open" : "")">
+    <div class="field-summary">
+        <MudIconButton Icon="@(_open ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)" Size="Size.Small"
+                       OnClick="() => _open = !_open" title="@(_open ? "Collapse" : "Edit type and options")" />
+        <MudTextField T="string" Value="Field.Name" ValueChanged="n => Set(() => Field.Name = n?.Trim() ?? string.Empty)" Placeholder="name"
+                      Variant="Variant.Text" Margin="Margin.Dense" Class="field-name" Error="@(!TypeExpressions.IsIdentifier(Field.Name))" />
+        <span class="field-type mono" @onclick="() => _open = true">@DslWriter.FormatType(Field.Type)</span>
+        <span class="field-badges">
+            @if (Field.Const != null)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">= @FormatValue(Field.Const)</MudChip>
+            }
+            @if (Field.Computed != null)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">computed</MudChip>
+            }
+            @if (Field.If != null)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">if @Field.If</MudChip>
+            }
+        </span>
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="Index == 0" OnClick="() => Moved.InvokeAsync(-1)" title="Move up" />
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Size="Size.Small" Disabled="Index == Count - 1" OnClick="() => Moved.InvokeAsync(1)" title="Move down" />
+        <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" OnClick="() => Duplicated.InvokeAsync()" title="Duplicate" />
+        <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" OnClick="() => Removed.InvokeAsync()" title="Remove" />
+    </div>
+    @if (_open)
+    {
+        <div class="field-details">
+            <TypeBuilder Value="Field.Type" ValueChanged="t => Set(() => Field.Type = t)" TypeNames="TypeNames" Find="Find" ShowText="true" />
+
+            <div class="builder-row mt-3">
+                <MudSelect T="ValueKind" Value="KindOfValue" ValueChanged="SetValueKind" Label="Value" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Dense="true" Style="min-width: 160px; max-width: 180px">
+                    <MudSelectItem Value="ValueKind.Input">Read from data</MudSelectItem>
+                    <MudSelectItem Value="ValueKind.Const">Constant</MudSelectItem>
+                    <MudSelectItem Value="ValueKind.Computed">Computed</MudSelectItem>
+                </MudSelect>
+                @if (Field.Const != null)
+                {
+                    <MudTextField T="string" Value="@FormatValue(Field.Const)" ValueChanged="v => Set(() => Field.Const = ParseValue(v) ?? Field.Const)"
+                                  Label="Constant value" HelperText="Written as is, checked when read" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" />
+                }
+                @if (Field.Computed != null)
+                {
+                    <MudTextField T="string" Value="Field.Computed" ValueChanged="v => Set(() => Field.Computed = v?.Trim() ?? string.Empty)"
+                                  Label="Expression" Placeholder="len(items)" HelperText="Calculated when encoding" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" Class="mono" />
+                }
+                <MudTextField T="string" Value="Field.If" ValueChanged="v => Set(() => Field.If = Blank(v))" Label="Present if"
+                              Placeholder="hasData" HelperText="Expression over earlier fields; no presence byte" Variant="Variant.Outlined"
+                              Margin="Margin.Dense" Class="mono grow" />
+                @if (Field.IsInput)
+                {
+                    <MudTextField T="string" Value="@FormatValue(Field.Default)" ValueChanged="v => Set(() => Field.Default = ParseValue(v))"
+                                  Label="Default" HelperText="Used when the value is missing" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" />
+                }
+            </div>
+
+            @if (Category is TypeCategory.Number || Field.Min != null || Field.Max != null)
+            {
+                <div class="builder-row mt-2">
+                    <MudNumericField T="decimal?" Value="Field.Min" ValueChanged="v => Set(() => Field.Min = v)" Label="Min" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 160px" />
+                    <MudNumericField T="decimal?" Value="Field.Max" ValueChanged="v => Set(() => Field.Max = v)" Label="Max" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 160px" />
+                </div>
+            }
+            @if (Category is TypeCategory.Text or TypeCategory.Bytes || Field.MinLength != null || Field.MaxLength != null || Field.Pattern != null)
+            {
+                <div class="builder-row mt-2">
+                    <MudNumericField T="int?" Value="Field.MinLength" ValueChanged="v => Set(() => Field.MinLength = v)" Label="Min length" Min="0" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 140px" />
+                    <MudNumericField T="int?" Value="Field.MaxLength" ValueChanged="v => Set(() => Field.MaxLength = v)" Label="Max length" Min="0" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 140px" />
+                    @if (Category is TypeCategory.Text || Field.Pattern != null)
+                    {
+                        <MudTextField T="string" Value="Field.Pattern" ValueChanged="v => Set(() => Field.Pattern = Blank(v))" Label="Pattern (regex)"
+                                      Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono grow" />
+                    }
+                </div>
+            }
+            @if (Category is TypeCategory.List || Field.MinItems != null || Field.MaxItems != null)
+            {
+                <div class="builder-row mt-2">
+                    <MudNumericField T="int?" Value="Field.MinItems" ValueChanged="v => Set(() => Field.MinItems = v)" Label="Min items" Min="0" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 140px" />
+                    <MudNumericField T="int?" Value="Field.MaxItems" ValueChanged="v => Set(() => Field.MaxItems = v)" Label="Max items" Min="0" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 140px" />
+                </div>
+            }
+
+            <div class="builder-row mt-2">
+                <MudTextField T="string" Value="Field.Title" ValueChanged="v => Set(() => Field.Title = Blank(v))" Label="Title" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                <MudTextField T="string" Value="Field.Doc" ValueChanged="v => Set(() => Field.Doc = Blank(v))" Label="Documentation" Sizing="InputSizing.Auto"
+                              Lines="1" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FieldDef Field { get; set; } = null!;
+    [Parameter] public int Index { get; set; }
+    [Parameter] public int Count { get; set; }
+    [Parameter] public IReadOnlyList<string> TypeNames { get; set; } = [];
+    [Parameter] public Func<string, TypeDef?>? Find { get; set; }
+    [Parameter] public bool InitiallyOpen { get; set; }
+    /// <summary>Raised after the field was changed in place.</summary>
+    [Parameter] public EventCallback Changed { get; set; }
+    [Parameter] public EventCallback<int> Moved { get; set; }
+    [Parameter] public EventCallback Duplicated { get; set; }
+    [Parameter] public EventCallback Removed { get; set; }
+
+    private bool _open;
+
+    protected override void OnInitialized() => _open = InitiallyOpen;
+
+    private enum ValueKind { Input, Const, Computed }
+
+    private enum TypeCategory { Other, Number, Text, Bytes, List }
+
+    private ValueKind KindOfValue => Field.Const != null ? ValueKind.Const : Field.Computed != null ? ValueKind.Computed : ValueKind.Input;
+
+    private Task SetValueKind(ValueKind kind) => Set(() =>
+    {
+        Field.Const = kind == ValueKind.Const ? Field.Const ?? JsonValue.Create(0) : null;
+        Field.Computed = kind == ValueKind.Computed ? Field.Computed ?? "" : null;
+        if (kind != ValueKind.Input) Field.Default = null;
+    });
+
+    /// <summary>Which constraints apply, after aliases and optional wrappers.</summary>
+    private TypeCategory Category
+    {
+        get
+        {
+            var type = Field.Type;
+            for (var depth = 0; depth < 32; depth++)
+            {
+                switch (type)
+                {
+                    case OptionalRef optional:
+                        type = optional.Inner;
+                        continue;
+                    case NamedRef { As: null, Tag: null } named when Find?.Invoke(named.Name) is AliasDef alias:
+                        type = alias.Target;
+                        continue;
+                    case PrimitiveRef primitive:
+                        return primitive.Kind is PrimitiveKind.Bool or PrimitiveKind.Uuid ? TypeCategory.Other : TypeCategory.Number;
+                    case FixedPointRef:
+                        return TypeCategory.Number;
+                    case StringRef:
+                        return TypeCategory.Text;
+                    case BytesRef:
+                        return TypeCategory.Bytes;
+                    case ArrayRef or MapRef:
+                        return TypeCategory.List;
+                }
+
+                break;
+            }
+
+            return TypeCategory.Other;
+        }
+    }
+
+    /// <summary>A value as YAML: plain strings unquoted, everything else in JSON (which YAML reads as well).</summary>
+    private static string? FormatValue(JsonNode? value) => value switch
+    {
+        null => null,
+        JsonValue text when text.GetValueKind() == System.Text.Json.JsonValueKind.String && !YamlValues.NeedsQuotes(text.GetValue<string>())
+            => text.GetValue<string>(),
+        _ => value.ToJsonString(),
+    };
+
+    private static JsonNode? ParseValue(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        try
+        {
+            return YamlValues.ParseYaml(text);
+        }
+        catch (YamlDotNet.Core.YamlException)
+        {
+            return JsonValue.Create(text);
+        }
+    }
+
+    private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    private Task Set(Action change)
+    {
+        change();
+        return Changed.InvokeAsync();
+    }
+}

@@ -43,6 +43,19 @@ can be open in different tabs. The id is the file name plus a hash of the path; 
 long as the project is in the recent list or the workspace. The project name in the app bar switches projects.
 
 Type browser with filter; per type: structure table, simulator (JSON ⇄ hex with an annotated hex view and value
-tree, random values, round trip), YAML editor with validation (imported files are saved as overrides), generated C#,
-references. Also pages for identify, round-trip fuzzing over all types, code generation (preview and write),
-imports (dry run and report) and new definitions.
+tree, random values, round trip), editor (imported files are saved as overrides), generated C#, references. Also
+pages for identify, round-trip fuzzing over all types, code generation (preview and write), imports (dry run and
+report) and new definitions.
+
+The editor of new and existing definitions has two views of the same YAML, switched with Builder / YAML:
+
+- **Builder** (the default): forms for every kind. Packets and structs get a field list (add, duplicate, reorder,
+  remove) where each field opens to a type builder (primitives with byte order, references with `as`/`tag`,
+  strings, bytes, arrays, optionals, maps, sized values, fixed point, NBT, all with their lengths, or a type typed
+  as text) and the field options (`const`, `computed`, `if`, `default`, `min`/`max`, `minLength`/`maxLength`,
+  `pattern`, `minItems`/`maxItems`, `title`, `doc`). Changes in the builder rewrite the YAML, which drops comments.
+- **YAML**: the file as text. YAML with errors can't be opened in the builder until they are fixed.
+
+Validation runs on every change. Next to the editor, **sample data** (pasted hex or an uploaded file, at most
+64 KiB, optionally skipping a header) is decoded with the definition as it is being edited, with the annotated hex
+view, value tree and JSON, so a packet can be built field by field against a capture.

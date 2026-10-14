@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
 using FormatStudio.Model;
 
@@ -321,6 +322,19 @@ public static class Strings
 public static class Hex
 {
     public static string Format(ReadOnlySpan<byte> bytes) => Convert.ToHexStringLower(bytes);
+
+    /// <summary>Lines of <paramref name="perLine"/> space-separated bytes, as shown in hex editors.</summary>
+    public static string FormatLines(ReadOnlySpan<byte> bytes, int perLine = 16)
+    {
+        var builder = new StringBuilder(bytes.Length * 3);
+        for (var i = 0; i < bytes.Length; i++)
+        {
+            if (i > 0) builder.Append(i % perLine == 0 ? '\n' : ' ');
+            builder.Append(bytes[i].ToString("x2", CultureInfo.InvariantCulture));
+        }
+
+        return builder.ToString();
+    }
 
     /// <summary>Parses hex with optional whitespace, <c>0x</c> prefixes, dashes, colons and commas.</summary>
     public static byte[] Parse(string text)

@@ -157,6 +157,19 @@ public static class DslWriter
         return map;
     }
 
+    /// <summary>The type on one line: the short form, or the mapping form in flow style. <see cref="DslReader.ReadType"/> reads it back.</summary>
+    public static string FormatType(TypeRef type) => TypeExpressions.TryFormat(type) ?? Flow(Type(type));
+
+    private static string Flow(object? value) => value switch
+    {
+        YMap map => "{" + string.Join(", ", map.Select(pair => $"{pair.Key}: {Flow(pair.Value)}")) + "}",
+        string text when text.Length == 0 || text.IndexOfAny([',', '[', ']', '{', '}', ':', '#', '"', '\'']) >= 0
+            || YamlValues.NeedsQuotes(text) || text != text.Trim() => System.Text.Json.JsonSerializer.Serialize(text),
+        string text => text,
+        IFormattable formattable => formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+        _ => value?.ToString() ?? "null",
+    };
+
     private static object LengthValue(LengthSpec length) => length.Kind == LengthKind.Fixed ? length.Fixed : length.ToString();
 
     private static void AddLength(YMap map, LengthSpec length)

@@ -1,0 +1,56 @@
+@* A length of a string, bytes, array, map or sized value: default, prefix, fixed, expression, eof or zero. *@
+<MudSelect T="LengthKind" Value="Value.Kind" ValueChanged="SetKind" Label="@Label" Variant="Variant.Outlined" Margin="Margin.Dense"
+           Dense="true" Style="min-width: 130px; max-width: 150px">
+    @foreach (var kind in Kinds)
+    {
+        <MudSelectItem Value="kind">@KindName(kind)</MudSelectItem>
+    }
+</MudSelect>
+@switch (Value.Kind)
+{
+    case LengthKind.Prefix:
+        <PrimitivePicker Value="Value.Prefix ?? Fallback" ValueChanged="p => Changed(new LengthSpec(LengthKind.Prefix, p))" Label="Prefix" IntegersOnly="true" />
+        break;
+    case LengthKind.Fixed:
+        <MudNumericField T="int" Value="Value.Fixed" ValueChanged="n => Changed(new LengthSpec(LengthKind.Fixed, Fixed: n))" Label="Count"
+                         Min="0" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 110px" />
+        break;
+    case LengthKind.Expression:
+        <MudTextField T="string" Value="Value.Expression" ValueChanged="e => Changed(new LengthSpec(LengthKind.Expression, Expression: e?.Trim() ?? string.Empty))"
+                      Label="Expression" Placeholder="count * 2" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="min-width: 160px" />
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public LengthSpec Value { get; set; } = LengthSpec.Default;
+    [Parameter] public EventCallback<LengthSpec> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Length";
+    /// <summary>Zero termination only exists for strings and bytes.</summary>
+    [Parameter] public bool AllowZero { get; set; }
+
+    private static readonly PrimitiveRef Fallback = new(PrimitiveKind.VarUInt32);
+
+    private IEnumerable<LengthKind> Kinds => Enum.GetValues<LengthKind>().Where(k => AllowZero || k != LengthKind.Zero || Value.Kind == k);
+
+    private static string KindName(LengthKind kind) => kind switch
+    {
+        LengthKind.Default => "Default prefix",
+        LengthKind.Prefix => "Prefix",
+        LengthKind.Fixed => "Fixed",
+        LengthKind.Expression => "Expression",
+        LengthKind.Eof => "Until end",
+        _ => "Zero terminated",
+    };
+
+    private Task SetKind(LengthKind kind) => Changed(kind switch
+    {
+        LengthKind.Default => LengthSpec.Default,
+        LengthKind.Prefix => new LengthSpec(LengthKind.Prefix, Fallback),
+        LengthKind.Fixed => new LengthSpec(LengthKind.Fixed, Fixed: 1),
+        LengthKind.Expression => new LengthSpec(LengthKind.Expression, Expression: ""),
+        LengthKind.Eof => LengthSpec.Eof,
+        _ => LengthSpec.Zero,
+    });
+
+    private Task Changed(LengthSpec length) => ValueChanged.InvokeAsync(length);
+}

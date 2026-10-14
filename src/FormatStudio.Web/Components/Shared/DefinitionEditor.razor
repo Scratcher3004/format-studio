@@ -1,0 +1,351 @@
+@using System.Text.RegularExpressions
+@using FormatStudio.Dsl
+@using Microsoft.AspNetCore.Components.Forms
+@inherits ProjectComponent
+@implements IDisposable
+@*
+    Edits the DSL text of one definition, in the builder (the default) or as YAML. Both stay in sync through the text:
+    builder changes write the YAML, switching to the builder reads it. Sample bytes are decoded with the definition as
+    it is being edited.
+*@
+
+<MudGrid Spacing="3">
+    <MudItem xs="12" lg="7">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+            <MudButtonGroup Variant="Variant.Outlined" Size="Size.Small">
+                <MudButton StartIcon="@Icons.Material.Filled.ViewList" Variant="@(_builder ? Variant.Filled : Variant.Outlined)" Color="Color.Primary"
+                           OnClick="ShowBuilder">Builder</MudButton>
+                <MudButton StartIcon="@Icons.Material.Filled.Code" Variant="@(_builder ? Variant.Outlined : Variant.Filled)" Color="Color.Primary"
+                           OnClick="ShowYaml">YAML</MudButton>
+            </MudButtonGroup>
+            @if (_parsed != null && !_diagnostics.HasErrors)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Check">valid</MudChip>
+            }
+            else if (_diagnostics.HasErrors)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.ErrorOutline">
+                    @_diagnostics.Count(d => d.Severity == Severity.Error) error(s)
+                </MudChip>
+            }
+        </MudStack>
+
+        @if (_modeMessage != null)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mb-2" ShowCloseIcon="true" CloseIconClicked="() => _modeMessage = null">
+                @_modeMessage
+            </MudAlert>
+        }
+
+        @if (_builder && _draft != null)
+        {
+            @if (_hasComments)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mb-2">
+                    The YAML has comments. Changes in the builder rewrite it without them; edit as YAML to keep them.
+                </MudAlert>
+            }
+            <DefinitionBuilder Definition="_draft" TypeNames="TypeNames" Find="Find" Changed="BuilderChanged" />
+        }
+        else
+        {
+            <textarea class="code-editor" rows="@Rows" spellcheck="false" @bind="_yaml" @bind:event="oninput" @bind:after="YamlChanged"></textarea>
+        }
+
+        <DiagnosticList Items="_diagnostics" />
+        @Actions
+    </MudItem>
+
+    <MudItem xs="12" lg="5">
+        <MudPaper Outlined="true" Class="pa-3 sample-panel">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                <MudText Typo="Typo.subtitle1">Sample data</MudText>
+                <MudSpacer />
+                <MudButton HtmlTag="label" for="@_uploadId" Variant="Variant.Outlined" Size="Size.Small" StartIcon="@Icons.Material.Filled.UploadFile">
+                    Upload file
+                </MudButton>
+                <InputFile id="@_uploadId" OnChange="Upload" hidden />
+                @if (_hex.Length > 0)
+                {
+                    <MudIconButton Icon="@Icons.Material.Filled.Clear" Size="Size.Small" OnClick="ClearSample" title="Clear" />
+                }
+            </MudStack>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-2">
+                Paste hex or upload a captured packet; it is decoded as @(_parsed?.Name ?? "the definition") on every change.
+            </MudText>
+            <textarea class="code-editor" rows="5" spellcheck="false" placeholder="00 0f 6c 6f 63 61 6c 68 6f 73 74 ..." @bind="_hex"
+                      @bind:event="oninput" @bind:after="HexChanged"></textarea>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-1">
+                <MudNumericField T="int" Value="_skip" ValueChanged="SetSkip" Label="Skip bytes" HelperText="e.g. a length or id header" Min="0"
+                                 Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 160px" />
+                @if (_bytes != null)
+                {
+                    <MudText Typo="Typo.body2">@Status</MudText>
+                }
+            </MudStack>
+            @if (_sampleError != null)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Error" Dense="true" Class="mt-2">@_sampleError</MudAlert>
+            }
+            @if (_decodeError != null)
+            {
+                <MudAlert Severity="MudBlazor.Severity.Error" Dense="true" Class="mt-2">@_decodeError</MudAlert>
+            }
+            @if (_result != null && _sample != null)
+            {
+                @if (_parsed == null)
+                {
+                    <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true" Class="mt-2">The definition doesn't parse; this is the last decodable version.</MudAlert>
+                }
+                <DiagnosticList Items="_result.Diagnostics" Max="20" />
+                <div class="mt-2">
+                    <HexView Bytes="_sample" Root="_result.Root" @bind-Selected="_selected" />
+                </div>
+                @if (_selected != null)
+                {
+                    <MudText Typo="Typo.body2" Class="mt-1 mono">@_selected.Path: @_selected.Type, offset @_selected.Offset, @_selected.Length bytes @_selected.Display</MudText>
+                }
+                <MudTabs Elevation="0" Rounded="true" Class="mt-2" TabPanelsClass="pt-2">
+                    <MudTabPanel Text="Structure">
+                        <SpanTree Root="_result.Root" @bind-Selected="_selected" />
+                    </MudTabPanel>
+                    <MudTabPanel Text="JSON">
+                        <pre class="code-block">@JsonValues.ToText(_result.Value)</pre>
+                    </MudTabPanel>
+                </MudTabs>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    /// <summary>Uploads are cut to this many bytes; the hex view shows every byte.</summary>
+    private const int MaxSample = 64 * 1024;
+
+    [Parameter, EditorRequired] public string Text { get; set; } = "";
+    [Parameter] public EventCallback<string> TextChanged { get; set; }
+    /// <summary>The file name used in diagnostics.</summary>
+    [Parameter] public string FileName { get; set; } = "new.yaml";
+    [Parameter] public int Rows { get; set; } = 24;
+    /// <summary>The name of the definition being edited, to warn about renames; null for new definitions.</summary>
+    [Parameter] public string? OriginalName { get; set; }
+    /// <summary>Buttons shown under the editor.</summary>
+    [Parameter] public RenderFragment? Actions { get; set; }
+
+    private readonly string _uploadId = "upload-" + Guid.NewGuid().ToString("n");
+    private bool _builder = true;
+    private TypeDef? _draft;
+    private string _yaml = "";
+    /// <summary>The text last received or sent, to tell changes by the page from our own.</summary>
+    private string? _lastText;
+    private bool _hasComments;
+    private string? _modeMessage;
+    private TypeDef? _parsed;
+    /// <summary>The last definition that parsed, used for decoding while the current text doesn't.</summary>
+    private TypeDef? _decodable;
+    private DiagnosticBag _diagnostics = [];
+    private CancellationTokenSource? _debounce;
+
+    private string _hex = "";
+    private int _skip;
+    private byte[]? _bytes;
+    private byte[]? _sample;
+    /// <summary>A problem with the sample itself: bad hex, a file that can't be read or is too long.</summary>
+    private string? _sampleError;
+    private string? _decodeError;
+    private DecodeResult? _result;
+    private SpanNode? _selected;
+
+    private IReadOnlyList<string> TypeNames
+    {
+        get
+        {
+            var names = Projects.Project?.Types.Keys.ToList() ?? [];
+            if (_draft != null && TypeExpressions.IsIdentifier(_draft.Name) && !names.Contains(_draft.Name)) names.Add(_draft.Name);
+            names.Sort(StringComparer.Ordinal);
+            return names;
+        }
+    }
+
+    private TypeDef? Find(string name) => _draft != null && name == _draft.Name ? _draft : Projects.Project?.Find(name);
+
+    private string Status
+    {
+        get
+        {
+            if (_result == null || _sample == null) return $"{_bytes!.Length} bytes";
+            var left = _sample.Length - _result.Consumed;
+            return $"{_result.Consumed} of {_sample.Length} bytes decoded" + (left > 0 ? $", {left} left" : "");
+        }
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (Text == _lastText) return;
+        _lastText = _yaml = Text;
+        Analyze();
+        if (_builder) LoadDraft();
+    }
+
+    // ------------------------------------------------------------------ modes
+
+    private void ShowBuilder()
+    {
+        if (_builder) return;
+        _modeMessage = null;
+        _builder = true;
+        LoadDraft();
+    }
+
+    private void ShowYaml()
+    {
+        _builder = false;
+        _modeMessage = null;
+    }
+
+    /// <summary>Reads the text into the builder's model, or stays in YAML when it doesn't parse.</summary>
+    private void LoadDraft()
+    {
+        var definition = DslReader.Read(_yaml, FileName, []);
+        if (definition == null)
+        {
+            _builder = false;
+            _draft = null;
+            _modeMessage = "The YAML has errors, so it can't be shown in the builder. Fix them and switch again.";
+            return;
+        }
+
+        _draft = definition;
+        _hasComments = Regex.IsMatch(_yaml, @"(^|\s)#", RegexOptions.Multiline);
+    }
+
+    private async Task BuilderChanged()
+    {
+        _yaml = DslWriter.Write(_draft!);
+        _hasComments = false;
+        await Publish();
+        Analyze();
+    }
+
+    private async Task YamlChanged()
+    {
+        await Publish();
+        if (await Debounced()) Analyze();
+    }
+
+    private Task Publish()
+    {
+        _lastText = _yaml;
+        return TextChanged.InvokeAsync(_yaml);
+    }
+
+    /// <summary>Waits a moment and returns false when another change came in meanwhile, so that typing stays responsive.</summary>
+    private async Task<bool> Debounced()
+    {
+        _debounce?.Cancel();
+        var debounce = _debounce = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(250, debounce.Token);
+            return true;
+        }
+        catch (TaskCanceledException)
+        {
+            return false;
+        }
+    }
+
+    // ------------------------------------------------------------------ checking and decoding
+
+    private void Analyze()
+    {
+        if (Projects.Project == null) return;
+        (_parsed, _diagnostics) = Projects.Check(_yaml, FileName);
+        if (_parsed != null && OriginalName != null && _parsed.Name != OriginalName)
+            _diagnostics.Warning($"The name changed to '{_parsed.Name}'; saving creates or replaces that type.");
+        if (_parsed != null) _decodable = _parsed;
+        Decode();
+    }
+
+    private void Decode()
+    {
+        _result = null;
+        _selected = null;
+        _sample = null;
+        _decodeError = null;
+        if (_bytes == null || _decodable == null || Projects.Project == null) return;
+        _sample = _bytes[Math.Min(_skip, _bytes.Length)..];
+        try
+        {
+            _result = Projects.Preview(_decodable, _sample);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // A half-written definition can fail in ways the codec doesn't report as diagnostics.
+            _decodeError = $"Can't decode with this definition: {e.Message}";
+        }
+    }
+
+    private async Task HexChanged()
+    {
+        if (!await Debounced()) return;
+        ReadHex();
+        Decode();
+    }
+
+    private void ReadHex()
+    {
+        _sampleError = null;
+        if (string.IsNullOrWhiteSpace(_hex))
+        {
+            _bytes = null;
+            return;
+        }
+
+        try
+        {
+            _bytes = Hex.Parse(_hex);
+        }
+        catch (System.FormatException e)
+        {
+            _bytes = null;
+            _sampleError = $"Invalid hex: {e.Message}";
+        }
+    }
+
+    private void SetSkip(int skip)
+    {
+        _skip = Math.Max(0, skip);
+        Decode();
+    }
+
+    private async Task Upload(InputFileChangeEventArgs e)
+    {
+        _sampleError = null;
+        try
+        {
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: long.MaxValue);
+            var buffer = new byte[(int)Math.Min(e.File.Size, MaxSample)];
+            await stream.ReadExactlyAsync(buffer);
+            _bytes = buffer;
+            _hex = Hex.FormatLines(buffer);
+            Decode();
+            if (e.File.Size > MaxSample) _sampleError = $"{e.File.Name} has {e.File.Size} bytes; only the first {MaxSample} are used.";
+        }
+        catch (IOException exception)
+        {
+            _sampleError = $"Can't read {e.File.Name}: {exception.Message}";
+        }
+    }
+
+    private void ClearSample()
+    {
+        _hex = "";
+        _bytes = _sample = null;
+        _result = null;
+        _selected = null;
+        _sampleError = _decodeError = null;
+    }
+
+    public void Dispose() => _debounce?.Cancel();
+}

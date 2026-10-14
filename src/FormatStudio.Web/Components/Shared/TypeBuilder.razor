@@ -1,0 +1,216 @@
+@using FormatStudio.Dsl
+@* Builds a type expression from dropdowns. Arrays, optionals, maps and sized values nest another builder. *@
+<div class="type-builder">
+    @if (ShowText)
+    {
+        <MudTextField T="string" Value="@Format(Value)" ValueChanged="ParseText" Label="Type expression" Variant="Variant.Outlined"
+                      Margin="Margin.Dense" Class="mono mb-2" Error="_textError != null" ErrorText="@_textError"
+                      HelperText="Type here (e.g. u16be, Slot[], {string: ascii, length: u8}) or use the controls below" />
+    }
+    <div class="builder-row">
+        <MudSelect T="Kind" Value="KindOf(Value)" ValueChanged="SetKind" Label="@Label" Variant="Variant.Outlined" Margin="Margin.Dense"
+                   Dense="true" Style="min-width: 130px; max-width: 150px">
+            @foreach (var kind in Enum.GetValues<Kind>())
+            {
+                <MudSelectItem Value="kind">@KindName(kind)</MudSelectItem>
+            }
+        </MudSelect>
+        @switch (Value)
+        {
+            case PrimitiveRef primitive:
+                <PrimitivePicker Value="primitive" ValueChanged="p => Changed(p)" Label="Type" />
+                break;
+            case NamedRef named:
+                <MudAutocomplete T="string" Value="named.Name" ValueChanged="n => Changed(named with { Name = n?.Trim() ?? string.Empty })"
+                                 SearchFunc="Search" CoerceValue="true" MaxItems="50" Label="Name" Variant="Variant.Outlined"
+                                 Margin="Margin.Dense" Dense="true" Style="min-width: 200px" Error="@(Find?.Invoke(named.Name) == null)"
+                                 ErrorText="Unknown type" />
+                @if (Find?.Invoke(named.Name) is EnumDef)
+                {
+                    <MudSelect T="string" Value="@(named.As?.ToString() ?? "")" ValueChanged="a => Changed(named with { As = ParsePrimitive(a) })"
+                               Label="Wire type (as)" Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Style="min-width: 130px; max-width: 150px">
+                        <MudSelectItem Value="@("")">Enum default</MudSelectItem>
+                        @foreach (var kind in Enum.GetValues<PrimitiveKind>().Where(Primitives.IsInteger))
+                        {
+                            <MudSelectItem Value="@Primitives.Name(kind)">@Primitives.Name(kind)</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
+                @if (Find?.Invoke(named.Name) is VariantDef variant)
+                {
+                    <MudTextField T="string" Value="named.Tag" ValueChanged="t => Changed(named with { Tag = Blank(t) })" Label="Tag (expression)"
+                                  Placeholder="kind" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="min-width: 160px"
+                                  Error="@(variant.Tag == null && named.Tag == null)" ErrorText="This variant needs a tag" />
+                }
+                break;
+            case StringRef str:
+                <MudSelect T="StringEncoding?" Value="str.Encoding" ValueChanged="e => Changed(str with { Encoding = e })" Label="Encoding"
+                           Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Style="min-width: 120px; max-width: 140px"
+                           ToStringFunc="@(e => e is { } encoding ? TypeExpressions.EncodingName(encoding) : "Default")">
+                    <MudSelectItem T="StringEncoding?" Value="null">Default</MudSelectItem>
+                    @foreach (var encoding in Enum.GetValues<StringEncoding>())
+                    {
+                        <MudSelectItem T="StringEncoding?" Value="encoding">@TypeExpressions.EncodingName(encoding)</MudSelectItem>
+                    }
+                </MudSelect>
+                <LengthEditor Value="str.Length" ValueChanged="l => Changed(str with { Length = l })" AllowZero="true" />
+                break;
+            case BytesRef bytes:
+                <LengthEditor Value="bytes.Length" ValueChanged="l => Changed(new BytesRef(l))" AllowZero="true" />
+                break;
+            case ArrayRef array:
+                <LengthEditor Value="array.Length" ValueChanged="l => Changed(array with { Length = l })" Label="Count" />
+                break;
+            case MapRef map:
+                <LengthEditor Value="map.Length" ValueChanged="l => Changed(map with { Length = l })" Label="Count" />
+                break;
+            case SizedRef sized:
+                <LengthEditor Value="sized.Length" ValueChanged="l => Changed(sized with { Length = l })" Label="Byte length" />
+                break;
+            case FixedPointRef fixedPoint:
+                <PrimitivePicker Value="fixedPoint.Base" ValueChanged="p => Changed(fixedPoint with { Base = p })" Label="Stored as" IntegersOnly="true" />
+                <MudNumericField T="int" Value="fixedPoint.FractionBits" ValueChanged="n => Changed(fixedPoint with { FractionBits = n })"
+                                 Label="Fraction bits" Min="0" Max="63" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 120px" />
+                break;
+            case NbtRef nbt:
+                <MudSelect T="NbtFlavor?" Value="nbt.Flavor" ValueChanged="f => Changed(new NbtRef(f))" Label="Flavor" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" Dense="true" Style="min-width: 160px; max-width: 180px"
+                           ToStringFunc="@(f => f is { } flavor ? TypeExpressions.FlavorName(flavor) : "Default")">
+                    <MudSelectItem T="NbtFlavor?" Value="null">Default</MudSelectItem>
+                    @foreach (var flavor in Enum.GetValues<NbtFlavor>())
+                    {
+                        <MudSelectItem T="NbtFlavor?" Value="flavor">@TypeExpressions.FlavorName(flavor)</MudSelectItem>
+                    }
+                </MudSelect>
+                break;
+        }
+    </div>
+    @switch (Value)
+    {
+        case ArrayRef array:
+            <div class="type-nested">
+                <TypeBuilder Value="array.Element" ValueChanged="t => Changed(array with { Element = t })" Label="Element" TypeNames="TypeNames" Find="Find" />
+            </div>
+            break;
+        case OptionalRef optional:
+            <div class="type-nested">
+                <TypeBuilder Value="optional.Inner" ValueChanged="t => Changed(new OptionalRef(t))" Label="Value" TypeNames="TypeNames" Find="Find" />
+            </div>
+            break;
+        case SizedRef sized:
+            <div class="type-nested">
+                <TypeBuilder Value="sized.Inner" ValueChanged="t => Changed(sized with { Inner = t })" Label="Content" TypeNames="TypeNames" Find="Find" />
+            </div>
+            break;
+        case MapRef map:
+            <div class="type-nested">
+                <TypeBuilder Value="map.Key" ValueChanged="t => Changed(map with { Key = t })" Label="Key" TypeNames="TypeNames" Find="Find" />
+                <TypeBuilder Value="map.Value" ValueChanged="t => Changed(map with { Value = t })" Label="Value" TypeNames="TypeNames" Find="Find" />
+            </div>
+            break;
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TypeRef Value { get; set; } = new PrimitiveRef(PrimitiveKind.U8);
+    [Parameter] public EventCallback<TypeRef> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "Kind";
+    /// <summary>The names offered for references to other definitions.</summary>
+    [Parameter] public IReadOnlyList<string> TypeNames { get; set; } = [];
+    /// <summary>Looks up a definition by name, to offer <c>as</c> for enums and <c>tag</c> for variants.</summary>
+    [Parameter] public Func<string, TypeDef?>? Find { get; set; }
+    /// <summary>Shows a text field with the whole expression above the controls.</summary>
+    [Parameter] public bool ShowText { get; set; }
+
+    private string? _textError;
+
+    private enum Kind { Primitive, Reference, String, Bytes, Array, Optional, Map, Sized, FixedPoint, Nbt }
+
+    private static string KindName(Kind kind) => kind switch
+    {
+        Kind.Primitive => "Number",
+        Kind.Reference => "Other type",
+        Kind.FixedPoint => "Fixed point",
+        Kind.Nbt => "NBT",
+        _ => kind.ToString(),
+    };
+
+    private static Kind KindOf(TypeRef type) => type switch
+    {
+        PrimitiveRef => Kind.Primitive,
+        NamedRef => Kind.Reference,
+        StringRef => Kind.String,
+        BytesRef => Kind.Bytes,
+        ArrayRef => Kind.Array,
+        OptionalRef => Kind.Optional,
+        MapRef => Kind.Map,
+        SizedRef => Kind.Sized,
+        FixedPointRef => Kind.FixedPoint,
+        _ => Kind.Nbt,
+    };
+
+    /// <summary>The short form, or the mapping form for types that have none.</summary>
+    public static string Format(TypeRef type) => DslWriter.FormatType(type);
+
+    private static TypeRef? Inner(TypeRef type) => type switch
+    {
+        ArrayRef array => array.Element,
+        OptionalRef optional => optional.Inner,
+        SizedRef sized => sized.Inner,
+        MapRef map => map.Value,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Wrapping kinds wrap the current type; switching from a wrapper to the kind of its content unwraps it, so that
+    /// "u8" to "Array" to "Number" gives "u8" again.
+    /// </summary>
+    private Task SetKind(Kind kind)
+    {
+        if (kind == KindOf(Value)) return Task.CompletedTask;
+        if (Inner(Value) is { } inner && KindOf(inner) == kind) return Changed(inner);
+        return Changed(kind switch
+        {
+            Kind.Primitive => new PrimitiveRef(PrimitiveKind.VarInt32),
+            Kind.Reference => new NamedRef(TypeNames.FirstOrDefault() ?? ""),
+            Kind.String => new StringRef(null, LengthSpec.Default),
+            Kind.Bytes => new BytesRef(LengthSpec.Default),
+            Kind.Array => new ArrayRef(Value, LengthSpec.Default),
+            Kind.Optional => new OptionalRef(Value),
+            Kind.Map => new MapRef(new StringRef(null, LengthSpec.Default), Value, LengthSpec.Default),
+            Kind.Sized => new SizedRef(Value, LengthSpec.Default),
+            Kind.FixedPoint => new FixedPointRef(new PrimitiveRef(PrimitiveKind.I32), 5),
+            _ => new NbtRef(null),
+        });
+    }
+
+    private Task ParseText(string? text)
+    {
+        try
+        {
+            var type = DslReader.ReadType(text ?? "");
+            _textError = null;
+            return Changed(type);
+        }
+        catch (Exception e) when (e is System.FormatException or FormatDefinitionException or YamlDotNet.Core.YamlException
+                                      or InvalidOperationException or ArgumentOutOfRangeException)
+        {
+            _textError = e.Message;
+            return Task.CompletedTask;
+        }
+    }
+
+    private Task<IEnumerable<string>> Search(string? text, CancellationToken token) => Task.FromResult(string.IsNullOrWhiteSpace(text)
+        ? TypeNames
+        : TypeNames.Where(n => n.Contains(text.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    private static PrimitiveRef? ParsePrimitive(string? text) => Primitives.TryParse(text ?? "", out var primitive) ? primitive : null;
+
+    private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    private Task Changed(TypeRef type)
+    {
+        _textError = null;
+        return ValueChanged.InvokeAsync(type);
+    }
+}
