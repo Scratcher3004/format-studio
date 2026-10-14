@@ -160,6 +160,8 @@ public sealed class FormatProject
     /// <summary>The project file, or null for an in-memory project.</summary>
     public string? FilePath { get; }
     public string Directory { get; }
+    /// <summary>Where the project may read and write files; definition files outside it are not loaded.</summary>
+    public FileSandbox Sandbox { get; init; } = FileSandbox.Unrestricted;
     public DiagnosticBag Diagnostics { get; } = [];
     public List<SampleDef> Samples { get; } = [];
 
@@ -211,12 +213,13 @@ public sealed class FormatProject
     }
 
     /// <summary>The full path of a project file, or of the single <c>*.fstudio.yaml</c> in a directory.</summary>
-    public static string ResolveFile(string path)
+    public static string ResolveFile(string path, FileSandbox? sandbox = null)
     {
-        path = Path.GetFullPath(path);
+        sandbox ??= FileSandbox.Unrestricted;
+        path = sandbox.Check(path);
         if (!System.IO.Directory.Exists(path))
             return File.Exists(path) ? path : throw new FileNotFoundException($"{path} doesn't exist", path);
-        var candidates = System.IO.Directory.GetFiles(path, "*" + ProjectSettings.Extension);
+        var candidates = sandbox.EnumerateFiles(path, "*" + ProjectSettings.Extension).ToArray();
         return candidates.Length switch
         {
             1 => candidates[0],
@@ -226,11 +229,12 @@ public sealed class FormatProject
     }
 
     /// <summary>Loads a project file, or the single <c>*.fstudio.yaml</c> in a directory.</summary>
-    public static FormatProject Load(string path)
+    public static FormatProject Load(string path, FileSandbox? sandbox = null)
     {
-        path = ResolveFile(path);
+        sandbox ??= FileSandbox.Unrestricted;
+        path = ResolveFile(path, sandbox);
         var settings = ProjectSettings.Parse(File.ReadAllText(path), path);
-        var project = new FormatProject(settings, Path.GetDirectoryName(path)!, path);
+        var project = new FormatProject(settings, Path.GetDirectoryName(path)!, path) { Sandbox = sandbox };
         project.LoadSources();
         project.LoadSamples();
         Validation.Validator.Validate(project);
@@ -240,15 +244,26 @@ public sealed class FormatProject
     /// <summary>Relative path (with forward slashes) of a file in the project.</summary>
     public string Relative(string file) => Path.GetRelativePath(Directory, file).Replace('\\', '/');
 
-    public static IReadOnlyList<string> Glob(string directory, IEnumerable<string> patterns, IReadOnlyCollection<string> excludes)
+    /// <summary>
+    /// The files matching each pattern in turn. In a restricted sandbox the patterns are matched against the files found
+    /// inside the sandbox, so patterns like <c>../**</c> can't list or read anything outside it.
+    /// </summary>
+    public static IReadOnlyList<string> Glob(string directory, IEnumerable<string> patterns, IReadOnlyCollection<string> excludes,
+        FileSandbox? sandbox = null)
     {
         var result = new List<string>();
+        var files = sandbox is { IsRestricted: true } && System.IO.Directory.Exists(directory)
+            ? sandbox.EnumerateFiles(directory, recursive: true).ToList()
+            : null;
         foreach (var pattern in patterns)
         {
             var matcher = new Matcher(StringComparison.Ordinal);
             matcher.AddInclude(pattern);
             foreach (var exclude in excludes) matcher.AddExclude(exclude);
-            result.AddRange(matcher.GetResultsInFullPath(directory).Order(StringComparer.Ordinal));
+            var matches = files == null
+                ? matcher.GetResultsInFullPath(directory)
+                : matcher.Match(directory, files).Files.Select(f => Path.GetFullPath(f.Path, directory));
+            result.AddRange(matches.Order(StringComparer.Ordinal));
         }
 
         return result;
@@ -264,7 +279,7 @@ public sealed class FormatProject
         foreach (var pattern in Settings.Sources.Where(s => !s.StartsWith('!')))
         {
             patternIndex++;
-            foreach (var file in Glob(Directory, [pattern], excludes))
+            foreach (var file in Glob(Directory, [pattern], excludes, Sandbox))
             {
                 if (!seenFiles.Add(file)) continue;
                 var definition = DslReader.Read(File.ReadAllText(file), Relative(file), Diagnostics);
@@ -289,7 +304,7 @@ public sealed class FormatProject
 
     private void LoadSamples()
     {
-        foreach (var file in Glob(Directory, Settings.Samples, []))
+        foreach (var file in Glob(Directory, Settings.Samples, [], Sandbox))
         {
             var relative = Relative(file);
             try
@@ -334,7 +349,7 @@ public sealed class FormatProject
     /// <summary>Writes a definition back to its file and replaces it in the project.</summary>
     public string Save(TypeDef definition)
     {
-        var file = FileFor(definition);
+        var file = Sandbox.Check(FileFor(definition));
         System.IO.Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         File.WriteAllText(file, DslWriter.Write(definition));
         definition.Source ??= new SourceLocation(Relative(file), 1, 1);

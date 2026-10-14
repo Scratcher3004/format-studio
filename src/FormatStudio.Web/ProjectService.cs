@@ -13,13 +13,16 @@ public sealed class ProjectService
     private readonly Lock _lock = new();
     private GeneratedOutput? _generated;
 
-    public ProjectService(string path)
+    public ProjectService(string path, FileSandbox? sandbox = null)
     {
         Path = path;
+        Sandbox = sandbox ?? FileSandbox.Unrestricted;
         Reload();
     }
 
     public string Path { get; }
+    /// <summary>The workspace; the project's files are only read and written inside it.</summary>
+    public FileSandbox Sandbox { get; }
     public FormatProject? Project { get; private set; }
     public string? LoadError { get; private set; }
     /// <summary>Increased on every reload, so that pages can drop cached results.</summary>
@@ -33,7 +36,7 @@ public sealed class ProjectService
         {
             try
             {
-                Project = FormatProject.Load(Path);
+                Project = FormatProject.Load(Path, Sandbox);
                 LoadError = null;
             }
             catch (Exception e) when (e is FormatDefinitionException or IOException or System.FormatException or YamlDotNet.Core.YamlException)
@@ -51,13 +54,14 @@ public sealed class ProjectService
     /// <summary>The text of a definition's file, or the DSL of definitions without a file.</summary>
     public string Text(TypeDef definition)
     {
-        var file = Project!.FileFor(definition);
+        var file = Sandbox.Check(Project!.FileFor(definition));
         return File.Exists(file) ? File.ReadAllText(file) : DslWriter.Write(definition);
     }
 
     public bool IsImported(TypeDef definition)
     {
-        return ImporterRegistry.IsImported(Project!.FileFor(definition));
+        var file = Project!.FileFor(definition);
+        return Sandbox.Contains(file) && ImporterRegistry.IsImported(file);
     }
 
     /// <summary>Parses and validates edited text against the rest of the project.</summary>
@@ -72,7 +76,7 @@ public sealed class ProjectService
     /// <summary>Writes the text to the definition's file (or to <paramref name="file"/>) and reloads.</summary>
     public string Save(TypeDef original, string text, string? file = null)
     {
-        file ??= Project!.FileFor(original);
+        file = Sandbox.Check(file ?? Project!.FileFor(original));
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
         File.WriteAllText(file, text);
         Reload();

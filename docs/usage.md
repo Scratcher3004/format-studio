@@ -33,7 +33,7 @@ folder browser) or create a new one from the same template as `format-studio new
 | Option | |
 |---|---|
 | `--project <file\|folder>` | Opens the project at startup; `/` goes straight to it. Also `FORMATSTUDIO_PROJECT`. |
-| `--workspace <folder>` | Lists every `*.fstudio.yaml` below the folder on the start page (skips hidden folders, `bin`, `obj`, `node_modules`, `generated`). |
+| `--workspace <folder>` | Lists every `*.fstudio.yaml` below the folder on the start page (skips hidden folders, `bin`, `obj`, `node_modules`, `generated`). The web UI then reads, writes and lists nothing outside the folder, also not through symbolic links or junctions or through project settings like `sources: [../**/*.yaml]`; `--project` must be inside it. |
 | `--state-dir <folder>` | Where the recent projects are kept; default `~/.config/format-studio` (`%APPDATA%\format-studio` on Windows). |
 
 Relative paths are relative to the folder `dotnet run` is started from.

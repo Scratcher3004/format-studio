@@ -10,7 +10,10 @@ public sealed record StudioOptions
 {
     /// <summary>Opened at startup; <c>/</c> then goes straight to it (<c>--project</c>).</summary>
     public string? Project { get; init; }
-    /// <summary>A folder whose <c>*.fstudio.yaml</c> files are listed on the start page (<c>--workspace</c>).</summary>
+    /// <summary>
+    /// A folder whose <c>*.fstudio.yaml</c> files are listed on the start page (<c>--workspace</c>). When set, the web UI
+    /// doesn't read, write or list anything outside it.
+    /// </summary>
     public string? Workspace { get; init; }
     /// <summary>Where the list of recent projects is kept (<c>--state-dir</c>).</summary>
     public string StateDirectory { get; init; } = DefaultStateDirectory;
@@ -48,6 +51,7 @@ public sealed class ProjectStore
     public ProjectStore(StudioOptions options)
     {
         Options = options;
+        Sandbox = FileSandbox.For(options.Workspace);
         _recentFile = Path.Combine(options.StateDirectory, "recent.json");
         _recent = ReadRecent();
         ScanWorkspace();
@@ -55,6 +59,8 @@ public sealed class ProjectStore
     }
 
     public StudioOptions Options { get; }
+    /// <summary>The workspace, if any, as the boundary for every file the web UI touches.</summary>
+    public FileSandbox Sandbox { get; }
     /// <summary>The project given with <c>--project</c>.</summary>
     public ProjectEntry? Initial { get; }
     /// <summary>Raised when the list of known projects changes.</summary>
@@ -66,7 +72,8 @@ public sealed class ProjectStore
         lock (_lock)
         {
             var workspace = _workspace.ToHashSet(PathComparer);
-            var entries = _recent.Select(r => new ProjectEntry(IdOf(r.File), r.File, r.Opened, workspace.Contains(r.File))).ToList();
+            // Projects opened in earlier runs without this workspace stay in the file but aren't offered.
+            var entries = _recent.Where(r => Sandbox.Contains(r.File)).Select(r => new ProjectEntry(IdOf(r.File), r.File, r.Opened, workspace.Contains(r.File))).ToList();
             var recent = _recent.Select(r => r.File).ToHashSet(PathComparer);
             entries.AddRange(_workspace.Where(f => !recent.Contains(f)).Select(f => new ProjectEntry(IdOf(f), f, null, true)));
             return entries;
@@ -87,7 +94,7 @@ public sealed class ProjectStore
         if (entry == null) return null;
         lock (_lock)
         {
-            if (!_loaded.TryGetValue(id, out var service)) _loaded[id] = service = new ProjectService(entry.File);
+            if (!_loaded.TryGetValue(id, out var service)) _loaded[id] = service = new ProjectService(entry.File, Sandbox);
             return service;
         }
     }
@@ -95,7 +102,7 @@ public sealed class ProjectStore
     /// <summary>Adds a project file, or the single one in a folder, to the recent list.</summary>
     public ProjectEntry Open(string path)
     {
-        var file = FormatProject.ResolveFile(path);
+        var file = FormatProject.ResolveFile(path, Sandbox);
         lock (_lock)
         {
             _recent.RemoveAll(r => PathComparer.Equals(r.File, file));
@@ -110,7 +117,7 @@ public sealed class ProjectStore
 
     /// <summary>Creates a project from <see cref="ProjectTemplate"/> and opens it.</summary>
     public ProjectEntry Create(string directory, string? name, string endian, string length) =>
-        Open(ProjectTemplate.Create(directory, name, endian, length));
+        Open(ProjectTemplate.Create(Sandbox.Check(directory), name, endian, length));
 
     /// <summary>Removes a project from the recent list (the files stay).</summary>
     public void Forget(string id)
@@ -128,7 +135,7 @@ public sealed class ProjectStore
     public void ScanWorkspace()
     {
         var found = new List<string>();
-        if (Options.Workspace is { } workspace && Directory.Exists(workspace)) Scan(new DirectoryInfo(Path.GetFullPath(workspace)), 0, found);
+        if (Sandbox.Root is { } workspace && Directory.Exists(workspace)) Scan(new DirectoryInfo(workspace), 0, found);
         found.Sort(StringComparer.Ordinal);
         lock (_lock) _workspace = found;
         Changed?.Invoke();
@@ -174,7 +181,8 @@ public sealed class ProjectStore
         {
             if (!File.Exists(_recentFile)) return [];
             var recent = JsonSerializer.Deserialize<List<RecentProject>>(File.ReadAllText(_recentFile)) ?? [];
-            return recent.Where(r => File.Exists(r.File)).Take(MaxRecent).ToList();
+            // Entries outside the workspace are kept without looking at them (see Known).
+            return recent.Where(r => !Sandbox.Contains(r.File) || File.Exists(r.File)).Take(MaxRecent).ToList();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
         {

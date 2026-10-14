@@ -24,5 +24,5 @@ public sealed class MojangImport : IImporter
     ];
 
     public ImportResult Run(FormatProject project, JsonObject settings, bool write) =>
-        MojangImporter.Run(MojangImportSettings.From(settings), project.Directory, write, project.Defaults);
+        MojangImporter.Run(MojangImportSettings.From(settings), project.Directory, write, project.Defaults, project.Sandbox);
 }

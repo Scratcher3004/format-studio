@@ -71,7 +71,7 @@
             </MudStack>
             <MudExpansionPanels Elevation="0" Class="mt-2">
                 <MudExpansionPanel Text="Browse">
-                    <FolderBrowser Start="@StartFolder" Picked="path => Open(path)" />
+                    <FolderBrowser Start="@StartFolder" Root="@Store.Sandbox.Root" Picked="path => Open(path)" />
                 </MudExpansionPanel>
             </MudExpansionPanels>
         </MudPaper>
@@ -80,7 +80,7 @@
         <MudPaper Outlined="true" Class="pa-3">
             <MudText Typo="Typo.h6" Class="mb-2">New</MudText>
             <MudTextField T="string" @bind-Value="_newFolder" Label="Folder" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2"
-                          HelperText="Created if it doesn't exist; must not contain a project yet" />
+                          HelperText="@($"Relative to {BaseFolder}; created if it doesn't exist; must not contain a project yet")" />
             <MudTextField T="string" @bind-Value="_newName" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2"
                           HelperText="Default: the folder name" />
             <MudStack Row="true" Spacing="2">
@@ -143,11 +143,18 @@
     private Task Open(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return Task.CompletedTask;
-        Go(() => Store.Open(path.Trim().Trim('"')));
+        Go(() => Store.Open(Path.GetFullPath(path.Trim().Trim('"'), BaseFolder)));
         return Task.CompletedTask;
     }
 
-    private void Create() => Go(() => Store.Create(_newFolder!.Trim().Trim('"'), _newName, _newEndian, _newLength.Trim()));
+    /// <summary>
+    /// Relative paths typed into Open and New are resolved against the workspace or the user's home folder, never the server's
+    /// working directory (C:\Windows\System32 when started from a shortcut or as a service).
+    /// </summary>
+    private string BaseFolder => Store.Options.Workspace ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    private void Create() => Go(() => Store.Create(
+        Path.GetFullPath(_newFolder!.Trim().Trim('"'), BaseFolder), _newName, _newEndian, _newLength.Trim()));
 
     private void Go(Func<ProjectEntry> action)
     {

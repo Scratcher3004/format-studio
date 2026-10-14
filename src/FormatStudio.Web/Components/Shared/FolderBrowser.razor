@@ -1,14 +1,26 @@
-@* Browses the server's folders; picking a folder or a project file reports its full path. *@
+@* Browses the server's folders (or only those under Root); picking a folder or a listed file reports its full path. *@
 
 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1" Class="mb-1">
-    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="_folder == null" OnClick="Up" title="Parent folder" />
-    <MudText Typo="Typo.body2" Class="mono" Style="overflow-wrap: anywhere">@(_folder ?? "Drives")</MudText>
+    <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Size="Size.Small" Disabled="AtTop" OnClick="Up" title="Parent folder" />
+    <MudText Typo="Typo.body2" Class="mono" Style="overflow-wrap: anywhere">@Shown</MudText>
     <MudSpacer />
     @if (_folder != null)
     {
+        <MudIconButton Icon="@Icons.Material.Filled.CreateNewFolder" Size="Size.Small" OnClick="() => _newFolder = _newFolder == null ? string.Empty : null"
+                       title="New folder" />
         <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="() => Picked.InvokeAsync(_folder)">Use this folder</MudButton>
     }
 </MudStack>
+@if (_newFolder != null)
+{
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+        <MudTextField T="string" @bind-Value="_newFolder" Label="New folder name" Variant="Variant.Outlined" Margin="Margin.Dense" Immediate="true"
+                      OnKeyUp="@(e => { if (e.Key == "Enter") CreateFolder(); })" />
+        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" OnClick="CreateFolder"
+                   Disabled="string.IsNullOrWhiteSpace(_newFolder)">Create</MudButton>
+        <MudButton Size="Size.Small" OnClick="() => _newFolder = null">Cancel</MudButton>
+    </MudStack>
+}
 @if (_error != null)
 {
     <MudAlert Severity="MudBlazor.Severity.Warning" Dense="true">@_error</MudAlert>
@@ -27,24 +39,45 @@
 </MudList>
 
 @code {
-    /// <summary>The folder shown first; the user's home folder if not set.</summary>
+    /// <summary>The folder shown first; the user's home folder (or <see cref="Root"/>) if not set.</summary>
     [Parameter] public string? Start { get; set; }
     [Parameter] public EventCallback<string> Picked { get; set; }
+    /// <summary>
+    /// If set, nothing outside this folder is shown, listed or created, also not through links; the shown path is
+    /// relative to it.
+    /// </summary>
+    [Parameter] public string? Root { get; set; }
+    /// <summary>The files listed besides the folders; null lists none.</summary>
+    [Parameter] public string? FilePattern { get; set; } = "*" + ProjectSettings.Extension;
 
+    private FileSandbox _sandbox = FileSandbox.Unrestricted;
     private string? _folder;
     private string? _error;
+    private string? _newFolder;
     private List<string> _folders = [];
     private List<string> _files = [];
 
-    protected override void OnInitialized() =>
-        Show(Start is { } start && Directory.Exists(start) ? Path.GetFullPath(start) : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+    protected override void OnInitialized()
+    {
+        _sandbox = FileSandbox.For(Root);
+        if (Start is { } start && Directory.Exists(start) && _sandbox.Contains(start)) Show(Path.GetFullPath(start));
+        else Show(_sandbox.Root ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+    }
 
-    private void Up() => Show(_folder == null ? null : Path.GetDirectoryName(_folder));
+    private bool AtTop => _folder == null || (_sandbox.Root != null && Path.GetRelativePath(_sandbox.Root, _folder) == ".");
+
+    private string Shown => _folder == null ? "Drives" : _sandbox.Root == null ? _folder : Path.GetRelativePath(_sandbox.Root, _folder);
+
+    private void Up()
+    {
+        if (!AtTop) Show(Path.GetDirectoryName(_folder));
+    }
 
     /// <summary>Shows a folder, or the drives (Windows) / the root (elsewhere) for null.</summary>
     private void Show(string? folder)
     {
         _error = null;
+        _newFolder = null;
         if (folder == null && !OperatingSystem.IsWindows()) folder = "/";
         try
         {
@@ -55,15 +88,44 @@
             }
             else
             {
-                var directory = new DirectoryInfo(folder);
-                _folders = directory.EnumerateDirectories().Where(d => !d.Name.StartsWith('.'))
-                    .Select(d => d.FullName).Order(StringComparer.OrdinalIgnoreCase).ToList();
-                _files = directory.EnumerateFiles("*" + ProjectSettings.Extension).Select(f => f.FullName).Order(StringComparer.Ordinal).ToList();
+                folder = _sandbox.Check(folder);
+                _folders = _sandbox.EnumerateDirectories(folder).Where(d => !Path.GetFileName(d).StartsWith('.'))
+                    .Order(StringComparer.OrdinalIgnoreCase).ToList();
+                _files = FilePattern == null ? [] : _sandbox.EnumerateFiles(folder, FilePattern).Order(StringComparer.Ordinal).ToList();
             }
 
             _folder = folder;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatDefinitionException)
+        {
+            _error = e.Message;
+        }
+    }
+
+    /// <summary>Creates a folder in the shown one and shows it.</summary>
+    private void CreateFolder()
+    {
+        if (_folder == null || string.IsNullOrWhiteSpace(_newFolder)) return;
+        var name = _newFolder.Trim();
+        if (name.Contains("..") || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.IndexOfAny(['/', '\\', ':']) >= 0)
+        {
+            _error = $"'{name}' can't be used as a folder name.";
+            return;
+        }
+
+        try
+        {
+            var path = _sandbox.Check(Path.Combine(_folder, name));
+            if (Path.Exists(path))
+            {
+                _error = $"{name} already exists.";
+                return;
+            }
+
+            Directory.CreateDirectory(path);
+            Show(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatDefinitionException)
         {
             _error = e.Message;
         }
