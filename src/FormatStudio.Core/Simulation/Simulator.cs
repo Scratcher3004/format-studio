@@ -102,13 +102,14 @@ public static class Simulator
     }
 
     /// <summary>Reads the packet id with <paramref name="header"/> and decodes the rest as the packet with that id.</summary>
+    /// <param name="candidates">The packets to choose from, e.g. those of one protocol; all packets by default.</param>
     public static (StructDef? Packet, ulong Id, int HeaderLength, DecodeResult? Result) DecodePacket(Codec codec, byte[] bytes, PacketHeader header,
-        string? group = null)
+        IEnumerable<StructDef>? candidates = null)
     {
         var reader = new WireReader(bytes);
         var raw = reader.ReadInteger(header.Type.Kind, header.Type.Endian ?? codec.Project.Defaults.Endian);
         var id = unchecked((ulong)(long)raw) & header.IdMask;
-        var packet = codec.Project.Packets.FirstOrDefault(p => p.Id == (long)id && (group == null || p.Groups.Contains(group)));
+        var packet = (candidates ?? codec.Project.Packets).FirstOrDefault(p => p.Id == (long)id);
         if (packet == null) return (null, id, reader.Position, null);
         return (packet, id, reader.Position, codec.Decode(new NamedRef(packet.Name), bytes[reader.Position..]));
     }

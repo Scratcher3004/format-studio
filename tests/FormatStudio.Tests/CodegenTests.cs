@@ -294,7 +294,6 @@ public class CodegenTests
     public void GeneratedDispatchCallsTheVisitor()
     {
         var project = FormatProject.Load(TestPaths.JavaSample);
-        foreach (var packet in project.Packets.Where(p => p.Groups.Contains("play")).ToList()) project.Remove(packet.Name);
         var output = CodeGeneration.Generate(project, Target("csharp"));
         var assembly = GeneratedCodeVerifier.Compile(output, """
             using FormatStudio.Runtime;
@@ -306,7 +305,7 @@ public class CodegenTests
               public static string? Run(uint id, byte[] data) {
                 var reader = new FormatReader(data);
                 var visitor = new NameVisitor();
-                return global::Generated.Test.TestPackets.Dispatch(id, ref reader, ref visitor) ? visitor.Name : null;
+                return global::Generated.Test.TestPackets.StatusServerbound.Dispatch(id, ref reader, ref visitor) ? visitor.Name : null;
               }
             }
             """, typeof(FormatReader).Assembly);
@@ -319,7 +318,6 @@ public class CodegenTests
     public void GeneratedStreamDispatchCallsTheVisitor()
     {
         var project = FormatProject.Load(TestPaths.JavaSample);
-        foreach (var packet in project.Packets.Where(p => p.Groups.Contains("play")).ToList()) project.Remove(packet.Name);
         var output = CodeGeneration.Generate(project, Target("csharp-stream"));
         var assembly = GeneratedCodeVerifier.Compile(output, """
             using FormatStudio.Runtime;
@@ -331,7 +329,7 @@ public class CodegenTests
               public static string? Run(uint id, byte[] data) {
                 var reader = new FormatStreamReader(new global::System.IO.MemoryStream(data));
                 var visitor = new NameVisitor();
-                return global::Generated.Test.TestPackets.Dispatch(id, reader, ref visitor) ? visitor.Name : null;
+                return global::Generated.Test.TestPackets.StatusServerbound.Dispatch(id, reader, ref visitor) ? visitor.Name : null;
               }
             }
             """, typeof(FormatReader).Assembly);
@@ -345,7 +343,6 @@ public class CodegenTests
     {
         var java = Java();
         var project = FormatProject.Load(TestPaths.JavaSample);
-        foreach (var packet in project.Packets.Where(p => p.Groups.Contains("play")).ToList()) project.Remove(packet.Name);
         var output = CodeGeneration.Generate(project, Target("java-stream"));
         Assert.False(output.Diagnostics.HasErrors, string.Join("\n", output.Diagnostics));
         var directory = TestPaths.NewTempDirectory();
@@ -355,13 +352,60 @@ public class CodegenTests
 
             public final class Harness {
                 public static void main(String[] args) throws Exception {
-                    FormatPacket packet = TestPackets.read(1, new FormatReader(new byte[8]));
-                    System.out.println(packet.getClass().getSimpleName() + ":" + packet.packetId() + ":" + TestPackets.nameOf(1));
-                    System.out.println(TestPackets.read(99, new FormatReader(new byte[0])) == null);
+                    FormatPacket packet = TestPackets.StatusServerbound.read(1, new FormatReader(new byte[8]));
+                    System.out.println(packet.getClass().getSimpleName() + ":" + packet.packetId() + ":" + TestPackets.StatusServerbound.nameOf(1));
+                    System.out.println(TestPackets.StatusServerbound.read(99, new FormatReader(new byte[0])) == null);
+                    System.out.println(TestPackets.HandshakingServerbound.nameOf(0) + ":" + TestPackets.LoginServerbound.nameOf(0));
                 }
             }
             """, directory);
-        Assert.Equal("StatusPing:1:StatusPing\ntrue\n", java.Run(classes, "Harness", ""));
+        Assert.Equal("StatusPing:1:StatusPing\ntrue\nHandshake:LoginStart\n", java.Run(classes, "Harness", ""));
+    }
+
+    [Fact]
+    public void ProtocolsHaveRegistriesOfTheirOwn()
+    {
+        var project = FormatProject.Load(TestPaths.JavaSample);
+        var output = CodeGeneration.Generate(project, Target("csharp"));
+        Assert.DoesNotContain(output.Diagnostics, d => d.Message.Contains("share id"));
+        var assembly = GeneratedCodeVerifier.Compile(output, """
+            public static class Harness {
+              public static string? Run(string protocol, uint id) => protocol switch {
+                "HandshakingServerbound" => global::Generated.Test.TestPackets.HandshakingServerbound.NameOf(id),
+                "LoginServerbound" => global::Generated.Test.TestPackets.LoginServerbound.NameOf(id),
+                _ => global::Generated.Test.TestPackets.PlayClientbound.NameOf(id),
+              };
+            }
+            """, typeof(FormatReader).Assembly);
+        var run = assembly.GetType("Harness")!.GetMethod("Run")!;
+        Assert.Equal("Handshake", run.Invoke(null, ["HandshakingServerbound", 0u]));
+        Assert.Equal("LoginStart", run.Invoke(null, ["LoginServerbound", 0u]));
+        Assert.Equal("Particle", run.Invoke(null, ["PlayClientbound", 0x27u]));
+        Assert.Null(run.Invoke(null, ["PlayClientbound", 0u]));
+    }
+
+    [Fact]
+    public void WithoutProtocolsOneRegistryDispatchesTheFirstOfSharedIds()
+    {
+        var project = FormatProject.Load(TestPaths.JavaSample);
+        project.Settings.Protocols.Clear();
+        var output = CodeGeneration.Generate(project, Target("csharp"));
+        Assert.Contains(output.Diagnostics, d => d.Severity == Severity.Warning && d.Message.Contains("Handshake, LoginStart share id 0"));
+        var registry = output.Files.Single(f => f.Path == "TestPackets.g.cs").Content;
+        Assert.Contains("public static bool Dispatch<TVisitor>", registry);
+        Assert.DoesNotContain("class StatusServerbound", registry);
+    }
+
+    [Fact]
+    public void ClashingProtocolNamesAreReported()
+    {
+        var project = FormatProject.Load(TestPaths.JavaSample);
+        project.Settings.Protocols.Add(new ProtocolDef { Name = "Slot", Groups = ["play"] });
+        project.Settings.Protocols.Add(new ProtocolDef { Name = "TestPackets", Groups = ["play"] });
+        var output = CodeGeneration.Generate(project, Target("java-stream"));
+        Assert.Contains(output.Diagnostics, d => d.Severity == Severity.Error && d.Message.StartsWith("Protocol Slot:"));
+        Assert.Contains(output.Diagnostics, d => d.Severity == Severity.Error && d.Message.StartsWith("Protocol TestPackets:"));
+        Assert.Contains("public static final class PlayClientbound", output.Files.Single(f => f.Path.EndsWith("TestPackets.java")).Content);
     }
 
     [Fact]

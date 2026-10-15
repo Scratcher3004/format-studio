@@ -276,16 +276,55 @@ public sealed class Validator
 
     private void CheckPacketIds()
     {
-        foreach (var group in _project.Packets.Where(p => p.Id != null)
-                     .GroupBy(p => (p.Id, string.Join(",", p.Groups.Order(StringComparer.Ordinal))))
-                     .Where(g => g.Count() > 1))
+        var protocols = _project.Settings.Protocols;
+        if (protocols.Count == 0)
         {
-            _diagnostics.Error($"Packets {string.Join(", ", group.Select(p => p.Name))} share id {group.Key.Id}", group.First().Source);
+            foreach (var group in _project.Packets.Where(p => p.Id != null)
+                         .GroupBy(p => (p.Id, string.Join(",", p.Groups.Order(StringComparer.Ordinal))))
+                         .Where(g => g.Count() > 1))
+            {
+                _diagnostics.Error($"Packets {string.Join(", ", group.Select(p => p.Name))} share id {group.Key.Id}", group.First().Source);
+            }
+        }
+        else
+        {
+            CheckProtocols();
         }
 
         foreach (var packet in _project.Packets.Where(p => p.Id == null))
             _diagnostics.Warning($"Packet {packet.Name} has no id", packet.Source);
     }
+
+    private void CheckProtocols()
+    {
+        var file = _project.FilePath is { } path ? new SourceLocation(_project.Relative(path)) : null;
+        foreach (var duplicate in _project.Settings.Protocols.GroupBy(p => p.Name).Where(g => g.Count() > 1))
+            Protocol(Severity.Error, $"Two protocols are named '{duplicate.Key}'", file);
+
+        foreach (var protocol in _project.Settings.Protocols)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(protocol.Name, "^[A-Za-z_][A-Za-z0-9_]*$"))
+                Protocol(Severity.Error, $"Protocol name '{protocol.Name}' is not an identifier", file);
+            else if (_project.Find(protocol.Name) != null)
+                Protocol(Severity.Error, $"Protocol {protocol.Name} has the name of a definition", file);
+
+            var packets = _project.PacketsOf(protocol).Where(p => p.Id != null).ToList();
+            if (packets.Count == 0)
+                Protocol(Severity.Warning, $"Protocol {protocol.Name} has no packets (none is in all of the groups {string.Join(", ", protocol.Groups)})", file);
+            foreach (var duplicate in packets.GroupBy(p => p.Id).Where(g => g.Count() > 1))
+            {
+                Protocol(Severity.Error, $"Packets {string.Join(", ", duplicate.Select(p => p.Name))} share id {duplicate.Key} in protocol {protocol.Name}",
+                    duplicate.First().Source);
+            }
+        }
+
+        foreach (var packet in _project.Packets.Where(p => p.Id != null && !_project.ProtocolsOf(p).Any()))
+            Protocol(Severity.Warning, $"Packet {packet.Name} is in no protocol, so no registry dispatches it", packet.Source);
+    }
+
+    /// <summary>A finding that is fixed on the protocols (or in a packet's groups).</summary>
+    private void Protocol(Severity severity, string message, SourceLocation? source) =>
+        _diagnostics.Add(new Diagnostic(severity, message, source) { Area = Diagnostic.ProtocolsArea });
 
     private void CheckAliasCycles()
     {

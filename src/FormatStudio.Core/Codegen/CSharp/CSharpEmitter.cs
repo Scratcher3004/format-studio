@@ -840,12 +840,41 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     // ------------------------------------------------------------------ registry
 
+    /// <summary>
+    /// The registry class; with protocols it holds a nested class per protocol (<c>Packets.LoginServerbound.Dispatch</c>).
+    /// </summary>
     private string Registry()
     {
         var w = new CodeWriter();
-        var packets = RegistryPackets();
-        w.Line($"/// <summary>Packet id dispatch for the {packets.Count} packets of '{Escape(Project.Settings.Name)}'.</summary>");
+        var registries = Registries(options.Registry);
+        if (registries is [(null, var all)])
+        {
+            w.Line($"/// <summary>Packet id dispatch for the {all.Count} packets of '{Escape(Project.Settings.Name)}'.</summary>");
+            w.Open($"public static partial class {options.Registry}");
+            RegistryMembers(w, all);
+            w.Close();
+            return Header() + w;
+        }
+
+        w.Line($"/// <summary>Packet id dispatch for the {registries.Count} protocols of '{Escape(Project.Settings.Name)}'.</summary>");
         w.Open($"public static partial class {options.Registry}");
+        for (var i = 0; i < registries.Count; i++)
+        {
+            var (protocol, packets) = registries[i];
+            if (i > 0) w.Line();
+            Doc(w, protocol!.Doc ?? $"Packet id dispatch for protocol {protocol.Name}.",
+                ProtocolRemark(protocol, packets.Count));
+            w.Open($"public static partial class {protocol.Name}");
+            RegistryMembers(w, packets);
+            w.Close();
+        }
+
+        w.Close();
+        return Header() + w;
+    }
+
+    private void RegistryMembers(CodeWriter w, List<StructDef> packets)
+    {
         w.Line("/// <summary>Reads the packet with the given id and passes it to the visitor. Returns false for unknown ids.</summary>");
         w.Open($"public static bool Dispatch<TVisitor>(uint id, {ReaderParameter}, ref TVisitor visitor) where TVisitor : {options.VisitorInterface}");
         w.Open("switch (id)");
@@ -872,7 +901,5 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         w.Line();
         w.Line("/// <summary>All packet ids.</summary>");
         w.Line($"public static global::System.ReadOnlySpan<uint> Ids => [{string.Join(", ", packets.Select(p => p.Id))}];");
-        w.Close();
-        return Header() + w;
     }
 }

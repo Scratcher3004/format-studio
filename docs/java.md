@@ -47,7 +47,8 @@ handshake.write(new FormatWriter(buffer));
 - Variants are classes with `kind` (the tag enum, or a nested `Case` enum with `value` or `tag`), one field per case
   and `ofCase(...)` factories; `read(reader, kind)` and `writeContent` are for external tags.
 - The registry has `read(id, reader)` (returns the packet, or `null` for unknown ids), `dispatch(id, reader, visitor)`,
-  `nameOf(id)` and `ids()`. Packet ids must fit an `int`.
+  `nameOf(id)` and `ids()`. Packet ids must fit an `int`. With [protocols](dsl.md#protocols) each protocol is a
+  nested class with these methods: `Packets.LoginServerbound.read(id, reader)`.
 - Names that are Java keywords get a `_` suffix; fields named `ID` or `kind` (and enum members named `value` or `tag`)
   are renamed so they don't clash with the generated members.
 

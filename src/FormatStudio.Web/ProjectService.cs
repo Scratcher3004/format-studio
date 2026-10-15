@@ -215,6 +215,13 @@ public sealed class ProjectService
         }
     }
 
+    /// <summary>Writes the protocols to the project file (see <see cref="FormatProject.SaveProtocols"/>) and reloads.</summary>
+    public void SaveProtocols(IReadOnlyList<ProtocolDef> protocols)
+    {
+        Project!.SaveProtocols(protocols);
+        Reload();
+    }
+
     /// <summary>Writes the codegen targets to the project file (see <see cref="FormatProject.SaveCodegen"/>) and reloads.</summary>
     public void SaveCodegen(IReadOnlyList<CodegenTarget> targets)
     {

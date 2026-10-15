@@ -9,6 +9,12 @@ public enum Severity
 
 public sealed record Diagnostic(Severity Severity, string Message, SourceLocation? Source = null, string? Path = null)
 {
+    /// <summary>The <see cref="Area"/> of findings about the project's protocols.</summary>
+    public const string ProtocolsArea = "protocols";
+
+    /// <summary>The part of the project to fix the finding in, when it isn't the file of <see cref="Source"/>.</summary>
+    public string? Area { get; init; }
+
     public override string ToString()
     {
         var where = Source != null ? $"{Source}: " : "";

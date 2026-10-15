@@ -98,7 +98,7 @@
         <MudText Typo="@Typo.subtitle1" Class="mb-1">
             Preview of @(_previewed?.Name)@(_previewSaved ? "" : " (default options, not saved)")
         </MudText>
-        <DiagnosticList Items="@_output.Diagnostics" />
+        <DiagnosticList Items="@_output.Diagnostics" Links="@(d => DiagnosticLinks.For(project, d) is { } link ? link with { Page = Link(link.Page) } : null)" />
         <MudGrid Spacing="2">
             <MudItem xs="12" md="3">
                 <MudTextField T="string" @bind-Value="@_fileFilter" Immediate="@true" Placeholder="Filter files" Variant="@Variant.Outlined" Margin="@Margin.Dense" />

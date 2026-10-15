@@ -27,7 +27,8 @@ warnings. `format-studio show <type> --target <target|generator>` prints the cod
 writes the targets.
 
 All generators share the same model: one file per definition (aliases are inlined), a registry with the packet id
-dispatch, and the same treatment of computed, const and conditional fields, `until` arrays, external and string tags,
+dispatch (with [protocols](dsl.md#protocols), a nested class per protocol in the registry class, e.g.
+`Packets.LoginServerbound`), and the same treatment of computed, const and conditional fields, `until` arrays, external and string tags,
 and length checks before allocating. Expressions are translated once by a language-independent layer
 (`Codegen/Emitter.cs`); each language adds its syntax and I/O.
 
@@ -68,8 +69,8 @@ Definitions that use these are reported as errors and not generated; the other d
 - `const` of other types than integers, floats, bools, strings and enums (e.g. `uuid`, bytes, arrays).
 - Integer arithmetic beyond 64-bit signed integers: expressions use `long`, so 64-bit unsigned values above
   2^63 - 1 don't compare or calculate correctly in conditions, lengths and computed fields.
-- Packets that share an id in different groups (protocol states, directions): the registry dispatches by id alone, so
-  only the first is dispatched (reported as a warning).
+- Packets that share an id in a project without [protocols](dsl.md#protocols): the registry dispatches by id alone,
+  so only the first is dispatched (reported as a warning). Declare protocols to get a registry per state/direction.
 - NBT as a tree: NBT values are kept as raw bytes.
 
 ## Checking generated code

@@ -80,4 +80,88 @@ public class ProjectTests
         var plain = FormatProject.InMemory([]);
         Assert.Equal(withDefaultSources, plain.Relative(plain.FileFor(definition)));
     }
+
+    [Fact]
+    public void ProtocolsAreReadAndWritten()
+    {
+        var settings = ProjectSettings.Parse("""
+            name: p
+            protocols:
+              - name: LoginServerbound
+                groups: [login, serverbound]
+                doc: Before the login finishes.
+              - name: Status
+                groups: status
+            """, "p.fstudio.yaml");
+        Assert.Equal(["LoginServerbound", "Status"], settings.Protocols.Select(p => p.Name));
+        Assert.Equal(["login", "serverbound"], settings.Protocols[0].Groups);
+        Assert.Equal("Before the login finishes.", settings.Protocols[0].Doc);
+        Assert.Equal(["status"], settings.Protocols[1].Groups);
+
+        var again = ProjectSettings.Parse(settings.ToYaml(), "p.fstudio.yaml");
+        Assert.Equal(settings.Protocols.Select(p => (p.Name, string.Join(",", p.Groups), p.Doc)),
+            again.Protocols.Select(p => (p.Name, string.Join(",", p.Groups), p.Doc)));
+    }
+
+    [Fact]
+    public void PacketIdsOnlyClashWithinAProtocol()
+    {
+        static StructDef Packet(string name, long id, params string[] groups)
+        {
+            var packet = new StructDef { Name = name, IsPacket = true, Id = id };
+            packet.Groups.AddRange(groups);
+            return packet;
+        }
+
+        var settings = new ProjectSettings
+        {
+            Protocols =
+            [
+                new ProtocolDef { Name = "LoginServerbound", Groups = ["login", "serverbound"] },
+                new ProtocolDef { Name = "PlayServerbound", Groups = ["play", "serverbound"] },
+                new ProtocolDef { Name = "Empty", Groups = ["config"] },
+                new ProtocolDef { Name = "Hello", Groups = ["login"] },
+            ],
+        };
+        var project = FormatProject.InMemory([
+            Packet("Hello", 0, "login", "serverbound"),
+            Packet("Chat", 0, "play", "serverbound"),
+            Packet("Move", 0, "play", "serverbound", "movement"),
+            Packet("Ping", 0, "status"),
+        ], settings);
+        Validation.Validator.Validate(project);
+
+        Assert.Equal(["Chat", "Move"], project.PacketsOf(settings.Protocols[1]).Select(p => p.Name).Order());
+        var messages = project.Diagnostics.Select(d => $"{d.Severity}: {d.Message}").ToList();
+        Assert.Contains("Error: Packets Chat, Move share id 0 in protocol PlayServerbound", messages);
+        Assert.DoesNotContain(messages, m => m.Contains("Hello, Chat") || m.Contains("in protocol LoginServerbound"));
+        Assert.Contains(messages, m => m.StartsWith("Warning: Protocol Empty has no packets"));
+        Assert.Contains("Warning: Packet Ping is in no protocol, so no registry dispatches it", messages);
+        Assert.Contains("Error: Protocol Hello has the name of a definition", messages);
+    }
+
+    [Fact]
+    public void SavingProtocolsOnlyChangesTheProtocolsSection()
+    {
+        var directory = TestPaths.NewTempDirectory();
+        var file = Path.Combine(directory, "p.fstudio.yaml");
+        const string before = "name: p\n# One id space per state\nprotocols:\n  - name: Old\n    groups: [a]\ncodegen:\n  - name: cs\n    generator: csharp\n    output: out\n";
+        File.WriteAllText(file, before);
+        var project = FormatProject.Load(directory);
+
+        project.SaveProtocols([new ProtocolDef { Name = "LoginServerbound", Groups = ["login", "serverbound"], Doc = "Login." }]);
+        Assert.Equal("name: p\n# One id space per state\nprotocols:\n  - name: LoginServerbound\n    groups:\n      - login\n      - serverbound\n    doc: Login.\n" +
+                     "codegen:\n  - name: cs\n    generator: csharp\n    output: out\n", File.ReadAllText(file));
+        Assert.Equal("LoginServerbound", project.Settings.Protocols.Single().Name);
+        Assert.Equal("cs", FormatProject.Load(directory).Settings.Codegen.Single().Name);
+
+        project.SaveProtocols([]);
+        Assert.Equal("name: p\n# One id space per state\ncodegen:\n  - name: cs\n    generator: csharp\n    output: out\n", File.ReadAllText(file));
+
+        var invalid = new ProtocolDef { Name = "a b", Groups = ["x"] };
+        Assert.Throws<FormatDefinitionException>(() => project.SaveProtocols([invalid]));
+        var duplicate = new ProtocolDef { Name = "A" };
+        Assert.Throws<FormatDefinitionException>(() => project.SaveProtocols([duplicate, duplicate]));
+        Assert.Throws<FormatDefinitionException>(() => project.SaveProtocols([new ProtocolDef { Name = "A", Groups = ["has space"] }]));
+    }
 }

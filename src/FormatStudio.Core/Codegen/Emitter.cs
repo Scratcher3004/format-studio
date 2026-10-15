@@ -112,15 +112,62 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
         };
     }
 
-    /// <summary>The packets of the registry, ordered by id. Packets sharing an id are reported; the first one wins.</summary>
-    protected List<StructDef> RegistryPackets()
+    /// <summary>
+    /// The packet registries: one per protocol of the project, or a single one (with a null protocol) over all packets
+    /// when the project declares none. Packets are ordered by id; packets sharing an id are reported and the first one
+    /// wins. Protocols whose name would clash in the generated code are reported and left out.
+    /// </summary>
+    /// <param name="registryClass">The name of the class holding the registries.</param>
+    protected List<(ProtocolDef? Protocol, List<StructDef> Packets)> Registries(string registryClass)
     {
-        var packets = project.Packets.Where(p => p.Id != null)
+        if (project.Settings.Protocols.Count == 0)
+            return [(null, RegistryPackets(project.Packets, null))];
+
+        var registries = new List<(ProtocolDef?, List<StructDef>)>();
+        foreach (var protocol in project.Settings.Protocols.DistinctBy(p => p.Name))
+        {
+            if (protocol.Name == registryClass || project.Find(protocol.Name) != null || !IsIdentifier(protocol.Name))
+            {
+                Output.Diagnostics.Add(new Diagnostic(Severity.Error,
+                    $"Protocol {protocol.Name}: the name can't be used for a registry class (it is the registry's or a definition's name, or not an identifier)")
+                {
+                    Area = Diagnostic.ProtocolsArea,
+                });
+                continue;
+            }
+
+            registries.Add((protocol, RegistryPackets(project.PacketsOf(protocol), protocol)));
+        }
+
+        return registries;
+    }
+
+    private List<StructDef> RegistryPackets(IEnumerable<StructDef> candidates, ProtocolDef? protocol)
+    {
+        var packets = candidates.Where(p => p.Id != null)
             .OrderBy(p => p.Id).ThenBy(p => p.Name, StringComparer.Ordinal).ToList();
         foreach (var duplicate in packets.GroupBy(p => p.Id).Where(g => g.Count() > 1))
-            Output.Diagnostics.Warning($"Packets {string.Join(", ", duplicate.Select(p => p.Name))} share id {duplicate.Key}; only the first is dispatched");
+        {
+            var names = string.Join(", ", duplicate.Select(p => p.Name));
+            Output.Diagnostics.Add(new Diagnostic(Severity.Warning, protocol == null
+                ? $"Packets {names} share id {duplicate.Key}; only the first is dispatched (declare protocols in the project file to dispatch them separately)"
+                : $"Packets {names} share id {duplicate.Key} in protocol {protocol.Name}; only the first is dispatched")
+            {
+                Area = Diagnostic.ProtocolsArea,
+            });
+        }
+
         return packets.DistinctBy(p => p.Id).ToList();
     }
+
+    /// <summary>A sentence for the documentation of a protocol's registry.</summary>
+    protected static string ProtocolRemark(ProtocolDef protocol, int packets)
+    {
+        var count = packets == 1 ? "1 packet" : $"{packets} packets";
+        return protocol.Groups.Count == 0 ? $"{count}." : $"{count}, those in the groups {string.Join(", ", protocol.Groups)}.";
+    }
+
+    private static bool IsIdentifier(string name) => System.Text.RegularExpressions.Regex.IsMatch(name, "^[A-Za-z_][A-Za-z0-9_]*$");
 
     /// <summary>The wire type of an integer or enum tag that is stored in the variant itself; null for string and external tags.</summary>
     protected PrimitiveRef? TagWire(VariantDef variant) => variant.Tag switch

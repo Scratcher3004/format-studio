@@ -178,7 +178,7 @@ internal static class Commands
 
     public static int DecodePacket(string[] args)
     {
-        var line = CommandLine.Parse(args, ["project", "hex", "file", "header", "id-mask", "group"], ["tree", "json-only"]);
+        var line = CommandLine.Parse(args, ["project", "hex", "file", "header", "id-mask", "protocol", "group"], ["tree", "json-only"]);
         var project = LoadProject(line);
         var headerText = line.Single("header") ?? throw new UsageException("Pass --header <primitive>, e.g. varuint32.");
         if (!Primitives.TryParse(headerText, out var headerType)) throw new UsageException($"'{headerText}' is not a primitive type.");
@@ -186,7 +186,7 @@ internal static class Commands
             ? Convert.ToUInt64(maskText, maskText.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? 16 : 10)
             : ulong.MaxValue;
         var bytes = InputBytes(line);
-        var (packet, id, headerLength, result) = Simulator.DecodePacket(new Codec(project), bytes, new PacketHeader(headerType, mask), line.Single("group"));
+        var (packet, id, headerLength, result) = Simulator.DecodePacket(new Codec(project), bytes, new PacketHeader(headerType, mask), Candidates(project, line));
         if (packet == null || result == null)
         {
             Console.Error.WriteLine($"No packet with id {id}.");
@@ -288,12 +288,29 @@ internal static class Commands
         return failures == 0 ? 0 : 1;
     }
 
+    /// <summary>The packets of <c>--protocol</c> and <c>--group</c>, or all packets.</summary>
+    private static IEnumerable<StructDef> Candidates(FormatProject project, CommandLine line)
+    {
+        var packets = project.Packets;
+        if (line.Single("protocol") is { } name)
+        {
+            var protocol = project.FindProtocol(name) ?? throw new UsageException(project.Settings.Protocols.Count == 0
+                ? $"The project declares no protocols, so there is no protocol '{name}'."
+                : $"There is no protocol '{name}' ({string.Join(", ", project.Settings.Protocols.Select(p => p.Name))}).");
+            packets = project.PacketsOf(protocol);
+        }
+
+        if (line.Single("group") is { } group) packets = packets.Where(p => p.Groups.Contains(group));
+        return packets.ToList();
+    }
+
     public static int Identify(string[] args)
     {
-        var line = CommandLine.Parse(args, ["project", "hex", "file", "top"], NoFlags);
+        var line = CommandLine.Parse(args, ["project", "hex", "file", "top", "protocol", "group"], NoFlags);
         var project = LoadProject(line);
         var bytes = InputBytes(line);
-        var matches = Simulator.Identify(new Codec(project), bytes);
+        var matches = Simulator.Identify(new Codec(project), bytes,
+            line.Single("protocol") != null || line.Single("group") != null ? Candidates(project, line) : null);
         foreach (var match in matches.Take(line.Int("top", 10)))
         {
             var status = match.Result.Success ? match.Result.Consumed == bytes.Length ? "full" : "partial" : "error";

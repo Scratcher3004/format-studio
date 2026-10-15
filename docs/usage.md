@@ -13,10 +13,10 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 | `list [--kind packet] [--filter text]` | List definitions |
 | `show <type> [--target <target\|generator>]` | Print the definition, or its generated code (`--csharp` is `--target csharp`) |
 | `decode <type> --hex ... [--tree]` | Decode bytes; `--tree` prints every value with its byte range |
-| `decode-packet --hex ... --header varuint32 --id-mask 0x3ff` | Read a packet id, then the packet |
+| `decode-packet --hex ... --header varuint32 --id-mask 0x3ff [--protocol <name>]` | Read a packet id, then the packet (of that protocol) |
 | `encode <type> --json ... \| --random --seed 1` | Encode a value (or a random one) |
 | `roundtrip [types] --iterations 20` | Random values: encode, decode, encode again, compare |
-| `identify --hex ...` | Try every packet (or struct) and rank the matches |
+| `identify --hex ... [--protocol <name>]` | Try every packet (or struct, or the protocol's packets) and rank the matches |
 | `samples` | Check the project's samples |
 | `import <importer> [options] [--dry-run]` | Run an importer (see [importers](importers.md)) |
 | `generate [target] [--dry-run]` | Run the codegen targets (see [code generation](codegen.md)) |

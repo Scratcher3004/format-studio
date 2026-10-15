@@ -10,6 +10,15 @@
                     </td>
                     <td class="mono">@diagnostic.Source</td>
                     <td>@diagnostic.Message @if (diagnostic.Path != null) { <span class="mud-text-secondary"> [@diagnostic.Path]</span> }</td>
+                    @if (Links != null)
+                    {
+                        <td style="width: 1%; white-space: nowrap">
+                            @if (Links(diagnostic) is { } link)
+                            {
+                                <MudButton Variant="@Variant.Text" Size="@Size.Small" StartIcon="@link.Icon" Href="@link.Page">@link.Label</MudButton>
+                            }
+                        </td>
+                    }
                 </tr>
             }
         </tbody>
@@ -23,6 +32,8 @@
 @code {
     [Parameter] public IEnumerable<Diagnostic> Items { get; set; } = [];
     [Parameter] public int Max { get; set; } = 200;
+    /// <summary>A button per diagnostic to the page where it is fixed (an absolute link), or null for none.</summary>
+    [Parameter] public Func<Diagnostic, DiagnosticLink?>? Links { get; set; }
 
     private static MudBlazor.Color Color(Severity severity) => severity switch
     {

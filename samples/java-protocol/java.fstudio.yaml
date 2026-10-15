@@ -13,3 +13,13 @@ sources:
   - packets/**/*.yaml
 samples:
   - samples/**/*.yaml
+# Packet ids are only unique within a state and direction; each protocol gets a registry of its own.
+protocols:
+  - name: HandshakingServerbound
+    groups: [handshaking, serverbound]
+  - name: StatusServerbound
+    groups: [status, serverbound]
+  - name: LoginServerbound
+    groups: [login, serverbound]
+  - name: PlayClientbound
+    groups: [play, clientbound]

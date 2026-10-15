@@ -255,3 +255,15 @@
 .sample-panel .span-range {
     min-width: 50px;
 }
+
+/* Protocols added by "Suggest from groups" or "Add protocol", until they are saved. */
+.protocol-added {
+    border-color: var(--mud-palette-primary) !important;
+    box-shadow: 0 0 0 1px var(--mud-palette-primary);
+    animation: protocol-added-flash 1.6s ease-out;
+}
+
+@keyframes protocol-added-flash {
+    from { background-color: var(--mud-palette-primary-lighten); }
+    to { background-color: var(--mud-palette-surface); }
+}

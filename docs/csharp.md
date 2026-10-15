@@ -25,7 +25,8 @@ Definitions written by hand are skipped with `skipCodegen` in the definition (se
 - Structs become `partial struct`s with public fields and `static Read(reader)` / `Write(writer)` (by `ref` for
   spans); types that contain themselves by value become `sealed partial class`es.
 - Packets implement the packet interface with `static uint PacketId`; `<registry>.Dispatch(id, reader, ref visitor)`
-  switches over the ids without boxing.
+  switches over the ids without boxing. With [protocols](dsl.md#protocols) each protocol is a nested class with the
+  same members: `Packets.LoginServerbound.Dispatch(id, ref reader, ref visitor)`, `NameOf(id)`, `Ids`.
 - Variants are tagged structs: `Kind` (the tag enum, or a nested `Case` enum), one field per case,
   `FromCase(...)` factories, `Read(reader, kind)` / `WriteContent` for external tags. With string tags the `Case`
   values are the case indexes, and `CaseOf(tag)` / `TagOf(kind)` convert.

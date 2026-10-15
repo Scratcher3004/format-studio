@@ -6,13 +6,22 @@
 <MudText Typo="Typo.h5" Class="mb-2">Identify</MudText>
 <MudText Typo="Typo.body2" Class="mb-3">
     Paste bytes of unknown type. Without a header they are decoded as every packet (or struct) and ranked; with a header
-    the packet id is read first.
+    the packet id is read first. With a protocol, only its packets are tried.
 </MudText>
 
 <textarea class="code-editor" rows="8" spellcheck="false" placeholder="hex bytes" @bind="_hex" @bind:event="oninput"></textarea>
 <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="my-2">
     <MudTextField T="string" @bind-Value="_header" Label="Id header (optional)" Placeholder="varuint32" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 200px" />
     <MudTextField T="string" @bind-Value="_mask" Label="Id mask" Placeholder="0x3ff" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 140px" />
+    @if (Projects.Project is { Settings.Protocols.Count: > 0 } project)
+    {
+        <MudSelect T="string" @bind-Value="_protocol" Label="Protocol" Variant="@Variant.Outlined" Margin="@Margin.Dense" Clearable="@true" Style="max-width: 260px">
+            @foreach (var protocol in project.Settings.Protocols)
+            {
+                <MudSelectItem T="string" Value="@protocol.Name">@protocol.Name</MudSelectItem>
+            }
+        </MudSelect>
+    }
     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ManageSearch" OnClick="Run">Identify</MudButton>
 </MudStack>
 
@@ -54,6 +63,8 @@
     private string _hex = "";
     private string? _header;
     private string? _mask;
+    /// <summary>Limits the packets to those of a protocol; null for all.</summary>
+    private string? _protocol;
     private string? _error;
     private int _length;
     private List<IdentifyMatch> _matches = [];
@@ -70,16 +81,17 @@
             var bytes = Hex.Parse(_hex);
             _length = bytes.Length;
             var codec = new Codec(Projects.Project);
+            var candidates = _protocol != null && Projects.Project.FindProtocol(_protocol) is { } protocol ? Projects.Project.PacketsOf(protocol).ToList() : null;
             if (string.IsNullOrWhiteSpace(_header))
             {
-                _matches = Simulator.Identify(codec, bytes);
+                _matches = Simulator.Identify(codec, bytes, candidates);
                 return;
             }
 
             if (!Primitives.TryParse(_header.Trim(), out var headerType)) throw new System.FormatException($"'{_header}' is not a primitive type");
             var mask = string.IsNullOrWhiteSpace(_mask) ? ulong.MaxValue
                 : Convert.ToUInt64(_mask.Trim(), _mask.Trim().StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? 16 : 10);
-            var (packet, id, headerLength, result) = Simulator.DecodePacket(codec, bytes, new PacketHeader(headerType, mask));
+            var (packet, id, headerLength, result) = Simulator.DecodePacket(codec, bytes, new PacketHeader(headerType, mask), candidates);
             _packet = (id, headerLength, packet?.Name, result);
         }
         catch (Exception e) when (e is System.FormatException or DecodeException or OverflowException or ArgumentException)

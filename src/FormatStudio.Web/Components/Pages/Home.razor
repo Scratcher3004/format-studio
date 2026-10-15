@@ -35,7 +35,7 @@
             {
                 <MudAlert Severity="MudBlazor.Severity.Success" Dense="true">No errors or warnings.</MudAlert>
             }
-            <DiagnosticList Items="project.Diagnostics.Where(d => _showInfo || d.Severity != Severity.Info)" />
+            <DiagnosticList Items="project.Diagnostics.Where(d => _showInfo || d.Severity != Severity.Info)" Links="@(d => FixLink(project, d))" />
             <MudSwitch T="bool" @bind-Value="_showInfo" Label="Show overrides and other infos" Color="Color.Primary" />
         </MudExpansionPanel>
         <MudExpansionPanel Text="@($"Samples ({project.Samples.Count})")" Expanded="@(project.Samples.Count > 0)">
@@ -74,6 +74,10 @@
 @code {
     private bool _showInfo;
     private readonly Dictionary<SampleDef, string> _sampleResults = [];
+
+    /// <summary>The page a diagnostic is fixed on, as a link inside this project.</summary>
+    private DiagnosticLink? FixLink(FormatProject project, Diagnostic diagnostic) =>
+        DiagnosticLinks.For(project, diagnostic) is { } link ? link with { Page = Link(link.Page) } : null;
 
     private static IEnumerable<(string, int)> Counts(FormatProject project) =>
     [

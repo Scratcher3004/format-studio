@@ -21,12 +21,36 @@ samples:                 # values with known encodings, checked by "format-studi
   - samples/**/*.yaml
 import:                  # importer settings, see "Mojang importer"
   mojang: { schema: ..., output: imported }
+protocols:               # optional: separate packet id spaces, see "Protocols"
+  - name: LoginServerbound
+    groups: [login, serverbound]
 codegen:                 # code generation targets: csharp, csharp-stream, java-stream (see codegen.md)
   - name: csharp
     generator: csharp
     output: generated/csharp   # inside the project folder
     options: { namespace: My.Namespace, registry: Packets }
 ```
+
+### Protocols
+
+Many formats reuse packet ids: in the Minecraft protocol, id 0 is a different packet in every state and direction.
+`protocols` splits the packets into id spaces of their own. A protocol's packets are those in all of its `groups`,
+so a packet may belong to several protocols (e.g. one listing only `[status]`).
+
+```yaml
+protocols:
+  - name: HandshakingServerbound     # an identifier; becomes a class name in generated code
+    groups: [handshaking, serverbound]
+    doc: The first packet of every connection.
+  - name: PlayClientbound
+    groups: [play, clientbound]
+```
+
+In the web UI, the *Protocols* page edits them (and suggests one protocol per group set of the packets). With
+protocols, ids only have to be unique within each protocol, code generation writes a registry per protocol
+(see [code generation](codegen.md)), and `identify` / `decode-packet` take `--protocol <name>`. Packets in no
+protocol and protocols without packets are reported as warnings. Without protocols, ids must be unique among packets
+with the same groups, and the single registry dispatches the first of the packets sharing an id.
 
 ## Definitions
 
@@ -38,7 +62,7 @@ Names are identifiers (`[A-Za-z_][A-Za-z0-9_]*`).
 ```yaml
 packet: Particle                # or "struct:" for a type without id
 id: 0x27
-groups: [play, clientbound]     # free-form; ids must be unique per group set
+groups: [play, clientbound]     # free-form; ids must be unique per group set (or per protocol)
 fields:
   - particleId: varint32        # short form: "- name: type"
   - name: data                  # long form

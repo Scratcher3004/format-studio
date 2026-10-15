@@ -25,14 +25,15 @@ const string usage = """
           defaults (--csharp is --target csharp).
       format-studio decode <type> (--hex <hex> | --file <file>) [--tree] [--json-only]
           Decodes bytes as a type. --tree prints the annotated byte ranges.
-      format-studio decode-packet (--hex <hex> | --file <file>) --header <primitive> [--id-mask <mask>] [--tree]
-          Reads a packet id first, then decodes the packet with that id.
+      format-studio decode-packet (--hex <hex> | --file <file>) --header <primitive> [--id-mask <mask>] [--protocol <name>]
+                  [--group <group>] [--tree]
+          Reads a packet id first, then decodes the packet with that id (of the protocol or group, if given).
       format-studio encode <type> (--json <json> | --json-file <file> | --random [--seed <n>]) [--out <file>] [--tree]
           Encodes a JSON value (or a random one) and prints the bytes as hex.
       format-studio roundtrip [<type>...] [--iterations <n>] [--seed <n>] [--hex <hex>] [--verbose]
           Encodes random values (or decodes --hex), re-encodes and compares. Without types: all packets/structs.
-      format-studio identify (--hex <hex> | --file <file>) [--top <n>]
-          Tries the bytes against every packet (or struct) and ranks the matches.
+      format-studio identify (--hex <hex> | --file <file>) [--top <n>] [--protocol <name>] [--group <group>]
+          Tries the bytes against every packet (or struct, or those of the protocol or group) and ranks the matches.
       format-studio samples
           Runs the project's samples: encodes each value and compares with the expected hex.
       format-studio generate [<target>...] [--no-clean] [--dry-run]

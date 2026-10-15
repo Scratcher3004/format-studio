@@ -28,6 +28,20 @@ public sealed class CodegenTarget
     public JsonObject Options { get; set; } = [];
 }
 
+/// <summary>
+/// A set of packets with ids of their own, e.g. one state and direction of a network protocol. Its packets are those
+/// in all of its <see cref="Groups"/>; ids only have to be unique within a protocol, and code generation writes a
+/// registry per protocol.
+/// </summary>
+public sealed class ProtocolDef
+{
+    public required string Name { get; set; }
+    public List<string> Groups { get; set; } = [];
+    public string? Doc { get; set; }
+
+    public bool Contains(StructDef packet) => packet.IsPacket && Groups.All(packet.Groups.Contains);
+}
+
 public sealed class SampleDef
 {
     public required string Name { get; set; }
@@ -54,6 +68,8 @@ public sealed class ProjectSettings
     public List<string> Samples { get; set; } = [];
     /// <summary>Importer settings, keyed by importer name.</summary>
     public JsonObject Import { get; set; } = [];
+    /// <summary>Separate packet id spaces; empty when all packets share one.</summary>
+    public List<ProtocolDef> Protocols { get; set; } = [];
     public List<CodegenTarget> Codegen { get; set; } = [];
 
     public static ProjectSettings Parse(string yaml, string file)
@@ -96,6 +112,26 @@ public sealed class ProjectSettings
         if (root["sources"] is JsonArray sources) settings.Sources = sources.Select(s => s!.GetValue<string>()).ToList();
         if (root["samples"] is JsonArray samples) settings.Samples = samples.Select(s => s!.GetValue<string>()).ToList();
         if (root["import"] is JsonObject import) settings.Import = (JsonObject)import.DeepClone();
+        if (root["protocols"] is JsonArray protocols)
+        {
+            foreach (var protocol in protocols)
+            {
+                if (protocol is not JsonObject map || map["name"]?.ToString() is not { } name)
+                    throw new FormatDefinitionException("A protocol needs a 'name'", new SourceLocation(file));
+                settings.Protocols.Add(new ProtocolDef
+                {
+                    Name = name,
+                    Groups = map["groups"] switch
+                    {
+                        JsonArray groups => groups.Select(g => g!.ToString()).ToList(),
+                        JsonValue group => [group.ToString()],
+                        _ => [],
+                    },
+                    Doc = map["doc"]?.ToString(),
+                });
+            }
+        }
+
         if (root["codegen"] is JsonArray codegen)
         {
             foreach (var target in codegen.OfType<JsonObject>())
@@ -143,6 +179,7 @@ public sealed class ProjectSettings
         map.Add("sources", Sources.Cast<object?>().ToList());
         map.AddIf("samples", Samples.Cast<object?>().ToList());
         if (Import.Count > 0) map.Add("import", Import);
+        map.AddIf("protocols", ProtocolsYaml(Protocols));
         map.AddIf("codegen", CodegenYaml(Codegen));
         return YamlEmitter.Write(map);
     }
@@ -154,18 +191,32 @@ public sealed class ProjectSettings
         return (object?)targetMap;
     }).ToList();
 
+    private static List<object?> ProtocolsYaml(IEnumerable<ProtocolDef> protocols) => protocols.Select(protocol =>
+    {
+        var protocolMap = new YMap { { "name", protocol.Name }, { "groups", protocol.Groups.Cast<object?>().ToList() } };
+        protocolMap.AddIf("doc", protocol.Doc);
+        return (object?)protocolMap;
+    }).ToList();
+
     /// <summary>
     /// Replaces the top-level <c>codegen</c> section of a project file's text with <paramref name="targets"/> (removes it
     /// when there are none, appends it when there was none). The rest of the file, comments included, stays as it is.
     /// </summary>
-    public static string ReplaceCodegen(string text, IReadOnlyList<CodegenTarget> targets)
+    public static string ReplaceCodegen(string text, IReadOnlyList<CodegenTarget> targets) =>
+        ReplaceSection(text, "codegen", CodegenYaml(targets));
+
+    /// <summary>Replaces the top-level <c>protocols</c> section of a project file's text, like <see cref="ReplaceCodegen"/>.</summary>
+    public static string ReplaceProtocols(string text, IReadOnlyList<ProtocolDef> protocols) =>
+        ReplaceSection(text, "protocols", ProtocolsYaml(protocols));
+
+    private static string ReplaceSection(string text, string key, List<object?> items)
     {
         var newline = text.Contains("\r\n") ? "\r\n" : "\n";
         var lines = text.Replace("\r\n", "\n").Split('\n').ToList();
-        var section = targets.Count == 0
+        var section = items.Count == 0
             ? []
-            : YamlEmitter.Write(new YMap { { "codegen", CodegenYaml(targets) } }).TrimEnd('\n').Split('\n');
-        var start = lines.FindIndex(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^codegen\s*:"));
+            : YamlEmitter.Write(new YMap { { key, items } }).TrimEnd('\n').Split('\n');
+        var start = lines.FindIndex(line => System.Text.RegularExpressions.Regex.IsMatch(line, $@"^{key}\s*:"));
         if (start < 0)
         {
             if (section.Length == 0) return text;
@@ -212,6 +263,13 @@ public sealed class FormatProject
     public IEnumerable<StructDef> Packets => _types.Values.OfType<StructDef>().Where(s => s.IsPacket);
 
     public TypeDef? Find(string name) => _types.GetValueOrDefault(name);
+
+    public ProtocolDef? FindProtocol(string name) => Settings.Protocols.FirstOrDefault(p => p.Name == name);
+
+    public IEnumerable<StructDef> PacketsOf(ProtocolDef protocol) => Packets.Where(protocol.Contains);
+
+    /// <summary>The protocols a packet belongs to.</summary>
+    public IEnumerable<ProtocolDef> ProtocolsOf(StructDef packet) => Settings.Protocols.Where(p => p.Contains(packet));
 
     public void Add(TypeDef definition) => _types[definition.Name] = definition;
 
@@ -501,6 +559,30 @@ public sealed class FormatProject
         if (parsed.Codegen.Count != targets.Count) throw new FormatDefinitionException("The codegen section of the project file couldn't be updated");
         File.WriteAllText(file, updated);
         Settings.Codegen = parsed.Codegen;
+    }
+
+    /// <summary>
+    /// Writes the protocols to the project file, keeping the rest of it (see <see cref="ProjectSettings.ReplaceProtocols"/>).
+    /// </summary>
+    public void SaveProtocols(IReadOnlyList<ProtocolDef> protocols)
+    {
+        var file = Sandbox.Check(FilePath ?? throw new FormatDefinitionException("The project has no file"));
+        foreach (var protocol in protocols)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(protocol.Name, "^[A-Za-z_][A-Za-z0-9_]*$"))
+                throw new FormatDefinitionException($"Protocol name '{protocol.Name}' is not an identifier");
+            if (protocol.Groups.Any(g => !System.Text.RegularExpressions.Regex.IsMatch(g, @"^[^\s,\[\]{}#:]+$")))
+                throw new FormatDefinitionException($"Protocol {protocol.Name}: groups can't be empty or contain spaces, commas, brackets, '#' or ':'");
+        }
+
+        if (protocols.GroupBy(p => p.Name).FirstOrDefault(g => g.Count() > 1) is { } duplicate)
+            throw new FormatDefinitionException($"Two protocols are named '{duplicate.Key}'");
+
+        var updated = ProjectSettings.ReplaceProtocols(File.ReadAllText(file), protocols);
+        var parsed = ProjectSettings.Parse(updated, file);
+        if (parsed.Protocols.Count != protocols.Count) throw new FormatDefinitionException("The protocols section of the project file couldn't be updated");
+        File.WriteAllText(file, updated);
+        Settings.Protocols = parsed.Protocols;
     }
 
     /// <summary>Writes a definition back to its file and replaces it in the project.</summary>

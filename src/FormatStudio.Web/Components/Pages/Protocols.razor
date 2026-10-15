@@ -1,0 +1,221 @@
+@page "/p/{ProjectId}/protocols"
+@implements IDisposable
+@inherits ProjectComponent
+@inject ISnackbar Snackbar
+@inject IScrollManager Scroll
+
+<PageTitle>Protocols - Format Studio</PageTitle>
+
+<MudStack Row="@true" AlignItems="@AlignItems.Center" Class="mb-2">
+    <MudText Typo="@Typo.h5">Protocols</MudText>
+    <MudSpacer />
+    @if (Projects.Project is { } header)
+    {
+        <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.AutoFixHigh" OnClick="@(() => Suggest(header))"
+                   Disabled="@(!UncoveredGroupSets(header).Any())" title="Adds a protocol for every group set of packets that are in no protocol yet">
+            Suggest from groups
+        </MudButton>
+        <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="@Add">Add protocol</MudButton>
+    }
+</MudStack>
+<MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true" Class="mb-3">
+    A protocol is a packet id space of its own, e.g. one state and direction of a network protocol. Its packets are those
+    in all of its groups (set on each packet's page). Ids only have to be unique within a protocol, and code generation
+    writes a registry per protocol. Without protocols all packets share one id space. Protocols are saved in the
+    <code>protocols</code> section of the project file.
+</MudAlert>
+
+@if (Projects.Project is { } project)
+{
+    var known = KnownGroups(project);
+    @if (_drafts.Count == 0)
+    {
+        <MudText Typo="@Typo.body1" Class="mb-3">This project has no protocols; all packets share one id space.</MudText>
+    }
+
+    @foreach (var draft in _drafts)
+    {
+        var packets = project.Packets.Where(draft.Contains).OrderBy(p => p.Id).ThenBy(p => p.Name, StringComparer.Ordinal).ToList();
+        var clashes = packets.Where(p => p.Id != null).GroupBy(p => p.Id).Where(g => g.Count() > 1).ToList();
+        var added = _added.Contains(draft);
+        <MudPaper Outlined="@true" Class="@(added ? "pa-3 mb-3 protocol-added" : "pa-3 mb-3")" id="@ElementId(draft)">
+            @if (added)
+            {
+                <MudChip T="string" Size="@Size.Small" Color="@Color.Primary" Class="mb-2 ml-0">new, not saved yet</MudChip>
+            }
+            <MudStack Row="@true" AlignItems="@AlignItems.Start" Spacing="2">
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" md="3">
+                        <MudTextField T="string" Value="@draft.Name" ValueChanged="@(v => Change(() => draft.Name = (v ?? "").Trim()))" Label="Name"
+                                      Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true"
+                                      Error="@(NameError(project, draft) != null)" ErrorText="@NameError(project, draft)"
+                                      HelperText="The class name of its registry, e.g. LoginServerbound" />
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudSelect T="string" MultiSelection="@true" SelectedValues="@draft.Groups"
+                                   SelectedValuesChanged="@(v => Change(() => draft.Groups = v.ToList()))"
+                                   Label="Groups" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                                   HelperText="Packets in all of these groups belong to the protocol">
+                            @foreach (var group in known.Union(draft.Groups).Order(StringComparer.Ordinal))
+                            {
+                                <MudSelectItem Value="@group">@group</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="5">
+                        <MudTextField T="string" Value="@draft.Doc" ValueChanged="@(v => Change(() => draft.Doc = string.IsNullOrWhiteSpace(v) ? null : v.Trim()))"
+                                      Label="Description (optional)" Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true"
+                                      HelperText="Written into the generated registry's documentation" />
+                    </MudItem>
+                </MudGrid>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" title="Remove" OnClick="@(() => Change(() => _drafts.Remove(draft)))" />
+            </MudStack>
+            @foreach (var clash in clashes)
+            {
+                <MudAlert Severity="@MudBlazor.Severity.Error" Dense="@true" Class="mt-2">
+                    Packets @string.Join(", ", clash.Select(p => p.Name)) share id @clash.Key in this protocol
+                </MudAlert>
+            }
+            <MudExpansionPanels Elevation="0" Class="mt-2">
+                <MudExpansionPanel Text="@(packets.Count == 1 ? "1 packet" : $"{packets.Count} packets")" Disabled="@(packets.Count == 0)">
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var packet in packets)
+                        {
+                            <MudLink Href="@Link($"type/{packet.Name}")" Typo="@Typo.body2"><span class="mono">@packet.Id</span> @packet.Name</MudLink>
+                        }
+                    </div>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        </MudPaper>
+    }
+
+    @if (_drafts.Count > 0 && project.Packets.Where(p => p.Id != null && !_drafts.Any(d => d.Contains(p))).ToList() is { Count: > 0 } uncovered)
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Warning" Dense="@true" Class="mb-3">
+            @(uncovered.Count == 1 ? "1 packet is" : $"{uncovered.Count} packets are") in no protocol, so no registry dispatches
+            @(uncovered.Count == 1 ? "it" : "them"): @string.Join(", ", uncovered.Take(20).Select(p => p.Name))@(uncovered.Count > 20 ? ", ..." : "")
+        </MudAlert>
+    }
+
+    <MudStack Row="@true" Spacing="2">
+        <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="@Save"
+                   Disabled="@(!_dirty || _drafts.Any(d => NameError(project, d) != null))">Save</MudButton>
+        <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Undo" OnClick="@(() => Load(project))" Disabled="@(!_dirty)">Discard changes</MudButton>
+    </MudStack>
+}
+
+@code {
+    private List<ProtocolDef> _drafts = [];
+    /// <summary>Protocols added since the last load or save, highlighted so that it is clear what changed.</summary>
+    private readonly HashSet<ProtocolDef> _added = [];
+    /// <summary>Scrolled into view after the next render.</summary>
+    private ProtocolDef? _scrollTo;
+    private bool _dirty;
+    private int _version = -1;
+
+    protected override void OnInitialized() => Projects.Changed += OnChanged;
+
+    protected override void OnParametersSet()
+    {
+        if (Projects.Project is { } project && _version != Projects.Version && !_dirty) Load(project);
+    }
+
+    /// <summary>Takes over a reload of the project (e.g. after saving), unless there are unsaved changes.</summary>
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        if (Projects.Project is { } project && !_dirty) Load(project);
+        StateHasChanged();
+    });
+
+    public void Dispose() => Projects.Changed -= OnChanged;
+
+    private void Load(FormatProject project)
+    {
+        _drafts = project.Settings.Protocols.Select(p => new ProtocolDef { Name = p.Name, Groups = p.Groups.ToList(), Doc = p.Doc }).ToList();
+        _added.Clear();
+        _scrollTo = null;
+        _dirty = false;
+        _version = Projects.Version;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_scrollTo == null) return;
+        var target = _scrollTo;
+        _scrollTo = null;
+        await Scroll.ScrollIntoViewAsync("#" + ElementId(target), ScrollBehavior.Smooth);
+    }
+
+    private string ElementId(ProtocolDef draft) => $"protocol-{_drafts.IndexOf(draft)}";
+
+    private void Change(Action change)
+    {
+        change();
+        _dirty = true;
+    }
+
+    private static List<string> KnownGroups(FormatProject project) =>
+        project.Packets.SelectMany(p => p.Groups).Distinct().Order(StringComparer.Ordinal).ToList();
+
+    private string? NameError(FormatProject project, ProtocolDef draft)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(draft.Name, "^[A-Za-z_][A-Za-z0-9_]*$")) return "Must be an identifier";
+        if (_drafts.Count(d => d.Name == draft.Name) > 1) return "Another protocol has this name";
+        if (project.Find(draft.Name) != null) return "A definition has this name";
+        return null;
+    }
+
+    /// <summary>The group sets of packets that are in none of the protocols being edited.</summary>
+    private IEnumerable<List<string>> UncoveredGroupSets(FormatProject project) =>
+        project.Packets.Where(p => p.Groups.Count > 0 && !_drafts.Any(d => d.Contains(p)))
+            .Select(p => p.Groups.ToList())
+            .DistinctBy(groups => string.Join(",", groups.Order(StringComparer.Ordinal)));
+
+    private void Add()
+    {
+        var name = "Protocol";
+        for (var i = 2; _drafts.Any(d => d.Name == name); i++) name = $"Protocol{i}";
+        var protocol = new ProtocolDef { Name = name };
+        Change(() => _drafts.Add(protocol));
+        _added.Add(protocol);
+        _scrollTo = protocol;
+    }
+
+    private void Suggest(FormatProject project)
+    {
+        var suggested = new List<ProtocolDef>();
+        foreach (var groups in UncoveredGroupSets(project).ToList())
+        {
+            // play + clientbound => PlayClientbound
+            var name = string.Concat(groups.Select(g => System.Text.RegularExpressions.Regex.Replace(g, "[^A-Za-z0-9_]", ""))
+                .Where(g => g.Length > 0).Select(g => char.ToUpperInvariant(g[0]) + g[1..]));
+            if (name.Length == 0 || char.IsDigit(name[0])) name = "Protocol" + name;
+            var unique = name;
+            for (var i = 2; _drafts.Any(d => d.Name == unique) || project.Find(unique) != null; i++) unique = $"{name}{i}";
+            var protocol = new ProtocolDef { Name = unique, Groups = groups };
+            Change(() => _drafts.Add(protocol));
+            suggested.Add(protocol);
+        }
+
+        _added.UnionWith(suggested);
+        _scrollTo = suggested.FirstOrDefault();
+        Snackbar.Add(suggested.Count == 0
+            ? "Every group set of the packets has a protocol already."
+            : $"Added {string.Join(", ", suggested.Select(p => p.Name))}. Review and save them.", MudBlazor.Severity.Info);
+    }
+
+    private void Save()
+    {
+        try
+        {
+            _dirty = false;
+            Projects.SaveProtocols(_drafts);
+            Snackbar.Add(_drafts.Count == 0 ? "Removed the protocols from the project file." : "Saved the protocols to the project file.", MudBlazor.Severity.Success);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
+        {
+            _dirty = true;
+            Snackbar.Add($"Not saved: {e.Message}", MudBlazor.Severity.Error);
+        }
+    }
+}

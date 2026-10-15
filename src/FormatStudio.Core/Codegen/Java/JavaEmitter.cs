@@ -1094,15 +1094,47 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     // ------------------------------------------------------------------ registry
 
+    /// <summary>
+    /// The registry class; with protocols it holds a nested class per protocol (<c>Packets.LoginServerbound.read</c>).
+    /// </summary>
     private string Registry()
     {
         var w = new CodeWriter();
-        var packets = RegistryPackets().Where(p => p.Id is >= int.MinValue and <= int.MaxValue).ToList();
-        w.Line($"/** Packet id dispatch for the {packets.Count} packets of '{Escape(Project.Settings.Name)}'. */");
+        var registries = Registries(options.Registry)
+            .Select(r => (r.Protocol, Packets: r.Packets.Where(p => p.Id is >= int.MinValue and <= int.MaxValue).ToList()))
+            .ToList();
+        if (registries is [(null, var all)])
+        {
+            w.Line($"/** Packet id dispatch for the {all.Count} packets of '{Escape(Project.Settings.Name)}'. */");
+            w.OpenInline($"public final class {options.Registry}");
+            RegistryMembers(w, options.Registry, all);
+            w.Close();
+            return Header(w.ToString());
+        }
+
+        w.Line($"/** Packet id dispatch for the {registries.Count} protocols of '{Escape(Project.Settings.Name)}'. */");
         w.OpenInline($"public final class {options.Registry}");
+        w.Line($"private {options.Registry}() {{");
+        w.Line("}");
+        foreach (var (protocol, packets) in registries)
+        {
+            w.Line();
+            Doc(w, protocol!.Doc ?? $"Packet id dispatch for protocol {protocol.Name}.", ProtocolRemark(protocol, packets.Count));
+            w.OpenInline($"public static final class {protocol.Name}");
+            RegistryMembers(w, protocol.Name, packets);
+            w.Close();
+        }
+
+        w.Close();
+        return Header(w.ToString());
+    }
+
+    /// <param name="className">The class the members are in, for its private constructor.</param>
+    private void RegistryMembers(CodeWriter w, string className, List<StructDef> packets)
+    {
         w.Line($"private static final int[] IDS = {{{string.Join(", ", packets.Select(p => p.Id))}}};");
         w.Line();
-        w.Line($"private {options.Registry}() {{");
+        w.Line($"private {className}() {{");
         w.Line("}");
         w.Line();
         w.Line("/** Reads the packet with the given id, or returns null for unknown ids. */");
@@ -1145,7 +1177,5 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         w.OpenInline("public static int[] ids()");
         w.Line("return IDS.clone();");
         w.Close();
-        w.Close();
-        return Header(w.ToString());
     }
 }

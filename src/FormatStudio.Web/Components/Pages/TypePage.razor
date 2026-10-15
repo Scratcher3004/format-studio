@@ -23,6 +23,10 @@ else
             {
                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@group</MudChip>
             }
+            @foreach (var protocol in Projects.Project?.ProtocolsOf(packet) ?? [])
+            {
+                <MudChip T="string" Size="@Size.Small" Color="@Color.Info" Variant="@Variant.Outlined" Href="@Link("protocols")">protocol @protocol.Name</MudChip>
+            }
         }
         @if (_imported)
         {
@@ -116,6 +120,8 @@ else
 
 @code {
     [Parameter] public string Name { get; set; } = "";
+    /// <summary>The tab to open: structure, simulate, edit, code or references (e.g. from a diagnostic's Edit button).</summary>
+    [SupplyParameterFromQuery(Name = "tab")] public string? Tab { get; set; }
 
     private TypeDef? _definition;
     private bool _imported;
@@ -129,10 +135,21 @@ else
     private DiagnosticBag _diagnostics = [];
     private List<(TypeDef User, string Where)> _references = [];
     private string? _loadedName;
+    private (string, string?)? _loadedTab;
+
+    /// <summary>The <see cref="Tab"/> names, in the order of the tabs.</summary>
+    private static readonly string[] TabNames = ["structure", "simulate", "edit", "code", "references"];
 
     protected override void OnParametersSet()
     {
         if (_loadedName != Name) Load();
+        // Only on navigation: switching tabs by hand keeps the query as it is.
+        if (_loadedTab != (Name, Tab))
+        {
+            _loadedTab = (Name, Tab);
+            var index = Array.IndexOf(TabNames, Tab?.ToLowerInvariant());
+            if (index >= 0) _tab = index;
+        }
     }
 
     private void Load()
