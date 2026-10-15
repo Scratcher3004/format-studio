@@ -21,6 +21,10 @@ samples:                 # values with known encodings, checked by "format-studi
   - samples/**/*.yaml
 import:                  # importer settings, see "Mojang importer"
   mojang: { schema: ..., output: imported }
+dependencies:            # libraries the project uses, see libraries.md
+  - library: geo
+    version: "1.2.0"
+libraries: [libraries]   # folders with .fslib packages (the default)
 protocols:               # optional: separate packet id spaces, see "Protocols"
   - name: LoginServerbound
     groups: [login, serverbound]
@@ -30,6 +34,8 @@ codegen:                 # code generation targets: csharp, csharp-stream, java-
     output: generated/csharp   # inside the project folder
     options: { namespace: My.Namespace, registry: Packets }
 ```
+
+A library project (`kind: library`) holds definitions for other projects; see [libraries](libraries.md).
 
 ### Protocols
 

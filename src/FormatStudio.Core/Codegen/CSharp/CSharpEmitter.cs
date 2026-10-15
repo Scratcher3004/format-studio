@@ -35,7 +35,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
             EnumDef => "Enums",
             _ => "Variants",
         };
-        return $"{folder}/{definition.Name}.g.cs";
+        return definition.Owner == null ? $"{folder}/{definition.Name}.g.cs" : $"{Pascal(definition.Owner.Name)}/{folder}/{definition.Name}.g.cs";
     }
 
     protected override void Finish()
@@ -57,8 +57,9 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     private static string Id(string name) => Keywords.Contains(name) ? "@" + name : name;
 
     /// <summary>The namespace of a definition: the target's, or for a library's definition a namespace of its own inside it.</summary>
-    private string NamespaceOf(TypeDef definition) =>
-        definition.Owner == null ? options.Namespace : $"{options.Namespace}.{Pascal(definition.Owner.Name)}";
+    private string NamespaceOf(TypeDef definition) => definition.Owner == null
+        ? options.Namespace
+        : DependencyOf(definition)?.Namespace ?? $"{options.Namespace}.{Pascal(definition.Owner.Name)}";
 
     private static string Pascal(string name) => char.ToUpperInvariant(name[0]) + name[1..];
 
@@ -76,7 +77,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     protected override string MemberName(string name, string owner) => Member(name, owner);
 
     /// <summary>Types that contain themselves by value must be classes.</summary>
-    private bool IsClass(string name) => (_classes ??= SelfContainingTypes()).Contains(name);
+    private bool IsClass(TypeDef definition) => (_classes ??= SelfContainingTypes()).Contains(definition.QualifiedName);
 
     private static string PrimitiveType(PrimitiveKind kind) => kind switch
     {
@@ -117,7 +118,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     {
         PrimitiveRef or FixedPointRef => true,
         SizedRef sized => IsValueType(sized.Inner),
-        NamedRef named => Definition(named.Name) is EnumDef or BitfieldDef || Definition(named.Name) is StructDef or VariantDef && !IsClass(named.Name),
+        NamedRef named => Definition(named.Name) is EnumDef or BitfieldDef || Definition(named.Name) is StructDef or VariantDef && !IsClass(Definition(named.Name)),
         _ => false,
     };
 
@@ -147,7 +148,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         builder.Append("#nullable enable\n");
         builder.Append("#pragma warning disable CS1591, CS0108, CS8618\n\n");
         builder.Append($"using {options.RuntimeNamespace};\n\n");
-        builder.Append($"namespace {options.Namespace};\n\n");
+        builder.Append($"namespace {(Current != null ? NamespaceOf(Current) : options.Namespace)};\n\n");
         return builder.ToString();
     }
 
@@ -277,7 +278,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     protected override string Struct(StructDef structDef)
     {
         var name = structDef.Name;
-        var isClass = IsClass(name);
+        var isClass = IsClass(structDef);
         var w = new CodeWriter();
         var remarks = new List<string?>
         {
@@ -726,7 +727,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     protected override string Variant(VariantDef variant)
     {
         var name = variant.Name;
-        var isClass = IsClass(name);
+        var isClass = IsClass(variant);
         var w = new CodeWriter();
         var tagType = VariantTagType(variant, false);
         Doc(w, variant.Doc, variant.Tag != null ? $"Tag: {Describe(variant.Tag)}." : "The tag is stored outside (see the fields using it).",

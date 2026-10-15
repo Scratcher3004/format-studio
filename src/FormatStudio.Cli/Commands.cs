@@ -85,6 +85,32 @@ internal static class Commands
         return result.Diagnostics.HasErrors ? 1 : 0;
     }
 
+    public static int Pack(string[] args)
+    {
+        var line = CommandLine.Parse(args, ["project", "output"], NoFlags);
+        line.MaxPositional(0, "format-studio pack [--output <folder>]");
+        var project = LoadProject(line);
+        var path = LibraryPackage.Pack(project, Path.GetFullPath(line.Single("output") ?? "."));
+        Console.WriteLine($"Packed {project.Types.Count} definitions into {path}");
+        return 0;
+    }
+
+    public static int Libraries(string[] args)
+    {
+        var line = CommandLine.Parse(args, ["project"], NoFlags);
+        line.MaxPositional(0, "format-studio libraries");
+        var project = LoadProject(line);
+        foreach (var module in project.Modules.Values.OrderBy(m => m.Name, StringComparer.Ordinal))
+        {
+            var aliases = project.Dependencies.Where(d => d.Value == module).Select(d => d.Key).ToList();
+            var use = aliases.Count == 0 ? "(dependency of a library)" : aliases.SequenceEqual([module.Name]) ? "" : $"as {string.Join(", ", aliases)}";
+            Console.WriteLine($"{module.Name,-24} {module.Version,-12} {module.Types.Count,4} definitions  {module.Origin} {use}".TrimEnd());
+        }
+
+        if (project.Modules.Count == 0) Console.WriteLine("No libraries.");
+        return project.Diagnostics.HasErrors ? 1 : 0;
+    }
+
     public static int Validate(string[] args)
     {
         var line = CommandLine.Parse(args, ["project"], ["verbose"]);
@@ -99,13 +125,16 @@ internal static class Commands
 
     public static int List(string[] args)
     {
-        var line = CommandLine.Parse(args, ["project", "kind", "filter"], NoFlags);
+        var line = CommandLine.Parse(args, ["project", "kind", "filter"], ["libraries"]);
         var project = LoadProject(line);
         var kind = line.Single("kind");
         var filter = line.Single("filter");
-        foreach (var definition in project.Types.Values
+        var definitions = line.Has("libraries")
+            ? project.Types.Values.Concat(project.Modules.Values.SelectMany(m => m.Types.Values))
+            : project.Types.Values;
+        foreach (var definition in definitions
                      .Where(d => kind == null || d.Kind == kind)
-                     .Where(d => filter == null || d.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                     .Where(d => filter == null || d.QualifiedName.Contains(filter, StringComparison.OrdinalIgnoreCase))
                      .OrderBy(d => d is StructDef { IsPacket: true } p ? p.Id : long.MaxValue)
                      .ThenBy(d => d.Name, StringComparer.Ordinal))
         {
@@ -119,7 +148,7 @@ internal static class Commands
                 BitfieldDef bitfield => $"{bitfield.Members.Count} members in {bitfield.Base}",
                 _ => "",
             };
-            Console.WriteLine($"{definition.Kind,-8} {definition.Name,-50} {detail}");
+            Console.WriteLine($"{definition.Kind,-8} {definition.QualifiedName,-50} {detail}");
         }
 
         return 0;
@@ -140,11 +169,12 @@ internal static class Commands
 
         var target = FindTarget(project, targetName);
         var output = CodeGeneration.Generate(project, target);
-        var file = output.FileOf(definition.Name);
+        var file = output.FileOf(definition.QualifiedName);
         if (file == null)
         {
-            Console.Error.WriteLine($"No {target.Generator} file for {definition.Name} (aliases are inlined, definitions with skipCodegen are skipped).");
-            PrintDiagnostics(output.Diagnostics.Where(d => d.Message.StartsWith(definition.Name + ":", StringComparison.Ordinal)));
+            Console.Error.WriteLine($"No {target.Generator} file for {definition.QualifiedName} (aliases are inlined, definitions with " +
+                                    "skipCodegen, of skipped libraries and library definitions the project doesn't use are left out).");
+            PrintDiagnostics(output.Diagnostics.Where(d => d.Message.StartsWith(definition.QualifiedName + ":", StringComparison.Ordinal)));
             return 1;
         }
 

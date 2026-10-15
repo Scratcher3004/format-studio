@@ -36,6 +36,11 @@ The output only goes to the target's folder inside the project, and only files s
 marker are replaced or deleted (others are reported and left alone). Copying the reviewed output into a source tree is
 deliberately a manual step.
 
+## Library definitions
+
+The library definitions a project uses are generated with it, in a namespace or package of their own per library
+(`My.Protocol.Geo`); a dependency can skip a library or name its namespace. See [libraries](libraries.md#code-generation).
+
 ## Skipping definitions
 
 A definition that is written by hand (or comes from a library) is skipped with `skipCodegen`. The generated code still

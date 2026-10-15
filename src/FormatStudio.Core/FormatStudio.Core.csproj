@@ -16,6 +16,8 @@
     <ItemGroup>
         <!-- The Java runtime is written into the output of the java-stream generator. -->
         <EmbeddedResource Include="..\FormatStudio.Runtime.Java\formatstudio\runtime\*.java" LogicalName="JavaRuntime/%(Filename)%(Extension)" />
+        <!-- Built-in libraries: packages every project finds after its own library folders. -->
+        <EmbeddedResource Include="Libraries\*.fslib" LogicalName="Libraries/%(Filename)%(Extension)" />
     </ItemGroup>
 
 </Project>

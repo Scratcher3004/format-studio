@@ -5,7 +5,7 @@ namespace FormatStudio.Expressions;
 
 /// <summary>
 /// The expression language of conditions, lengths, computed fields and external variant tags. C-like operators,
-/// <c>a.b</c> member access, <c>a[i]</c> indexing, <c>Enum::Member</c>, <c>_parent</c>/<c>_root</c> and the functions
+/// <c>a.b</c> member access, <c>a[i]</c> indexing, <c>Enum::Member</c> (<c>Library.Enum::Member</c>), <c>_parent</c>/<c>_root</c> and the functions
 /// <c>len</c>, <c>bytelen</c> and <c>tagof</c>.
 /// </summary>
 public abstract record Expr
@@ -27,6 +27,34 @@ public abstract record Expr
             return false;
         }
     }
+
+    /// <summary>The enum constants (<c>Enum::Member</c>) in this expression.</summary>
+    public IEnumerable<EnumConstExpr> EnumConstants() => this switch
+    {
+        EnumConstExpr constant => [constant],
+        MemberExpr member => member.Target.EnumConstants(),
+        IndexExpr index => index.Target.EnumConstants().Concat(index.Index.EnumConstants()),
+        UnaryExpr unary => unary.Operand.EnumConstants(),
+        BinaryExpr binary => binary.Left.EnumConstants().Concat(binary.Right.EnumConstants()),
+        ConditionalExpr conditional => conditional.Condition.EnumConstants().Concat(conditional.Then.EnumConstants())
+            .Concat(conditional.Else.EnumConstants()),
+        CallExpr call => call.Arguments.SelectMany(a => a.EnumConstants()),
+        _ => [],
+    };
+
+    /// <summary>The expression with the enum of each <see cref="EnumConstExpr"/> renamed, e.g. qualified with its library.</summary>
+    public Expr RenameEnums(Func<string, string> rename) => this switch
+    {
+        EnumConstExpr constant => constant with { Enum = rename(constant.Enum) },
+        MemberExpr member => member with { Target = member.Target.RenameEnums(rename) },
+        IndexExpr index => new IndexExpr(index.Target.RenameEnums(rename), index.Index.RenameEnums(rename)),
+        UnaryExpr unary => unary with { Operand = unary.Operand.RenameEnums(rename) },
+        BinaryExpr binary => binary with { Left = binary.Left.RenameEnums(rename), Right = binary.Right.RenameEnums(rename) },
+        ConditionalExpr conditional => new ConditionalExpr(conditional.Condition.RenameEnums(rename),
+            conditional.Then.RenameEnums(rename), conditional.Else.RenameEnums(rename)),
+        CallExpr call => call with { Arguments = call.Arguments.Select(a => a.RenameEnums(rename)).ToList() },
+        _ => this,
+    };
 
     /// <summary>All plain names this expression reads (not members, functions or enum constants).</summary>
     public IEnumerable<string> Names()
@@ -232,6 +260,18 @@ internal sealed class ExprParser(string text)
         return text[start.._position];
     }
 
+    private string? TryParseIdentifier()
+    {
+        try
+        {
+            return ParseIdentifier();
+        }
+        catch (ExprException)
+        {
+            return null;
+        }
+    }
+
     private Expr ParsePrimary()
     {
         SkipSpace();
@@ -257,6 +297,10 @@ internal sealed class ExprParser(string text)
         }
 
         if (Accept("::")) return new EnumConstExpr(name, ParseIdentifier());
+        var mark = _position;
+        if (Accept(".") && TryParseIdentifier() is { } enumName && Accept("::"))
+            return new EnumConstExpr($"{name}.{enumName}", ParseIdentifier());
+        _position = mark;
         if (!Accept("(")) return new NameExpr(name);
 
         var arguments = new List<Expr>();

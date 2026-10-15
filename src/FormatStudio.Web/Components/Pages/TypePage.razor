@@ -15,7 +15,7 @@ else
 {
     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
         <MudChip T="string" Color="Color.Primary" Size="Size.Small">@_definition.Kind</MudChip>
-        <MudText Typo="Typo.h5">@_definition.Name</MudText>
+        <MudText Typo="Typo.h5">@_definition.QualifiedName</MudText>
         @if (_definition is StructDef { IsPacket: true } packet)
         {
             <MudChip T="string" Size="Size.Small">id @packet.Id</MudChip>
@@ -31,6 +31,10 @@ else
         @if (_imported)
         {
             <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Outlined">imported</MudChip>
+        }
+        @if (_definition.Owner is { } library)
+        {
+            <MudChip T="string" Size="@Size.Small" Color="@Color.Tertiary" Variant="@Variant.Outlined" Icon="@Icons.Material.Filled.LibraryBooks">library @library</MudChip>
         }
     </MudStack>
     @if (_definition.Title != null)
@@ -48,9 +52,19 @@ else
             <StructureView Definition="_definition" />
         </MudTabPanel>
         <MudTabPanel Text="Simulate">
-            <SimulatorPanel Type="@_definition.Name" />
+            <SimulatorPanel Type="@_definition.QualifiedName" />
         </MudTabPanel>
-        <MudTabPanel Text="Edit">
+        <MudTabPanel Text="@(_definition.Owner != null ? "Definition" : "Edit")">
+            @if (_definition.Owner is { } owner)
+            {
+                <MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true" Class="mb-2">
+                    This definition comes from the library @owner (@owner.Origin) and can't be edited here. It is shown as this project
+                    sees it: names qualified with their library, defaults written out. Change it in the library project and pack it again.
+                </MudAlert>
+                <pre class="code-block">@_text</pre>
+            }
+            else
+            {
             @if (_imported)
             {
                 <MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mb-2">
@@ -73,8 +87,11 @@ else
                     <DiagnosticList Items="_diagnostics" />
                 </Actions>
             </DefinitionEditor>
+            }
         </MudTabPanel>
         <MudTabPanel Text="Code">
+            @if (_definition.Owner == null)
+            {
             <MudStack Row="@true" AlignItems="@AlignItems.Start" Spacing="2" Class="mb-4">
                 <div class="grow">
                     <CodegenSkipEditor @bind-Value="_skip" Targets="@(Projects.Project?.Settings.Codegen ?? [])" />
@@ -86,6 +103,7 @@ else
                     <MudButton Variant="@Variant.Text" StartIcon="@Icons.Material.Filled.Undo" Class="mt-2" OnClick="@(() => _skip = _definition.SkipCodegen)">Revert</MudButton>
                 }
             </MudStack>
+            }
             <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="2" Class="mb-2">
                 <MudSelect T="string" Value="@_targetKey" ValueChanged="@SelectTarget" ToStringFunc="@(key => TargetLabel(FindTarget(key)))" Label="Target"
                            Variant="@Variant.Outlined" Margin="@Margin.Dense" Style="max-width: 420px">
@@ -110,7 +128,7 @@ else
                 <tbody>
                     @foreach (var (user, where) in _references)
                     {
-                        <tr><td><MudLink Href="@Link($"type/{user.Name}")">@user.Name</MudLink></td><td>@user.Kind</td><td class="mono">@where</td></tr>
+                        <tr><td><MudLink Href="@Link($"type/{user.QualifiedName}")">@user.QualifiedName</MudLink></td><td>@user.Kind</td><td class="mono">@where</td></tr>
                     }
                 </tbody>
             </MudSimpleTable>
@@ -163,7 +181,7 @@ else
         _imported = Projects.IsImported(_definition);
         _overrideFile = _imported ? Projects.OverrideFile(_definition) : null;
         _text = Projects.Text(_definition);
-        _references = Projects.References(Name).ToList();
+        _references = Projects.References(_definition).ToList();
     }
 
     private void Save(string? file)
@@ -275,11 +293,15 @@ else
             return;
         }
 
-        var file = output.FileOf(Name);
-        var problems = output.Diagnostics.Where(d => d.Message.StartsWith(Name + ":", StringComparison.Ordinal)).Select(d => d.ToString());
+        var name = _definition?.QualifiedName ?? Name;
+        var file = output.FileOf(name);
+        var problems = output.Diagnostics.Where(d => d.Message.StartsWith(name + ":", StringComparison.Ordinal)).Select(d => d.ToString());
         var skipped = _definition?.SkipCodegen?.Skips(target.Name, target.Generator) == true;
+        var library = _definition?.Owner != null ? Projects.Project?.Settings.Dependencies.FirstOrDefault(d => d.Library == _definition.Owner.Name) : null;
         _code = file?.Content ?? (_definition is AliasDef ? "// Aliases are inlined where they are used."
             : skipped ? $"// {Name} is skipped by target '{target.Name}' (skipCodegen): its code comes from elsewhere."
+            : library?.SkipCodegen == true ? $"// The library {library.Library} is skipped (codegen: {{skip: true}}): its code comes from elsewhere."
+            : _definition?.Owner != null && problems.Count() == 0 ? "// The project doesn't use this library definition, so no code is generated for it."
             : "// Nothing generated.\n" + string.Join("\n", problems.Select(p => "// " + p)));
     }
 }

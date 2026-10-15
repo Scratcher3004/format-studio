@@ -15,8 +15,44 @@ public sealed class FormatDefaults
     /// <summary>The flavor of <c>nbt</c> without one. There is no built-in default; using NBT without either is an error.</summary>
     public NbtFlavor? Nbt { get; set; }
 
+    /// <summary>
+    /// Libraries only: the settings (<see cref="Names"/>) that come from the project using the library instead of from
+    /// these defaults.
+    /// </summary>
+    public HashSet<string> Inherit { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>The names of the settings, as in the project file.</summary>
+    public static IReadOnlyList<string> Names { get; } = ["endian", "length", "string", "nbt"];
+
     public NbtFlavor NbtFlavorOf(NbtRef nbt) => nbt.Flavor ?? Nbt
         ?? throw new FormatDefinitionException("NBT without a flavor: set defaults.nbt in the project or write {nbt: <flavor>}");
+}
+
+public enum ProjectKind
+{
+    /// <summary>A format of its own, with packets and code generation.</summary>
+    Project,
+    /// <summary>Definitions for other projects to use; packed into a <c>.fslib</c> package.</summary>
+    Library,
+}
+
+/// <summary>A library the project uses: its definitions are referenced as <c>Alias.Name</c>, or by name when unambiguous.</summary>
+public sealed class LibraryDependency
+{
+    /// <summary>The library's name.</summary>
+    public required string Library { get; set; }
+    /// <summary>The exact version; null for the highest version found.</summary>
+    public string? Version { get; set; }
+    /// <summary>The name the project uses for the library; null for its name.</summary>
+    public string? Alias { get; set; }
+    /// <summary>Code generation leaves the library's definitions out: their code comes from elsewhere.</summary>
+    public bool SkipCodegen { get; set; }
+    /// <summary>The C# namespace of the library's types; null for a namespace inside the target's.</summary>
+    public string? Namespace { get; set; }
+    /// <summary>The Java package of the library's types; null for a package inside the target's.</summary>
+    public string? Package { get; set; }
+
+    public string AliasOrName => Alias ?? Library;
 }
 
 public sealed class CodegenTarget
@@ -62,7 +98,11 @@ public sealed class ProjectSettings
     public string Name { get; set; } = "unnamed";
     public string? Description { get; set; }
     public string? Version { get; set; }
+    public ProjectKind Kind { get; set; } = ProjectKind.Project;
     public FormatDefaults Defaults { get; set; } = new();
+    public List<LibraryDependency> Dependencies { get; set; } = [];
+    /// <summary>Folders with <c>.fslib</c> packages, relative to the project; the built-in libraries come after them.</summary>
+    public List<string> Libraries { get; set; } = ["libraries"];
     /// <summary>Globs of definition files. A type in a later glob replaces one with the same name in an earlier glob.</summary>
     public List<string> Sources { get; set; } = ["**/*.yaml", $"!**/*{Extension}"];
     public List<string> Samples { get; set; } = [];
@@ -82,6 +122,12 @@ public sealed class ProjectSettings
             Name = root["name"]?.GetValue<string>() ?? Path.GetFileName(file).Replace(Extension, ""),
             Description = root["description"]?.ToString(),
             Version = root["version"]?.ToString(),
+            Kind = root["kind"]?.ToString() switch
+            {
+                null or "project" => ProjectKind.Project,
+                "library" => ProjectKind.Library,
+                var kind => throw new FormatDefinitionException($"Unknown kind '{kind}' (project, library)", new SourceLocation(file)),
+            },
         };
 
         if (root["defaults"] is JsonObject defaults)
@@ -107,7 +153,43 @@ public sealed class ProjectSettings
                 settings.Defaults.String = Wrap(() => TypeExpressions.ParseEncoding(encoding), file);
             if (defaults["nbt"]?.GetValue<string>() is { } flavor)
                 settings.Defaults.Nbt = Wrap(() => TypeExpressions.ParseFlavor(flavor), file);
+            switch (defaults["inherit"])
+            {
+                case JsonValue all when all.GetValueKind() == System.Text.Json.JsonValueKind.True:
+                    settings.Defaults.Inherit.UnionWith(FormatDefaults.Names);
+                    break;
+                case JsonArray names:
+                    foreach (var name in names.Select(n => n?.ToString() ?? ""))
+                    {
+                        if (!FormatDefaults.Names.Contains(name))
+                            throw new FormatDefinitionException($"Unknown default '{name}' in inherit ({string.Join(", ", FormatDefaults.Names)})", new SourceLocation(file));
+                        settings.Defaults.Inherit.Add(name);
+                    }
+
+                    break;
+            }
         }
+
+        if (root["dependencies"] is JsonArray dependencies)
+        {
+            foreach (var dependency in dependencies)
+            {
+                if (dependency is not JsonObject map || map["library"]?.ToString() is not { } library)
+                    throw new FormatDefinitionException("A dependency needs a 'library'", new SourceLocation(file));
+                var dependencyCodegen = map["codegen"] as JsonObject;
+                settings.Dependencies.Add(new LibraryDependency
+                {
+                    Library = library,
+                    Version = map["version"]?.ToString(),
+                    Alias = map["as"]?.ToString(),
+                    SkipCodegen = dependencyCodegen?["skip"]?.GetValueKind() == System.Text.Json.JsonValueKind.True,
+                    Namespace = dependencyCodegen?["namespace"]?.ToString(),
+                    Package = dependencyCodegen?["package"]?.ToString(),
+                });
+            }
+        }
+
+        if (root["libraries"] is JsonArray libraries) settings.Libraries = libraries.Select(l => l!.GetValue<string>()).ToList();
 
         if (root["sources"] is JsonArray sources) settings.Sources = sources.Select(s => s!.GetValue<string>()).ToList();
         if (root["samples"] is JsonArray samples) settings.Samples = samples.Select(s => s!.GetValue<string>()).ToList();
@@ -168,6 +250,7 @@ public sealed class ProjectSettings
         var map = new YMap { { "name", Name } };
         map.AddIf("description", Description);
         map.AddIf("version", Version);
+        if (Kind == ProjectKind.Library) map.Add("kind", "library");
         var defaults = new YMap
         {
             { "endian", Defaults.Endian == Endian.Little ? "little" : "big" },
@@ -175,7 +258,21 @@ public sealed class ProjectSettings
             { "string", TypeExpressions.EncodingName(Defaults.String) },
         };
         if (Defaults.Nbt is { } nbt) defaults.Add("nbt", TypeExpressions.FlavorName(nbt));
+        defaults.AddIf("inherit", FormatDefaults.Names.Where(Defaults.Inherit.Contains).Cast<object?>().ToList());
         map.Add("defaults", defaults);
+        map.AddIf("dependencies", Dependencies.Select(dependency =>
+        {
+            var dependencyMap = new YMap { { "library", dependency.Library } };
+            dependencyMap.AddIf("version", dependency.Version);
+            dependencyMap.AddIf("as", dependency.Alias);
+            var codegen = new YMap();
+            if (dependency.SkipCodegen) codegen.Add("skip", true);
+            codegen.AddIf("namespace", dependency.Namespace);
+            codegen.AddIf("package", dependency.Package);
+            if (codegen.Count > 0) dependencyMap.Add("codegen", codegen);
+            return (object?)dependencyMap;
+        }).ToList());
+        if (Libraries is not ["libraries"]) map.Add("libraries", Libraries.Cast<object?>().ToList());
         map.Add("sources", Sources.Cast<object?>().ToList());
         map.AddIf("samples", Samples.Cast<object?>().ToList());
         if (Import.Count > 0) map.Add("import", Import);
@@ -397,6 +494,7 @@ public sealed class FormatProject
         var settings = ProjectSettings.Parse(File.ReadAllText(path), path);
         var project = new FormatProject(settings, Path.GetDirectoryName(path)!, path) { Sandbox = sandbox };
         project.LoadSources();
+        LibraryLoader.LoadDependencies(project);
         project.LoadSamples();
         Validation.Validator.Validate(project);
         return project;

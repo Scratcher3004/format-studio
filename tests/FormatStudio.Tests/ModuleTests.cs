@@ -50,6 +50,8 @@ public class ModuleTests
         Assert.Equal(new ArrayRef(new NamedRef("mc.Position"), LengthSpec.Default), TypeExpressions.Parse("mc.Position[]"));
         Assert.Throws<FormatException>(() => TypeExpressions.Parse("a.b.C"));
         Assert.Throws<FormatException>(() => TypeExpressions.Parse("mc."));
+        Assert.Equal(new FormatStudio.Expressions.EnumConstExpr("mc.Color", "red"), FormatStudio.Expressions.Expr.Parse("mc.Color::red"));
+        Assert.Equal(new FormatStudio.Expressions.MemberExpr(new FormatStudio.Expressions.NameExpr("a"), "b"), FormatStudio.Expressions.Expr.Parse("a.b"));
     }
 
     [Fact]
@@ -162,19 +164,11 @@ public class ModuleTests
         Assert.Contains("global::Generated.Test.Mc.Position at", code);
         Assert.Contains("global::Generated.Test.Mc.Color color", code);
         Assert.Contains("Color kind", code);
+        Assert.Equal("Mc/Types/Position.g.cs", output.FileOf("mc.Position")!.Path);
+        Assert.Contains("namespace Generated.Test.Mc;", output.FileOf("mc.Position")!.Content);
         Assert.Null(output.FileOf("Position"));
 
-        // The library's code would come from its own generation; here it is written by hand.
         var assembly = GeneratedCodeVerifier.Compile(output, """
-            namespace Generated.Test.Mc {
-              public enum Color : byte { red = 1, blue = 2 }
-              public partial struct Position : global::FormatStudio.Runtime.IFormatSerializable<Position> {
-                public short x; public short y;
-                public static Position Read(ref global::FormatStudio.Runtime.FormatReader reader) =>
-                  new() { x = reader.ReadI16BE(), y = reader.ReadI16BE() };
-                public void Write(ref global::FormatStudio.Runtime.FormatWriter writer) { writer.WriteI16BE(x); writer.WriteI16BE(y); }
-              }
-            }
             public static class Harness {
               public static byte[] Run(byte[] data) {
                 var reader = new global::FormatStudio.Runtime.FormatReader(data);
@@ -205,5 +199,7 @@ public class ModuleTests
         Assert.Contains("generated.test.mc.Position.read(", code);
         Assert.Contains("generated.test.mc.Color.fromValue(", code);
         Assert.Contains(" Color.fromValue(", code);
+        Assert.Equal("generated/test/mc/Position.java", output.FileOf("mc.Position")!.Path);
+        Assert.Contains("package generated.test.mc;", output.FileOf("mc.Position")!.Content);
     }
 }

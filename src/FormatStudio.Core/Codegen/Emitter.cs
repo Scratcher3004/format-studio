@@ -22,11 +22,12 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
 
     public GeneratedOutput Run()
     {
-        foreach (var definition in project.Types.Values.OrderBy(d => d.Name, StringComparer.Ordinal))
+        foreach (var definition in Generated.OrderBy(d => d.QualifiedName, StringComparer.Ordinal))
         {
-            if (IsExcluded(definition.Name) || definition is AliasDef) continue;
+            if (IsExcluded(definition) || definition is AliasDef) continue;
             // Temporaries are numbered per file, so that a change to one type doesn't renumber the others.
             _temp = 0;
+            Current = definition;
             try
             {
                 var code = definition switch
@@ -37,14 +38,15 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
                     BitfieldDef bitfield => Bitfield(bitfield),
                     _ => throw new CodegenException($"Unsupported definition {definition.Kind}"),
                 };
-                Output.Files.Add(new GeneratedFile(PathOf(definition), code, definition.Name));
+                Output.Files.Add(new GeneratedFile(PathOf(definition), code, definition.QualifiedName));
             }
             catch (Exception e) when (e is CodegenException or ExprException)
             {
-                Output.Diagnostics.Error($"{definition.Name}: {e.Message}", definition.Source);
+                Output.Diagnostics.Error($"{definition.QualifiedName}: {e.Message}", definition.Source);
             }
         }
 
+        Current = null;
         Finish();
         return Output;
     }
@@ -64,8 +66,45 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
 
     // ------------------------------------------------------------------ helpers
 
-    /// <summary>Types written by hand: referenced, but not generated (and aliases among them are not inlined).</summary>
-    protected bool IsExcluded(string name) => exclude.Contains(name);
+    /// <summary>The definition whose file is being generated; null for shared files (registry, runtime).</summary>
+    protected TypeDef? Current { get; private set; }
+
+    /// <summary>
+    /// Types written by hand or coming from elsewhere (skipped libraries): referenced, but not generated (and aliases
+    /// among them are not inlined). <paramref name="reference"/> is a type name as written in the definitions.
+    /// </summary>
+    protected bool IsExcluded(string reference) => IsExcluded(Definition(reference));
+
+    protected bool IsExcluded(TypeDef definition) => exclude.Contains(definition.QualifiedName);
+
+    /// <summary>How the project uses the library of a definition, or null for the project's own definitions.</summary>
+    protected LibraryDependency? DependencyOf(TypeDef definition) => definition.Owner is { } owner
+        ? project.Settings.Dependencies.FirstOrDefault(d => d.Library == owner.Name)
+        : null;
+
+    private List<TypeDef>? _generated;
+
+    /// <summary>
+    /// The definitions code is generated for: the project's own, and the library definitions they use (directly or through
+    /// other library definitions), except those of skipped libraries.
+    /// </summary>
+    protected IReadOnlyList<TypeDef> Generated => _generated ??= CollectGenerated();
+
+    private List<TypeDef> CollectGenerated()
+    {
+        var result = new List<TypeDef>();
+        var seen = new HashSet<TypeDef>(ReferenceEqualityComparer.Instance);
+        var queue = new Queue<TypeDef>(project.Types.Values);
+        while (queue.TryDequeue(out var definition))
+        {
+            if (!seen.Add(definition) || definition.Owner != null && IsExcluded(definition)) continue;
+            result.Add(definition);
+            foreach (var name in TypeReferences.Of(definition))
+                if (project.Find(name) is { Owner: not null } used) queue.Enqueue(used);
+        }
+
+        return result;
+    }
 
     protected TypeDef Definition(string name) =>
         project.Find(name) ?? throw new CodegenException($"Unknown type '{name}'");
@@ -183,11 +222,11 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
 
     // ------------------------------------------------------------------ cycles
 
-    /// <summary>Types that contain themselves by value (directly or through other types).</summary>
+    /// <summary>Types that contain themselves by value (directly or through other types), by qualified name.</summary>
     protected HashSet<string> SelfContainingTypes()
     {
         var edges = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var definition in project.Types.Values)
+        foreach (var definition in Generated)
         {
             var targets = new List<string>();
             switch (definition)
@@ -200,7 +239,7 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
                     break;
             }
 
-            edges[definition.Name] = targets;
+            edges[definition.QualifiedName] = targets;
         }
 
         // Tarjan's strongly connected components.
@@ -257,9 +296,9 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
             case SizedRef sized:
                 return ByValue(sized.Inner);
             case NamedRef named when project.Find(named.Name) is AliasDef alias:
-                return ByValue(alias.Target).Append(named.Name);
+                return ByValue(alias.Target).Append(alias.QualifiedName);
             case NamedRef named:
-                return [named.Name];
+                return project.Find(named.Name) is { } target ? [target.QualifiedName] : [];
             default:
                 return [];
         }

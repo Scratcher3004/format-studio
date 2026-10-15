@@ -29,6 +29,8 @@ public sealed class FormatModule
     /// <summary>The library's name: unique among the libraries a project loads, dependencies of dependencies included.</summary>
     public string Name { get; }
     public string? Version { get; init; }
+    /// <summary>Where the library was loaded from, e.g. its package file; shown in the UI and in messages.</summary>
+    public string? Origin { get; init; }
     public IReadOnlyDictionary<string, TypeDef> Types => _types;
 
     public TypeDef? Find(string name) => _types.GetValueOrDefault(name);

@@ -1,3 +1,4 @@
+using FormatStudio.Dsl;
 using FormatStudio.Expressions;
 using FormatStudio.Model;
 using FormatStudio.Projects;
@@ -26,6 +27,7 @@ public sealed class Validator
             validator.Check(definition);
         validator.CheckPacketIds();
         validator.CheckAliasCycles();
+        validator.CheckLibrarySettings();
     }
 
     /// <summary>Validates one definition against the project, e.g. while editing.</summary>
@@ -325,6 +327,33 @@ public sealed class Validator
     /// <summary>A finding that is fixed on the protocols (or in a packet's groups).</summary>
     private void Protocol(Severity severity, string message, SourceLocation? source) =>
         _diagnostics.Add(new Diagnostic(severity, message, source) { Area = Diagnostic.ProtocolsArea });
+
+    private void CheckLibrarySettings()
+    {
+        var settings = _project.Settings;
+        var file = _project.FilePath is { } path ? new SourceLocation(_project.Relative(path)) : null;
+        foreach (var dependency in settings.Dependencies)
+        {
+            if (!TypeExpressions.IsIdentifier(dependency.AliasOrName))
+                _diagnostics.Error($"Library name or alias '{dependency.AliasOrName}' is not an identifier; give it one with 'as'", file);
+        }
+
+        foreach (var duplicate in settings.Dependencies.GroupBy(d => d.AliasOrName).Where(g => g.Count() > 1))
+            _diagnostics.Error($"Two dependencies are called '{duplicate.Key}'; give one of them another name with 'as'", file);
+
+        if (settings.Kind != ProjectKind.Library)
+        {
+            if (settings.Defaults.Inherit.Count > 0) _diagnostics.Warning("defaults.inherit only applies to libraries (kind: library)", file);
+            return;
+        }
+
+        if (!TypeExpressions.IsIdentifier(settings.Name))
+            _diagnostics.Error($"A library's name must be an identifier, as its definitions are referenced as {settings.Name}.Name", file);
+        if (settings.Version == null) _diagnostics.Warning("A library needs a version to be packed", file);
+        foreach (var packet in _project.Packets)
+            _diagnostics.Error($"Libraries can't have packets yet; make {packet.Name} a struct", packet.Source);
+        if (settings.Protocols.Count > 0) _diagnostics.Error("Libraries can't have protocols", file);
+    }
 
     private void CheckAliasCycles()
     {

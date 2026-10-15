@@ -55,12 +55,15 @@ public sealed class ProjectService
     /// <summary>The text of a definition's file, or the DSL of definitions without a file.</summary>
     public string Text(TypeDef definition)
     {
+        // A library's definition as the project sees it: names qualified, defaults written out.
+        if (definition.Owner != null) return DslWriter.Write(definition);
         var file = Sandbox.Check(Project!.FileFor(definition));
         return File.Exists(file) ? File.ReadAllText(file) : DslWriter.Write(definition);
     }
 
     public bool IsImported(TypeDef definition)
     {
+        if (definition.Owner != null) return false;
         var file = Project!.FileFor(definition);
         return Sandbox.Contains(file) && ImporterRegistry.IsImported(file);
     }
@@ -155,39 +158,41 @@ public sealed class ProjectService
         return System.IO.Path.Combine(overrideFolder, kindFolder, definition.Name + ".yaml");
     }
 
-    /// <summary>Definitions that use the given type.</summary>
-    public IEnumerable<(TypeDef User, string Where)> References(string name)
+    /// <summary>Definitions that use the given type: the project's own and those of its libraries.</summary>
+    public IEnumerable<(TypeDef User, string Where)> References(TypeDef target)
     {
         if (Project == null) yield break;
-        foreach (var definition in Project.Types.Values.OrderBy(d => d.Name, StringComparer.Ordinal))
+        bool Uses(TypeRef type) => UsesType(type, name => Project.Find(name) == target);
+        var definitions = Project.Types.Values.Concat(Project.Modules.Values.SelectMany(m => m.Types.Values));
+        foreach (var definition in definitions.OrderBy(d => d.QualifiedName, StringComparer.Ordinal))
         {
             switch (definition)
             {
                 case StructDef structDef:
-                    foreach (var field in structDef.Fields.Where(f => Uses(f.Type, name))) yield return (definition, field.Name);
+                    foreach (var field in structDef.Fields.Where(f => Uses(f.Type))) yield return (definition, field.Name);
                     break;
                 case VariantDef variant:
-                    if (variant.Tag != null && Uses(variant.Tag, name)) yield return (definition, "tag");
-                    foreach (var variantCase in variant.Cases.Where(c => c.Type != null && Uses(c.Type, name)))
+                    if (variant.Tag != null && Uses(variant.Tag)) yield return (definition, "tag");
+                    foreach (var variantCase in variant.Cases.Where(c => c.Type != null && Uses(c.Type)))
                         yield return (definition, variantCase.Name);
                     break;
-                case AliasDef alias when Uses(alias.Target, name):
+                case AliasDef alias when Uses(alias.Target):
                     yield return (definition, "type");
                     break;
                 case BitfieldDef bitfield:
-                    foreach (var member in bitfield.Members.Where(m => m.Type == name)) yield return (definition, member.Name);
+                    foreach (var member in bitfield.Members.Where(m => m.Type != null && Project.Find(m.Type) == target)) yield return (definition, member.Name);
                     break;
             }
         }
     }
 
-    private static bool Uses(TypeRef type, string name) => type switch
+    private static bool UsesType(TypeRef type, Func<string, bool> isTarget) => type switch
     {
-        NamedRef named => named.Name == name,
-        ArrayRef array => Uses(array.Element, name),
-        MapRef map => Uses(map.Key, name) || Uses(map.Value, name),
-        OptionalRef optional => Uses(optional.Inner, name),
-        SizedRef sized => Uses(sized.Inner, name),
+        NamedRef named => isTarget(named.Name),
+        ArrayRef array => UsesType(array.Element, isTarget),
+        MapRef map => UsesType(map.Key, isTarget) || UsesType(map.Value, isTarget),
+        OptionalRef optional => UsesType(optional.Inner, isTarget),
+        SizedRef sized => UsesType(sized.Inner, isTarget),
         _ => false,
     };
 

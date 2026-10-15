@@ -19,7 +19,12 @@ const string usage = """
                 Mojang/bedrock-protocol-docs: one file per type and import-report.md.
       format-studio validate
           Checks all definitions; exit code 1 on errors.
-      format-studio list [--kind packet|struct|enum|variant|alias|bitfield] [--filter <text>]
+      format-studio pack [--output <folder>]
+          Packs a library project (kind: library) into <name>-<version>.fslib, for other projects' library folders.
+      format-studio libraries
+          Lists the libraries the project loads (dependencies of libraries included), their versions and packages.
+      format-studio list [--kind packet|struct|enum|variant|alias|bitfield] [--filter <text>] [--libraries]
+          Lists the definitions; --libraries adds those of the libraries (as Library.Name).
       format-studio show <type> [--target <target|generator>] [--csharp]
           Prints a definition (DSL), or its generated code for a codegen target of the project or a generator's
           defaults (--csharp is --target csharp).
@@ -59,6 +64,8 @@ try
         "new" => Commands.New(args[1..]),
         "import" => Commands.Import(args[1..]),
         "validate" => Commands.Validate(args[1..]),
+        "pack" => Commands.Pack(args[1..]),
+        "libraries" => Commands.Libraries(args[1..]),
         "list" => Commands.List(args[1..]),
         "show" => Commands.Show(args[1..]),
         "decode" => Commands.Decode(args[1..]),

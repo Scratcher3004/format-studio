@@ -43,6 +43,21 @@
                     }
                 </MudNavGroup>
             }
+            @foreach (var (module, items) in Libraries(project))
+            {
+                <MudNavGroup Title="@($"{module} ({items.Count})")" Icon="@Icons.Material.Filled.LibraryBooks" Expanded="@(!string.IsNullOrEmpty(_filter))">
+                    @foreach (var definition in items.Take(MaxShown))
+                    {
+                        <MudNavLink Href="@Context.Link($"type/{definition.QualifiedName}")">
+                            <span class="type-link">@definition.Name</span>
+                        </MudNavLink>
+                    }
+                    @if (items.Count > MaxShown)
+                    {
+                        <MudText Typo="Typo.caption" Class="px-4">@(items.Count - MaxShown) more, use the filter</MudText>
+                    }
+                </MudNavGroup>
+            }
         </MudNavMenu>
     }
 }
@@ -57,6 +72,15 @@
             .GroupBy(d => d.Kind)
             .OrderBy(g => Array.IndexOf(["packet", "struct", "variant", "enum", "bitfield", "alias"], g.Key))
             .Select(g => (g.Key + "s", g.OrderBy(d => d is StructDef { IsPacket: true } p ? p.Id : 0).ThenBy(d => d.Name, StringComparer.Ordinal).ToList()));
+
+    /// <summary>The definitions of each library, read-only.</summary>
+    private IEnumerable<(FormatModule Module, List<TypeDef> Items)> Libraries(FormatProject project) =>
+        project.Modules.Values
+            .OrderBy(m => m.Name, StringComparer.Ordinal)
+            .Select(m => (m, m.Types.Values
+                .Where(d => string.IsNullOrEmpty(_filter) || d.QualifiedName.Contains(_filter, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(d => d.Name, StringComparer.Ordinal).ToList()))
+            .Where(g => g.Item2.Count > 0);
 
     protected override void OnInitialized() => Context.Changed += OnChanged;
 

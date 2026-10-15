@@ -77,7 +77,7 @@ public static class CodeGeneration
         GeneratedOutput output;
         try
         {
-            output = generator.Generate(project, target.Options, Skipped(project, target));
+            output = generator.Generate(project, target.Options, Excluded(project, target));
         }
         catch (FormatDefinitionException e)
         {
@@ -96,6 +96,22 @@ public static class CodeGeneration
     /// <summary>The definitions a target doesn't generate: those whose <c>skipCodegen</c> names it, its generator, or all targets.</summary>
     public static IReadOnlySet<string> Skipped(FormatProject project, CodegenTarget target) =>
         project.Types.Values.Where(d => d.SkipCodegen?.Skips(target.Name, target.Generator) == true).Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The definitions a target references but doesn't generate, by qualified name: the <see cref="Skipped"/> ones and
+    /// those of libraries whose dependency says <c>codegen: {skip: true}</c>.
+    /// </summary>
+    public static IReadOnlySet<string> Excluded(FormatProject project, CodegenTarget target)
+    {
+        var excluded = Skipped(project, target).ToHashSet(StringComparer.Ordinal);
+        foreach (var dependency in project.Settings.Dependencies.Where(d => d.SkipCodegen))
+        {
+            if (project.Modules.TryGetValue(dependency.Library, out var module))
+                excluded.UnionWith(module.Types.Values.Select(d => d.QualifiedName));
+        }
+
+        return excluded;
+    }
 
     /// <summary>Checks a target before it is saved: the generator exists and the output folder stays inside the project.</summary>
     public static void Check(CodegenTarget target)

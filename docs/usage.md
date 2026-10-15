@@ -10,7 +10,9 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 |---|---|
 | `new <folder>` | Create an empty project |
 | `validate` | Check references, expressions, tags, ids |
-| `list [--kind packet] [--filter text]` | List definitions |
+| `list [--kind packet] [--filter text] [--libraries]` | List definitions (`--libraries`: also those of the libraries) |
+| `pack [--output <folder>]` | Pack a library project into `<name>-<version>.fslib` (see [libraries](libraries.md)) |
+| `libraries` | List the libraries the project loads |
 | `show <type> [--target <target\|generator>]` | Print the definition, or its generated code (`--csharp` is `--target csharp`) |
 | `decode <type> --hex ... [--tree]` | Decode bytes; `--tree` prints every value with its byte range |
 | `decode-packet --hex ... --header varuint32 --id-mask 0x3ff [--protocol <name>]` | Read a packet id, then the packet (of that protocol) |

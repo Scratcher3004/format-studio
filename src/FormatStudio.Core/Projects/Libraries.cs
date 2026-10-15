@@ -1,0 +1,314 @@
+using System.IO.Compression;
+using System.Reflection;
+using FormatStudio.Dsl;
+using FormatStudio.Expressions;
+using FormatStudio.Model;
+
+namespace FormatStudio.Projects;
+
+/// <summary>
+/// A packed library (<c>&lt;name&gt;-&lt;version&gt;.fslib</c>): a zip with the library's project file and its definition
+/// files, at the paths they have in the library project.
+/// </summary>
+public sealed class LibraryPackage
+{
+    public const string Extension = ".fslib";
+
+    public required ProjectSettings Settings { get; init; }
+    /// <summary>The definition files: path inside the package, text.</summary>
+    public required IReadOnlyList<(string Path, string Text)> Files { get; init; }
+    /// <summary>Where the package comes from, e.g. its file or <c>built-in</c>; shown in messages.</summary>
+    public required string Origin { get; init; }
+
+    public string Name => Settings.Name;
+    public string? Version => Settings.Version;
+
+    public override string ToString() => Version == null ? Name : $"{Name} {Version}";
+
+    public static LibraryPackage Read(Stream stream, string origin)
+    {
+        try
+        {
+            using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
+            string Text(ZipArchiveEntry entry)
+            {
+                using var reader = new StreamReader(entry.Open());
+                return reader.ReadToEnd();
+            }
+
+            var projectFiles = zip.Entries.Where(e => !e.FullName.Contains('/') && e.FullName.EndsWith(ProjectSettings.Extension, StringComparison.Ordinal)).ToList();
+            if (projectFiles.Count != 1)
+                throw new FormatDefinitionException($"{origin}: a library package needs exactly one {ProjectSettings.Extension} at its root");
+            var settings = ProjectSettings.Parse(Text(projectFiles[0]), $"{origin}!/{projectFiles[0].FullName}");
+            var files = zip.Entries
+                .Where(e => e != projectFiles[0] && e.FullName.EndsWith(".yaml", StringComparison.Ordinal))
+                .OrderBy(e => e.FullName, StringComparer.Ordinal)
+                .Select(e => (e.FullName, Text(e)))
+                .ToList();
+            return new LibraryPackage { Settings = settings, Files = files, Origin = origin };
+        }
+        catch (InvalidDataException e)
+        {
+            throw new FormatDefinitionException($"{origin} is not a library package: {e.Message}");
+        }
+    }
+
+    /// <summary>The file name of a package: <c>&lt;name&gt;-&lt;version&gt;.fslib</c>.</summary>
+    public static string FileName(string name, string version) => $"{name}-{version}{Extension}";
+
+    /// <summary>
+    /// Packs a library project into <paramref name="outputDirectory"/> and returns the package's path. The project must be
+    /// a valid library with a version; only the definitions it ends up with are packed (not those overridden by later
+    /// sources), samples and code generation settings stay out.
+    /// </summary>
+    public static string Pack(FormatProject library, string outputDirectory)
+    {
+        var settings = library.Settings;
+        if (settings.Kind != ProjectKind.Library) throw new FormatDefinitionException($"{settings.Name} is not a library (kind: library)");
+        if (settings.Version is not { Length: > 0 } version || version.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || version.Contains(' '))
+            throw new FormatDefinitionException($"A library needs a version to be packed, and it must be usable in a file name");
+        if (library.FilePath == null) throw new FormatDefinitionException("Only a library loaded from a project file can be packed");
+        if (library.Diagnostics.HasErrors)
+            throw new FormatDefinitionException($"{settings.Name} has errors:\n{string.Join("\n", library.Diagnostics.Where(d => d.Severity == Severity.Error))}");
+
+        Directory.CreateDirectory(outputDirectory);
+        var path = Path.Combine(outputDirectory, FileName(settings.Name, version));
+        using var stream = File.Create(path);
+        using var zip = new ZipArchive(stream, ZipArchiveMode.Create);
+        void Add(string entryName, string text)
+        {
+            using var writer = new StreamWriter(zip.CreateEntry(entryName).Open());
+            writer.Write(text);
+        }
+
+        Add(Path.GetFileName(library.FilePath), File.ReadAllText(library.FilePath));
+        foreach (var definition in library.Types.Values.OrderBy(d => d.Name, StringComparer.Ordinal))
+        {
+            var file = definition.Source?.File ?? throw new FormatDefinitionException($"{definition.Name} has no file");
+            if (file.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(file))
+                throw new FormatDefinitionException($"{definition.Name} is outside the library folder ({file})");
+            Add(file, File.ReadAllText(Path.Combine(library.Directory, file)));
+        }
+
+        return path;
+    }
+
+    /// <summary>Orders versions by their dot-separated parts, numerically where both parts are numbers.</summary>
+    public static int CompareVersions(string? a, string? b)
+    {
+        if (a == null || b == null) return a == null ? b == null ? 0 : -1 : 1;
+        var left = a.Split('.', '-');
+        var right = b.Split('.', '-');
+        for (var i = 0; i < Math.Max(left.Length, right.Length); i++)
+        {
+            if (i >= left.Length) return -1;
+            if (i >= right.Length) return 1;
+            var order = long.TryParse(left[i], out var x) && long.TryParse(right[i], out var y)
+                ? x.CompareTo(y)
+                : string.CompareOrdinal(left[i], right[i]);
+            if (order != 0) return order;
+        }
+
+        return 0;
+    }
+}
+
+/// <summary>
+/// Where a project finds library packages: the <c>.fslib</c> files in its library folders, then the built-in libraries
+/// (<c>Libraries/*.fslib</c> in this project, embedded in the assembly).
+/// </summary>
+public sealed class LibraryCatalog(IReadOnlyList<string> folders, FileSandbox sandbox, IReadOnlyList<LibraryPackage>? builtins = null)
+{
+    private static readonly Lazy<IReadOnlyList<LibraryPackage>> BuiltinPackages = new(() =>
+    {
+        var assembly = typeof(LibraryCatalog).Assembly;
+        return assembly.GetManifestResourceNames()
+            .Where(n => n.EndsWith(LibraryPackage.Extension, StringComparison.Ordinal))
+            .Select(n => LibraryPackage.Read(assembly.GetManifestResourceStream(n)!, $"built-in {n}"))
+            .ToList();
+    });
+
+    /// <summary>The libraries that come with Format Studio.</summary>
+    public static IReadOnlyList<LibraryPackage> Builtins => BuiltinPackages.Value;
+
+    public static LibraryCatalog For(FormatProject project) => new(
+        project.Settings.Libraries.Select(folder => Path.GetFullPath(folder, project.Directory)).ToList(), project.Sandbox);
+
+    /// <summary>The folders searched, for messages.</summary>
+    public IReadOnlyList<string> Folders => folders;
+
+    /// <summary>Every package of the given library: those in the folders first, then the built-in ones.</summary>
+    public IEnumerable<LibraryPackage> Candidates(string name)
+    {
+        foreach (var folder in folders)
+        {
+            if (!sandbox.Contains(folder) || !Directory.Exists(folder)) continue;
+            foreach (var file in sandbox.EnumerateFiles(folder, $"{name}-*{LibraryPackage.Extension}").Order(StringComparer.Ordinal))
+            {
+                using var stream = File.OpenRead(sandbox.Check(file));
+                var package = LibraryPackage.Read(stream, Path.GetFileName(file));
+                if (package.Name == name) yield return package;
+            }
+        }
+
+        foreach (var package in builtins ?? Builtins)
+            if (package.Name == name) yield return package;
+    }
+
+    /// <summary>The package with the exact <paramref name="version"/>, or the highest version when it is null.</summary>
+    public LibraryPackage? Find(string name, string? version)
+    {
+        var candidates = Candidates(name).ToList();
+        return version != null
+            ? candidates.FirstOrDefault(p => p.Version == version)
+            : candidates.OrderByDescending(p => p.Version, Comparer<string?>.Create(LibraryPackage.CompareVersions)).FirstOrDefault();
+    }
+}
+
+/// <summary>
+/// Loads the libraries of a project (dependencies of dependencies included) into it as modules. Each library is checked
+/// on its own, then baked: its names are qualified (<c>Library.Type</c>) and its defaults written into its types, except
+/// those it inherits, so that its definitions mean the same in every project.
+/// </summary>
+public sealed class LibraryLoader
+{
+    private readonly FormatProject _project;
+    private readonly LibraryCatalog _catalog;
+
+    private LibraryLoader(FormatProject project, LibraryCatalog catalog)
+    {
+        _project = project;
+        _catalog = catalog;
+    }
+
+    /// <summary>Loads the project's dependencies; problems are reported as diagnostics of the project file.</summary>
+    public static void LoadDependencies(FormatProject project, LibraryCatalog? catalog = null)
+    {
+        var loader = new LibraryLoader(project, catalog ?? LibraryCatalog.For(project));
+        var where = project.FilePath != null ? new SourceLocation(project.Relative(project.FilePath)) : null;
+        foreach (var dependency in project.Settings.Dependencies)
+        {
+            try
+            {
+                project.AddModule(loader.Load(dependency.Library, dependency.Version, []), dependency.AliasOrName);
+            }
+            catch (FormatDefinitionException e)
+            {
+                project.Diagnostics.Error(e.Message, e.Location ?? where);
+            }
+        }
+    }
+
+    private FormatModule Load(string name, string? version, IReadOnlyList<string> chain)
+    {
+        if (chain.Contains(name)) throw new FormatDefinitionException($"Libraries depend on each other: {string.Join(" -> ", chain.Append(name))}");
+        if (_project.Modules.TryGetValue(name, out var loaded))
+        {
+            if (version != null && loaded.Version != version)
+                throw new FormatDefinitionException($"Library {name} is needed in versions {loaded.Version} and {version}");
+            return loaded;
+        }
+
+        var package = _catalog.Find(name, version) ?? throw new FormatDefinitionException(
+            $"Library {name}{(version != null ? " " + version : "")} not found (searched {string.Join(", ", _catalog.Folders.Select(_project.Relative).Append("built-in libraries"))})");
+        if (package.Settings.Kind != ProjectKind.Library) throw new FormatDefinitionException($"{package.Origin} is not a library (kind: library)");
+
+        // The library as a project of its own, to check it and resolve its names as it sees them.
+        var library = new FormatProject(package.Settings, _project.Directory);
+        foreach (var (path, text) in package.Files)
+            if (DslReader.Read(text, $"{package.Origin}!/{path}", library.Diagnostics) is { } definition) library.Add(definition);
+        foreach (var dependency in package.Settings.Dependencies)
+            library.AddModule(Load(dependency.Library, dependency.Version, [.. chain, name]), dependency.AliasOrName);
+        foreach (var module in _project.Modules.Values) library.AddModule(module);
+        Validation.Validator.Validate(library);
+        foreach (var diagnostic in library.Diagnostics.Where(d => d.Severity == Severity.Error))
+            _project.Diagnostics.Add(diagnostic with { Message = $"Library {package}: {diagnostic.Message}" });
+
+        var definitions = library.Types.Values.ToList();
+        new Baker(library, name).Bake(definitions);
+        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin };
+        _project.AddModule(result);
+        return result;
+    }
+
+    /// <summary>Rewrites a library's definitions in place: qualified names, explicit defaults.</summary>
+    private sealed class Baker(FormatProject library, string moduleName)
+    {
+        private readonly FormatDefaults _defaults = library.Defaults;
+
+        private bool Inherits(string setting) => _defaults.Inherit.Contains(setting);
+
+        public void Bake(IEnumerable<TypeDef> definitions)
+        {
+            foreach (var definition in definitions)
+            {
+                switch (definition)
+                {
+                    case StructDef structDef:
+                        foreach (var field in structDef.Fields)
+                        {
+                            field.Type = Type(field.Type);
+                            field.If = Expression(field.If);
+                            field.Computed = Expression(field.Computed);
+                        }
+
+                        break;
+                    case EnumDef enumDef:
+                        enumDef.Type = Primitive(enumDef.Type);
+                        break;
+                    case VariantDef variant:
+                        variant.Tag = variant.Tag == null ? null : Type(variant.Tag);
+                        foreach (var variantCase in variant.Cases) variantCase.Type = variantCase.Type == null ? null : Type(variantCase.Type);
+                        break;
+                    case AliasDef alias:
+                        alias.Target = Type(alias.Target);
+                        break;
+                    case BitfieldDef bitfield:
+                        bitfield.Base = Primitive(bitfield.Base);
+                        foreach (var member in bitfield.Members.Where(m => m.Type is not (null or "bool"))) member.Type = Name(member.Type!);
+                        break;
+                }
+            }
+        }
+
+        /// <summary>A type name as the library resolves it, qualified so that it resolves the same in any project.</summary>
+        private string Name(string reference) => library.Resolve(reference).Definition is { } target
+            ? target.Owner == null ? $"{moduleName}.{target.Name}" : target.QualifiedName
+            : reference;
+
+        private string? Expression(string? text)
+        {
+            if (text == null || !Expr.TryParse(text, out var expression, out _)) return text;
+            var renamed = expression!.RenameEnums(Name);
+            return renamed == expression ? text : renamed.ToString();
+        }
+
+        private PrimitiveRef Primitive(PrimitiveRef primitive) =>
+            primitive.Endian == null && Primitives.HasEndian(primitive.Kind) && !Inherits("endian")
+                ? primitive with { Endian = _defaults.Endian }
+                : primitive;
+
+        private LengthSpec Length(LengthSpec length) => length.Kind switch
+        {
+            LengthKind.Default when !Inherits("length") => new LengthSpec(LengthKind.Prefix, Primitive(_defaults.Length)),
+            LengthKind.Prefix => length with { Prefix = Primitive(length.Prefix!) },
+            LengthKind.Expression or LengthKind.Until => length with { Expression = Expression(length.Expression) },
+            _ => length,
+        };
+
+        private TypeRef Type(TypeRef type) => type switch
+        {
+            PrimitiveRef primitive => Primitive(primitive),
+            NamedRef named => new NamedRef(Name(named.Name), named.As == null ? null : Primitive(named.As), Expression(named.Tag)),
+            StringRef str => new StringRef(str.Encoding ?? (Inherits("string") ? null : _defaults.String), Length(str.Length)),
+            BytesRef bytes => new BytesRef(Length(bytes.Length)),
+            ArrayRef array => new ArrayRef(Type(array.Element), Length(array.Length)),
+            MapRef map => new MapRef(Type(map.Key), Type(map.Value), Length(map.Length)),
+            OptionalRef optional => new OptionalRef(Type(optional.Inner)),
+            SizedRef sized => new SizedRef(Type(sized.Inner), Length(sized.Length)),
+            FixedPointRef fixedPoint => fixedPoint with { Base = Primitive(fixedPoint.Base) },
+            NbtRef nbt => new NbtRef(nbt.Flavor ?? (Inherits("nbt") ? null : _defaults.Nbt)),
+            _ => type,
+        };
+    }
+}
