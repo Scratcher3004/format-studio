@@ -56,7 +56,19 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     private static string Id(string name) => Keywords.Contains(name) ? "@" + name : name;
 
-    private string Global(string typeName) => $"global::{options.Namespace}.{typeName}";
+    /// <summary>The namespace of a definition: the target's, or for a library's definition a namespace of its own inside it.</summary>
+    private string NamespaceOf(TypeDef definition) =>
+        definition.Owner == null ? options.Namespace : $"{options.Namespace}.{Pascal(definition.Owner.Name)}";
+
+    private static string Pascal(string name) => char.ToUpperInvariant(name[0]) + name[1..];
+
+    private string Global(TypeDef definition) => $"global::{NamespaceOf(definition)}.{definition.Name}";
+
+    /// <param name="reference">A type name as written in the definitions, e.g. <c>Slot</c> or <c>mc.Slot</c>.</param>
+    private string Global(string reference) => Global(Definition(reference));
+
+    /// <summary>The name of a definition in the generated code; the project's own definitions may go unqualified.</summary>
+    private string TypeName(TypeDef definition, bool qualified) => qualified || definition.Owner != null ? Global(definition) : definition.Name;
 
     /// <summary>The C# member name of a field or case, avoiding the enclosing type name and generated members.</summary>
     private static string Member(string name, string owner) => name == owner || Reserved.Contains(name) ? name + "Value" : Id(name);
@@ -95,7 +107,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         FixedPointRef => "double",
         NamedRef named => Definition(named.Name) is AliasDef alias && !IsExcluded(named.Name)
             ? Type(alias.Target, qualified)
-            : qualified ? Global(named.Name) : named.Name,
+            : TypeName(Definition(named.Name), qualified),
         _ => throw new CodegenException($"Unsupported type {type}"),
     };
 
@@ -148,8 +160,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override Value EnumConstant(EnumDef enumDef, string member)
     {
-        var access = $"{Global(enumDef.Name)}.{Id(member)}";
-        return new Value($"(long){access}", access, ValueKind.Number, new NamedRef(enumDef.Name));
+        var access = $"{Global(enumDef)}.{Id(member)}";
+        return new Value($"(long){access}", access, ValueKind.Number, new NamedRef(enumDef.QualifiedName));
     }
 
     protected override string Convert(string access, ValueKind kind, TypeRef declared, bool mayBeNull)
@@ -173,7 +185,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override string TagNumber(Value value) => $"(long){value.Raw}.Kind";
 
-    protected override string TagText(VariantDef variant, Value value) => $"{Global(variant.Name)}.TagOf({value.Raw}.Kind)";
+    protected override string TagText(VariantDef variant, Value value) => $"{Global(variant)}.TagOf({value.Raw}.Kind)";
 
     protected override string TextCompare(string left, string right, string op) => $"({left} {op} {right})";
 
@@ -314,7 +326,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     {
         var name = structDef.Name;
         w.Open($"public static {name} Read({ReaderParameter})");
-        w.Line($"var result = new {Global(name)}();");
+        w.Line($"var result = new {Global(structDef)}();");
         var known = new Dictionary<string, FieldDef>(StringComparer.Ordinal);
         var resolve = ReadScope(known, f => Access(f, "result.", structDef));
         foreach (var field in structDef.Fields)
@@ -355,8 +367,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         {
             case NamedRef named when Definition(named.Name) is EnumDef enumDef:
                 var memberName = constant.GetValueKind() == JsonValueKind.String ? constant.GetValue<string>() : null;
-                if (memberName != null && enumDef.FindByName(memberName) != null) return $"{Global(enumDef.Name)}.{Id(memberName)}";
-                return $"({Global(enumDef.Name)}){Simulation.JsonValues.Number(constant)}";
+                if (memberName != null && enumDef.FindByName(memberName) != null) return $"{Global(enumDef)}.{Id(memberName)}";
+                return $"({Global(enumDef)}){Simulation.JsonValues.Number(constant)}";
             case PrimitiveRef { Kind: PrimitiveKind.Bool }:
                 return constant.GetValueKind() == JsonValueKind.True ? "true" : "false";
             case PrimitiveRef { Kind: PrimitiveKind.F32 or PrimitiveKind.F64 } primitive:
@@ -532,7 +544,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
                     case AliasDef alias when !IsExcluded(named.Name):
                         return Read(alias.Target, w, context);
                     case EnumDef enumDef:
-                        var enumValue = $"({Global(enumDef.Name)}){reader}.Read{Method(named.As ?? enumDef.Type)}()";
+                        var enumValue = $"({Global(enumDef)}){reader}.Read{Method(named.As ?? enumDef.Type)}()";
                         if (!options.ValidateEnums || enumDef.AllowUnknown || enumDef.Flags) return enumValue;
                         var checkedValue = Temp("enum");
                         w.Line($"var {checkedValue} = {enumValue};");
@@ -696,19 +708,19 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     private string VariantTagType(VariantDef variant, bool qualified) =>
         TagEnum(variant) is { } tagEnum
-            ? qualified ? Global(tagEnum.Name) : tagEnum.Name
-            : qualified ? $"{Global(variant.Name)}.Case" : "Case";
+            ? TypeName(tagEnum, qualified)
+            : qualified ? $"{Global(variant)}.Case" : "Case";
 
     private string CaseValue(VariantDef variant, VariantCase variantCase)
     {
         if (TagEnum(variant) is { } enumDef)
         {
             return variantCase.TagMember != null
-                ? $"{Global(enumDef.Name)}.{Id(variantCase.TagMember)}"
-                : $"({Global(enumDef.Name)}){variantCase.TagValue}";
+                ? $"{Global(enumDef)}.{Id(variantCase.TagMember)}"
+                : $"({Global(enumDef)}){variantCase.TagValue}";
         }
 
-        return $"{Global(variant.Name)}.Case.{Id(variantCase.Name)}";
+        return $"{Global(variant)}.Case.{Id(variantCase.Name)}";
     }
 
     protected override string Variant(VariantDef variant)
@@ -772,11 +784,11 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         w.Line();
         w.Open($"public static {name} Read({ReaderParameter})");
         if (variant.Tag is NamedRef tagRef && TagEnum(variant) is { } tagEnum)
-            w.Line($"return Read({Pass("reader")}, ({Global(tagEnum.Name)})reader.Read{Method(tagRef.As ?? tagEnum.Type)}());");
+            w.Line($"return Read({Pass("reader")}, ({Global(tagEnum)})reader.Read{Method(tagRef.As ?? tagEnum.Type)}());");
         else if (variant.Tag != null && stringTags)
             w.Line($"return Read({Pass("reader")}, CaseOf({Read(variant.Tag, w, Context.Empty)}));");
         else if (resolvedTag is PrimitiveRef primitive)
-            w.Line($"return Read({Pass("reader")}, ({Global(name)}.Case)reader.Read{Method(primitive)}());");
+            w.Line($"return Read({Pass("reader")}, ({Global(variant)}.Case)reader.Read{Method(primitive)}());");
         else
             w.Line($"throw new {options.ExceptionType}(\"{name} needs its tag from the enclosing type\");");
 
@@ -784,7 +796,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         w.Line();
 
         w.Open($"public static {name} Read({ReaderParameter}, {tagType} kind)");
-        w.Line($"var result = new {Global(name)} {{ Kind = kind }};");
+        w.Line($"var result = new {Global(variant)} {{ Kind = kind }};");
         w.Open("switch (kind)");
         foreach (var variantCase in variant.Cases)
         {
@@ -881,7 +893,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         foreach (var packet in packets)
         {
             w.Open($"case {packet.Id}:");
-            w.Line($"var packet = {Global(packet.Name)}.Read({Pass("reader")});");
+            w.Line($"var packet = {Global(packet)}.Read({Pass("reader")});");
             w.Line("visitor.Visit(ref packet);");
             w.Line("return true;");
             w.Close();

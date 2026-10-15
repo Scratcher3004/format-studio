@@ -59,6 +59,13 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     private static string EnumMember(string name) => EnumReserved.Contains(name) ? name + "_" : Id(name);
 
+    /// <summary>The package of a definition: the target's, or for a library's definition a package of its own inside it.</summary>
+    private string PackageOf(TypeDef definition) =>
+        definition.Owner == null ? options.Package : $"{options.Package}.{Id(definition.Owner.Name.ToLowerInvariant())}";
+
+    /// <summary>The name of a definition in the generated code: the project's own share the package, a library's are qualified.</summary>
+    private string TypeName(TypeDef definition) => definition.Owner == null ? definition.Name : $"{PackageOf(definition)}.{definition.Name}";
+
     private static string Capitalize(string name) => name.Length == 0 ? name : char.ToUpperInvariant(name[0]) + name[1..];
 
     /// <summary>Flags enums and enums with unknown values are kept as <c>long</c> numbers, the others are Java enums.</summary>
@@ -176,7 +183,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
             {
                 AliasDef alias when !IsExcluded(named.Name) => Type(alias.Target),
                 EnumDef enumDef when IsOpen(enumDef) => EnumType(enumDef),
-                _ => named.Name,
+                var definition => TypeName(definition),
             },
             _ => throw new CodegenException($"Unsupported type {type}"),
         };
@@ -270,8 +277,8 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     protected override Value EnumConstant(EnumDef enumDef, string member)
     {
-        var access = $"{enumDef.Name}.{EnumMember(member)}";
-        return new Value(AsLong(IsOpen(enumDef) ? access : $"{access}.value", enumDef.Type.Kind), access, ValueKind.Number, new NamedRef(enumDef.Name));
+        var access = $"{TypeName(enumDef)}.{EnumMember(member)}";
+        return new Value(AsLong(IsOpen(enumDef) ? access : $"{access}.value", enumDef.Type.Kind), access, ValueKind.Number, new NamedRef(enumDef.QualifiedName));
     }
 
     protected override string Convert(string access, ValueKind kind, TypeRef declared, bool mayBeNull)
@@ -556,11 +563,11 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         {
             case NamedRef named when Definition(named.Name) is EnumDef enumDef:
                 var memberName = constant.GetValueKind() == JsonValueKind.String ? constant.GetValue<string>() : null;
-                if (memberName != null && enumDef.FindByName(memberName) != null) return $"{enumDef.Name}.{EnumMember(memberName)}";
+                if (memberName != null && enumDef.FindByName(memberName) != null) return $"{TypeName(enumDef)}.{EnumMember(memberName)}";
                 var number = Simulation.JsonValues.Number(constant) ?? throw new CodegenException($"Invalid const {constant}");
                 if (IsOpen(enumDef)) return TypedLiteral(number, EnumType(enumDef));
                 var byValue = enumDef.FindByValue((long)number) ?? throw new CodegenException($"{number} is not a member of {enumDef.Name}");
-                return $"{enumDef.Name}.{EnumMember(byValue.Name)}";
+                return $"{TypeName(enumDef)}.{EnumMember(byValue.Name)}";
             case PrimitiveRef { Kind: PrimitiveKind.Bool }:
                 return constant.GetValueKind() == JsonValueKind.True ? "true" : "false";
             case PrimitiveRef { Kind: PrimitiveKind.F32 or PrimitiveKind.F64 } primitive:
@@ -590,7 +597,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
             var type = Type(field.Type);
             if (type == "boolean") code = kind == ValueKind.Bool ? code : $"({code} != 0)";
             else if (kind == ValueKind.Bool) code = $"({type}) ({code} ? 1 : 0)";
-            else if (ClosedEnum(field.Type) is { } enumDef) code = $"{enumDef.Name}.fromValue(({EnumType(enumDef)}) ({code}))";
+            else if (ClosedEnum(field.Type) is { } enumDef) code = $"{TypeName(enumDef)}.fromValue(({EnumType(enumDef)}) ({code}))";
             else code = $"({type}) ({code})";
             w.Line($"{type} __{field.Name} = {code};");
             computedDone.Add(field.Name);
@@ -785,15 +792,15 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
                         var raw = $"{reader}.read{Method(wire)}()";
                         if (IsOpen(enumDef)) return Narrow(raw, wire.Kind, enumDef.Type.Kind, w, context);
                         var enumType = EnumType(enumDef);
-                        return $"{enumDef.Name}.fromValue({(RuntimeType(wire.Kind) == enumType ? raw : $"({enumType}) {raw}")})";
+                        return $"{TypeName(enumDef)}.fromValue({(RuntimeType(wire.Kind) == enumType ? raw : $"({enumType}) {raw}")})";
                     case VariantDef variant when named.Tag != null && Project.TagKind(variant) == VariantTagKind.String:
-                        return $"{named.Name}.read({reader}, {named.Name}.Case.fromTag({Expression(named.Tag, context, out _)}))";
+                        return $"{TypeName(variant)}.read({reader}, {TypeName(variant)}.Case.fromTag({Expression(named.Tag, context, out _)}))";
                     case VariantDef variant when named.Tag != null:
                         var tag = Expression(named.Tag, context, out _);
                         var kindValueType = KindValueType(variant);
-                        return $"{named.Name}.read({reader}, {VariantKindType(variant)}.fromValue({(kindValueType == "long" ? tag : $"({kindValueType}) ({tag})")}))";
-                    default:
-                        return $"{named.Name}.read({reader})";
+                        return $"{TypeName(variant)}.read({reader}, {VariantKindType(variant)}.fromValue({(kindValueType == "long" ? tag : $"({kindValueType}) ({tag})")}))";
+                    case var definition:
+                        return $"{TypeName(definition)}.read({reader})";
                 }
             default:
                 throw new CodegenException($"Unsupported type {type}");
@@ -927,7 +934,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     /// </summary>
     private EnumDef? KindEnum(VariantDef variant) => TagEnum(variant) is { } enumDef && !IsOpen(enumDef) ? enumDef : null;
 
-    private string VariantKindType(VariantDef variant) => KindEnum(variant)?.Name ?? $"{variant.Name}.Case";
+    private string VariantKindType(VariantDef variant) => KindEnum(variant) is { } kindEnum ? TypeName(kindEnum) : $"{TypeName(variant)}.Case";
 
     /// <summary>The primitive kind of <c>kind.value</c>; null when it is a long (a <c>Case</c> enum of an external tag).</summary>
     private PrimitiveKind? KindValueKind(VariantDef variant) => KindEnum(variant)?.Type.Kind ?? TagWire(variant)?.Kind;
@@ -1143,7 +1150,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         foreach (var packet in packets)
         {
             w.Line($"case {packet.Id}:");
-            w.Line($"    return {packet.Name}.read(reader);");
+            w.Line($"    return {TypeName(packet)}.read(reader);");
         }
 
         w.Line("default:");

@@ -241,6 +241,8 @@ public sealed class ProjectSettings
 public sealed class FormatProject
 {
     private readonly Dictionary<string, TypeDef> _types = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FormatModule> _modules = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FormatModule> _dependencies = new(StringComparer.Ordinal);
 
     public ProjectSettings Settings { get; }
     /// <summary>The project file, or null for an in-memory project.</summary>
@@ -259,10 +261,62 @@ public sealed class FormatProject
     }
 
     public FormatDefaults Defaults => Settings.Defaults;
+    /// <summary>The project's own definitions (not those of its libraries).</summary>
     public IReadOnlyDictionary<string, TypeDef> Types => _types;
     public IEnumerable<StructDef> Packets => _types.Values.OfType<StructDef>().Where(s => s.IsPacket);
 
-    public TypeDef? Find(string name) => _types.GetValueOrDefault(name);
+    /// <summary>Every library the project loads, dependencies of dependencies included, by name.</summary>
+    public IReadOnlyDictionary<string, FormatModule> Modules => _modules;
+    /// <summary>The libraries the project depends on directly, by the alias it uses for them.</summary>
+    public IReadOnlyDictionary<string, FormatModule> Dependencies => _dependencies;
+
+    /// <summary>
+    /// Adds a library. With an <paramref name="alias"/> it is a direct dependency, whose definitions the project may
+    /// reference by name alone; without, it is only loaded for other libraries (referenced as <c>Name.Type</c>).
+    /// </summary>
+    public void AddModule(FormatModule module, string? alias = null)
+    {
+        if (_modules.TryGetValue(module.Name, out var existing) && existing != module)
+            throw new FormatDefinitionException($"Two different libraries named '{module.Name}' ({existing}, {module})");
+        _modules[module.Name] = module;
+        if (alias == null) return;
+        if (_dependencies.TryGetValue(alias, out var other) && other != module)
+            throw new FormatDefinitionException($"The alias '{alias}' is used for both {other} and {module}");
+        _dependencies[alias] = module;
+    }
+
+    public TypeDef? Find(string name) => Resolve(name).Definition;
+
+    /// <summary>
+    /// Resolves a type name: <c>Alias.Type</c> or <c>Library.Type</c> in that library; a plain name in the project's own
+    /// definitions first, then in the direct dependencies, where it must be unique.
+    /// </summary>
+    public TypeLookup Resolve(string name)
+    {
+        var dot = name.IndexOf('.');
+        if (dot >= 0)
+        {
+            var qualifier = name[..dot];
+            var module = _dependencies.GetValueOrDefault(qualifier) ?? _modules.GetValueOrDefault(qualifier);
+            if (module == null) return TypeLookup.Failed($"Unknown library '{qualifier}' in '{name}'");
+            return module.Find(name[(dot + 1)..]) is { } qualified
+                ? TypeLookup.Found(qualified)
+                : TypeLookup.Failed($"Library {module} has no type '{name[(dot + 1)..]}'");
+        }
+
+        if (_types.TryGetValue(name, out var own)) return TypeLookup.Found(own);
+        var candidates = _dependencies
+            .Where(pair => pair.Value.Find(name) != null)
+            .GroupBy(pair => pair.Value)
+            .Select(group => (Alias: group.First().Key, Definition: group.Key.Find(name)!))
+            .ToList();
+        return candidates.Count switch
+        {
+            0 => TypeLookup.Failed($"Unknown type '{name}'"),
+            1 => TypeLookup.Found(candidates[0].Definition),
+            _ => TypeLookup.Failed($"'{name}' is ambiguous: {string.Join(", ", candidates.Select(c => $"{c.Alias}.{name}"))}"),
+        };
+    }
 
     public ProtocolDef? FindProtocol(string name) => Settings.Protocols.FirstOrDefault(p => p.Name == name);
 
@@ -283,6 +337,8 @@ public sealed class FormatProject
     {
         var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox };
         foreach (var type in _types.Values) copy.Add(type);
+        foreach (var module in _modules.Values) copy.AddModule(module);
+        foreach (var (alias, module) in _dependencies) copy.AddModule(module, alias);
         copy.Add(definition);
         return copy;
     }

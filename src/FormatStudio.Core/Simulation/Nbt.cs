@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json.Nodes;
 using FormatStudio.Model;
 
 namespace FormatStudio.Simulation;
@@ -49,6 +50,47 @@ public static class Nbt
         if (type > NbtType.LongArray) throw reader.Error($"Unknown NBT tag type {(int)type}");
         var name = flavor == NbtFlavor.JavaNetwork ? "" : ReadString(reader, flavor);
         return (name, ReadPayload(reader, flavor, type, 0));
+    }
+
+    /// <summary>
+    /// Reads an NBT value as JSON: the SNBT text, or <c>{name, snbt}</c> for a named root; null for an empty tag.
+    /// </summary>
+    public static JsonNode? ReadValue(INativeReader reader, NbtFlavor flavor)
+    {
+        var root = Read(reader.Wire, flavor);
+        if (root == null)
+        {
+            reader.Display("empty");
+            return null;
+        }
+
+        var snbt = ToSnbt(root.Value.Tag);
+        reader.Display(snbt.Length <= 80 ? snbt : snbt[..77] + "...");
+        return root.Value.Name.Length == 0
+            ? JsonValue.Create(snbt)
+            : new JsonObject { ["name"] = root.Value.Name, ["snbt"] = snbt };
+    }
+
+    /// <summary>Writes an NBT value given as by <see cref="ReadValue"/>.</summary>
+    public static void WriteValue(INativeWriter writer, NbtFlavor flavor, JsonNode? value)
+    {
+        if (value == null)
+        {
+            Write(writer.Wire, flavor, "", null);
+            return;
+        }
+
+        var (name, snbt) = value is JsonObject obj
+            ? (JsonValues.String(obj["name"]) ?? "", JsonValues.String(obj["snbt"]) ?? throw writer.Error("NBT object needs 'snbt'"))
+            : ("", JsonValues.String(value) ?? throw writer.Error($"Expected SNBT text, got {Codec.Show(value)}"));
+        try
+        {
+            Write(writer.Wire, flavor, name, ParseSnbt(snbt));
+        }
+        catch (System.FormatException e)
+        {
+            throw writer.Error(e.Message);
+        }
     }
 
     public static void Write(WireWriter writer, NbtFlavor flavor, string name, NbtTag? tag)

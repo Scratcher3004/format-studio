@@ -92,6 +92,15 @@ public sealed class Codec(FormatProject project)
 
     internal static string Describe(TypeRef type) => TypeExpressions.TryFormat(type) ?? type.ToString();
 
+    /// <summary>A value for error messages, shortened.</summary>
+    internal static string Show(JsonNode? value)
+    {
+        var text = value?.ToJsonString() ?? "null";
+        return text.Length > 60 ? text[..57] + "..." : text;
+    }
+
+    private static string ChildPath(string path, string name) => path == "$" ? name : $"{path}.{name}";
+
     /// <summary>The struct whose fields the end condition of an <c>until</c> array uses.</summary>
     internal StructDef ElementStruct(ArrayRef array) =>
         project.Unalias(array.Element) is NamedRef named && project.Find(named.Name) is StructDef structDef
@@ -103,6 +112,28 @@ public sealed class Codec(FormatProject project)
     private sealed class Decoder(Codec codec, WireReader reader, ValueContext context, DiagnosticBag diagnostics)
     {
         private FormatProject Project => codec.Project;
+        private WireReader Reader => reader;
+        private DiagnosticBag Diagnostics => diagnostics;
+
+        /// <summary>The decoder as seen by the reading code of one native value.</summary>
+        private sealed class NativeReader(Decoder decoder, StructScope? scope, SpanNode node, string path) : INativeReader
+        {
+            public FormatProject Project => decoder.Project;
+            public WireReader Wire => decoder.Reader;
+            public string Path => path;
+
+            public void Display(string text) => node.Display = text;
+
+            public JsonNode? Read(TypeRef type, string name)
+            {
+                var childPath = ChildPath(path, name);
+                return decoder.Read(type, scope, decoder.Child(node, name, childPath, type), childPath);
+            }
+
+            public void Warning(string message) => decoder.Diagnostics.Warning(message, path: path);
+
+            public DecodeException Error(string message) => decoder.Reader.Error(message);
+        }
 
         public JsonNode? Read(TypeRef type, StructScope? scope, SpanNode node, string path)
         {
@@ -242,20 +273,7 @@ public sealed class Codec(FormatProject project)
                     return JsonValues.FromDouble(value);
                 }
                 case NbtRef nbt:
-                {
-                    var root = Nbt.Read(reader, Project.Defaults.NbtFlavorOf(nbt));
-                    if (root == null)
-                    {
-                        node.Display = "empty";
-                        return null;
-                    }
-
-                    var snbt = Nbt.ToSnbt(root.Value.Tag);
-                    node.Display = snbt.Length <= 80 ? snbt : snbt[..77] + "...";
-                    return root.Value.Name.Length == 0
-                        ? JsonValue.Create(snbt)
-                        : new JsonObject { ["name"] = root.Value.Name, ["snbt"] = snbt };
-                }
+                    return Nbt.ReadValue(new NativeReader(this, scope, node, path), Project.Defaults.NbtFlavorOf(nbt));
                 case NamedRef named:
                     return ReadNamed(named, scope, node, path);
                 default:
@@ -483,6 +501,22 @@ public sealed class Codec(FormatProject project)
     private sealed class Encoder(Codec codec, WireWriter writer, ValueContext context, DiagnosticBag diagnostics)
     {
         private FormatProject Project => codec.Project;
+        private WireWriter Writer => writer;
+        private DiagnosticBag Diagnostics => diagnostics;
+
+        /// <summary>The encoder as seen by the writing code of one native value.</summary>
+        private sealed class NativeWriter(Encoder encoder, StructScope? scope, string path) : INativeWriter
+        {
+            public FormatProject Project => encoder.Project;
+            public WireWriter Wire => encoder.Writer;
+            public string Path => path;
+
+            public void Write(TypeRef type, JsonNode? value, string name) => encoder.Write(type, value, scope, ChildPath(path, name));
+
+            public void Warning(string message) => encoder.Diagnostics.Warning(message, path: path);
+
+            public EncodeException Error(string message) => new(message);
+        }
 
         public void Write(TypeRef type, JsonNode? value, StructScope? scope, string path)
         {
@@ -618,40 +652,14 @@ public sealed class Codec(FormatProject project)
                     break;
                 }
                 case NbtRef nbt:
-                {
-                    var flavor = Project.Defaults.NbtFlavorOf(nbt);
-                    if (value == null)
-                    {
-                        Nbt.Write(writer, flavor, "", null);
-                        break;
-                    }
-
-                    var (name, snbt) = value is JsonObject obj
-                        ? (JsonValues.String(obj["name"]) ?? "", JsonValues.String(obj["snbt"]) ?? throw Error("NBT object needs 'snbt'"))
-                        : ("", JsonValues.String(value) ?? throw Error($"Expected SNBT text, got {Show(value)}"));
-                    try
-                    {
-                        Nbt.Write(writer, flavor, name, Nbt.ParseSnbt(snbt));
-                    }
-                    catch (System.FormatException e)
-                    {
-                        throw Error(e.Message);
-                    }
-
+                    Nbt.WriteValue(new NativeWriter(this, scope, path), Project.Defaults.NbtFlavorOf(nbt), value);
                     break;
-                }
                 case NamedRef named:
                     WriteNamed(named, value, scope, path);
                     break;
                 default:
                     throw Error($"Unsupported type {type}");
             }
-        }
-
-        private static string Show(JsonNode? value)
-        {
-            var text = value?.ToJsonString() ?? "null";
-            return text.Length > 60 ? text[..57] + "..." : text;
         }
 
         private void WritePrimitive(PrimitiveRef primitive, JsonNode? value)

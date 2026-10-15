@@ -13,7 +13,13 @@ public static partial class TypeExpressions
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
     private static partial Regex IdentifierRegex();
 
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$")]
+    private static partial Regex TypeNameRegex();
+
     public static bool IsIdentifier(string text) => IdentifierRegex().IsMatch(text);
+
+    /// <summary>A definition's name, or a library's definition as <c>Library.Name</c>.</summary>
+    public static bool IsTypeName(string text) => TypeNameRegex().IsMatch(text);
 
     public static TypeRef Parse(string text)
     {
@@ -48,7 +54,7 @@ public static partial class TypeExpressions
         }
 
         if (Primitives.TryParse(text, out var primitive)) return primitive;
-        if (!IsIdentifier(text)) throw new System.FormatException($"Invalid type expression '{text}'");
+        if (!IsTypeName(text)) throw new System.FormatException($"Invalid type expression '{text}'");
         if ((text.EndsWith("le", StringComparison.Ordinal) || text.EndsWith("be", StringComparison.Ordinal))
             && Primitives.TryParse(text[..^2], out var single))
             throw new System.FormatException($"{single} has no byte order");

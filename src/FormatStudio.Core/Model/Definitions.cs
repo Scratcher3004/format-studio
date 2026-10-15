@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using FormatStudio.Projects;
 
 namespace FormatStudio.Model;
 
@@ -23,6 +24,12 @@ public abstract class TypeDef
     public string? Title { get; set; }
     public string? Doc { get; set; }
     public SourceLocation? Source { get; set; }
+
+    /// <summary>The library the definition comes from, or null for a definition of the project itself.</summary>
+    public FormatModule? Owner { get; set; }
+
+    /// <summary>A name that refers to this definition in every project that loads it: <c>Library.Name</c> for a library's.</summary>
+    public string QualifiedName => Owner == null ? Name : $"{Owner.Name}.{Name}";
 
     /// <summary>Code generation skips this definition (e.g. it is written by hand); null when every target generates it.</summary>
     public CodegenSkip? SkipCodegen { get; set; }

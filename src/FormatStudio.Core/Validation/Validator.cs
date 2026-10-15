@@ -139,10 +139,10 @@ public sealed class Validator
         switch (type)
         {
             case NamedRef named:
-                var target = _project.Find(named.Name);
+                var (target, error) = _project.Resolve(named.Name);
                 if (target == null)
                 {
-                    _diagnostics.Error($"Unknown type '{named.Name}'", source, path);
+                    _diagnostics.Error(error!, source, path);
                     return;
                 }
 
