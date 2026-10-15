@@ -1,6 +1,7 @@
 using FormatStudio.Dsl;
 using FormatStudio.Expressions;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 using FormatStudio.Projects;
 
 namespace FormatStudio.Codegen;
@@ -16,6 +17,7 @@ internal sealed class CodegenException(string message) : Exception(message);
 internal abstract class Emitter(FormatProject project, IReadOnlySet<string> exclude)
 {
     private int _temp;
+    private readonly Dictionary<string, (INativeType Type, NativeCodegen Codegen)> _natives = new(StringComparer.Ordinal);
 
     protected FormatProject Project => project;
     protected GeneratedOutput Output { get; } = new();
@@ -47,9 +49,33 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
         }
 
         Current = null;
+        foreach (var (type, codegen) in _natives.Values.OrderBy(n => n.Type.Name, StringComparer.Ordinal))
+        {
+            foreach (var file in codegen.Files ?? [])
+            {
+                Output.Files.Add(new GeneratedFile(NativeFilePath(file.Name),
+                    $"{Marker}\n// Runtime of the native type '{type.Name}', written by format-studio. Do not edit.\n" + NativeTemplate(file.Content, null, new Dictionary<string, string>())));
+            }
+        }
+
         Finish();
         return Output;
     }
+
+    /// <summary>The generator's name, e.g. <c>csharp</c>, which native types are asked for their code (<see cref="INativeType.Codegen"/>).</summary>
+    protected abstract string Generator { get; }
+
+    /// <summary>The first line of every generated file.</summary>
+    protected abstract string Marker { get; }
+
+    /// <summary>The namespace or package of the runtime files of native types (<c>{{namespace}}</c>).</summary>
+    protected abstract string NativeNamespace { get; }
+
+    /// <summary>The namespace or package of the runtime (<c>{{runtime}}</c>).</summary>
+    protected abstract string RuntimeNamespace { get; }
+
+    /// <summary>The path of a runtime file of a native type inside the output folder.</summary>
+    protected abstract string NativeFilePath(string fileName);
 
     /// <summary>The path of a definition's file inside the output folder.</summary>
     protected abstract string PathOf(TypeDef definition);
@@ -109,6 +135,35 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
     protected TypeDef Definition(string name) =>
         project.Find(name) ?? throw new CodegenException($"Unknown type '{name}'");
 
+    /// <summary>A native type reference with its arguments, and its code for this generator.</summary>
+    protected (NativeCodegen Codegen, NativeArguments Args) Native(NativeRef native)
+    {
+        BoundNative bound;
+        try
+        {
+            bound = project.Bind(native);
+        }
+        catch (FormatDefinitionException e)
+        {
+            throw new CodegenException(e.Message);
+        }
+
+        var codegen = bound.Type.Codegen(Generator) ?? throw new CodegenException($"The native type {native.Name} has no code for {Generator}");
+        _natives.TryAdd(bound.Type.Name, (bound.Type, codegen));
+        return (codegen, bound.Args);
+    }
+
+    /// <summary>Fills a <see cref="NativeCodegen"/> template; <paramref name="values"/> are the placeholders of the call site.</summary>
+    protected string NativeTemplate(string template, NativeArguments? args, IReadOnlyDictionary<string, string> values)
+    {
+        var all = new Dictionary<string, string>(values, StringComparer.Ordinal)
+        {
+            ["namespace"] = NativeNamespace,
+            ["runtime"] = RuntimeNamespace,
+        };
+        return NativeTypes.Fill(template, args, all);
+    }
+
     /// <summary>A fresh local name; numbered per file.</summary>
     protected string Temp(string name) => $"__{name}{_temp++}";
 
@@ -121,6 +176,7 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
         FixedPointRef fixedPoint => Primitives.MinWireSize(fixedPoint.Base.Kind),
         NamedRef { As: { } wire } => Primitives.MinWireSize(wire.Kind),
         NamedRef named when Definition(named.Name) is EnumDef enumDef => Primitives.MinWireSize(enumDef.Type.Kind),
+        NativeRef native when project.Natives.Find(native.Name) is { } nativeType => nativeType.MinSize(Native(native).Args),
         _ => 0,
     };
 

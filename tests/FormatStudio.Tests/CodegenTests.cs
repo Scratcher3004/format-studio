@@ -42,7 +42,7 @@ public class CodegenTests
         return java;
     }
 
-    private static void AssertMatchesSimulator(FormatProject project, string generator, int iterations, JsonObject? options = null)
+    internal static void AssertMatchesSimulator(FormatProject project, string generator, int iterations, JsonObject? options = null)
     {
         Assert.False(project.Diagnostics.HasErrors, string.Join("\n", project.Diagnostics));
         var failures = generator.StartsWith("java", StringComparison.Ordinal)

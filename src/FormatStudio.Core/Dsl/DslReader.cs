@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
@@ -317,7 +318,13 @@ public sealed class DslReader
         }
     }
 
-    private static readonly string[] TypeMapKeys = ["array", "string", "bytes", "map", "optional", "sized", "fixed", "nbt", "type"];
+    private static readonly string[] TypeMapKeys =
+        ["array", "string", "bytes", "map", "optional", "sized", "fixed", "native", "type", .. NativeTypes.BuiltIn.All.Select(t => t.Name)];
+
+    /// <summary>One argument, or a list of them; <c>default</c> alone means none.</summary>
+    private List<string> NativeArgs(YamlNode node) => node is YamlSequenceNode sequence
+        ? sequence.Children.Select(child => Scalar(child, "an argument")).ToList()
+        : Scalar(node, "an argument") is var arg && arg is "" or "default" ? [] : [arg];
 
     internal TypeRef ParseType(YamlNode node)
     {
@@ -375,17 +382,14 @@ public sealed class DslReader
                 var basePrimitive = ParsePrimitive(value);
                 if (!Primitives.IsInteger(basePrimitive.Kind)) throw Fail(value, "A fixed-point base must be an integer type");
                 return new FixedPointRef(basePrimitive, (int)Integer(fraction, "fraction"));
-            case "nbt":
-                CheckKeys(map, ["nbt"], "an NBT type");
-                var flavor = Scalar(value, "nbt");
-                try
-                {
-                    return new NbtRef(flavor is "" or "default" ? null : TypeExpressions.ParseFlavor(flavor));
-                }
-                catch (System.FormatException e)
-                {
-                    throw Fail(value, e.Message);
-                }
+            case "native":
+                CheckKeys(map, ["native", "args"], "a native type");
+                var name = Scalar(value, "native");
+                if (!TypeExpressions.IsTypeName(name)) throw Fail(value, $"'{name}' is not a native type name");
+                return new NativeRef(name, Get(map, "args") is { } args ? NativeArgs(args) : []);
+            case var builtIn when NativeTypes.IsBuiltIn(builtIn):
+                CheckKeys(map, [builtIn], "a native type");
+                return new NativeRef(builtIn, NativeArgs(value));
             default:
                 CheckKeys(map, ["type", "as", "tag"], "a type reference");
                 var inner = ParseType(value);

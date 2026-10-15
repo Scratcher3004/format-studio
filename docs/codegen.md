@@ -77,6 +77,14 @@ Definitions that use these are reported as errors and not generated; the other d
 - Packets that share an id in a project without [protocols](dsl.md#protocols): the registry dispatches by id alone,
   so only the first is dispatched (reported as a warning). Declare protocols to get a registry per state/direction.
 - NBT as a tree: NBT values are kept as raw bytes.
+- Native types without code for the generator (all built-in ones have code for every generator).
+
+## Native types
+
+Each [native type](dsl.md#native-types) says how generated code reads and writes its values: a type in the target
+language and read/write templates, plus source files the code needs. Those files are written into the output once per
+native type used, in `Natives/` (C#, namespace `<namespace>.Natives`) or in the package `<package>.natives` (Java), with
+the generator's marker like every generated file. NBT needs none: the runtime reads and writes it.
 
 ## Checking generated code
 

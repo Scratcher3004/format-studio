@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 
 namespace FormatStudio.Dsl;
 
@@ -223,8 +224,12 @@ public static class DslWriter
                 map.Add("fixed", fixedPoint.Base.ToString());
                 map.Add("fraction", fixedPoint.FractionBits);
                 break;
-            case NbtRef nbt:
-                map.Add("nbt", nbt.Flavor is { } flavor ? TypeExpressions.FlavorName(flavor) : "default");
+            case NativeRef native when NativeTypes.IsBuiltIn(native.Name):
+                map.Add(native.Name, native.Args.Count == 1 ? native.Args[0] : native.Args.Cast<object?>().ToList());
+                break;
+            case NativeRef native:
+                map.Add("native", native.Name);
+                if (native.Args.Count > 0) map.Add("args", native.Args.Cast<object?>().ToList());
                 break;
         }
 
@@ -238,6 +243,7 @@ public static class DslWriter
     private static string Flow(object? value) => value switch
     {
         YMap map => "{" + string.Join(", ", map.Select(pair => $"{pair.Key}: {Flow(pair.Value)}")) + "}",
+        List<object?> list => "[" + string.Join(", ", list.Select(Flow)) + "]",
         string text when text.Length == 0 || text.IndexOfAny([',', '[', ']', '{', '}', ':', '#', '"', '\'']) >= 0
             || YamlValues.NeedsQuotes(text) || text != text.Trim() => System.Text.Json.JsonSerializer.Serialize(text),
         string text => text,

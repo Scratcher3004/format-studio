@@ -27,6 +27,7 @@ public sealed class Validator
             validator.Check(definition);
         validator.CheckPacketIds();
         validator.CheckAliasCycles();
+        validator.CheckNativeDefaults();
         validator.CheckLibrarySettings();
     }
 
@@ -40,6 +41,8 @@ public sealed class Validator
 
     private void Check(TypeDef definition)
     {
+        if (_project.Natives.Find(definition.Name) != null)
+            _diagnostics.Error($"{definition.Name} is the name of a native type, which references to it would mean; rename the definition", definition.Source);
         if (definition.SkipCodegen is { All: false } skip)
         {
             foreach (var name in skip.Targets.Where(n => Codegen.CodeGeneration.TryFind(n) == null && _project.Settings.Codegen.All(t => t.Name != n)))
@@ -196,8 +199,16 @@ public sealed class Validator
             case FixedPointRef fixedPoint when fixedPoint.FractionBits < 0 || fixedPoint.FractionBits >= Primitives.Bits(fixedPoint.Base.Kind):
                 _diagnostics.Error($"Invalid number of fraction bits {fixedPoint.FractionBits}", source, path);
                 break;
-            case NbtRef { Flavor: null } when _project.Defaults.Nbt == null:
-                _diagnostics.Error("NBT without a flavor: set defaults.nbt in the project or write {nbt: <flavor>}", source, path);
+            case NativeRef native:
+                try
+                {
+                    _project.Bind(native);
+                }
+                catch (FormatDefinitionException e)
+                {
+                    _diagnostics.Error(e.Message, source, path);
+                }
+
                 break;
         }
     }
@@ -328,6 +339,28 @@ public sealed class Validator
     private void Protocol(Severity severity, string message, SourceLocation? source) =>
         _diagnostics.Add(new Diagnostic(severity, message, source) { Area = Diagnostic.ProtocolsArea });
 
+    private void CheckNativeDefaults()
+    {
+        var file = _project.FilePath is { } path ? new SourceLocation(_project.Relative(path)) : null;
+        foreach (var (name, args) in _project.Defaults.Natives)
+        {
+            if (_project.Natives.Find(name) == null)
+            {
+                _diagnostics.Error($"Unknown default '{name}': not a setting ({string.Join(", ", FormatDefaults.Names)}) or a native type", file);
+                continue;
+            }
+
+            try
+            {
+                _project.Bind(new NativeRef(name, args));
+            }
+            catch (FormatDefinitionException e)
+            {
+                _diagnostics.Error($"defaults.{name}: {e.Message}", file);
+            }
+        }
+    }
+
     private void CheckLibrarySettings()
     {
         var settings = _project.Settings;
@@ -343,9 +376,13 @@ public sealed class Validator
 
         if (settings.Kind != ProjectKind.Library)
         {
-            if (settings.Defaults.Inherit.Count > 0) _diagnostics.Warning("defaults.inherit only applies to libraries (kind: library)", file);
+            if (settings.Defaults.Inherit.Count > 0 || settings.Defaults.InheritAll)
+                _diagnostics.Warning("defaults.inherit only applies to libraries (kind: library)", file);
             return;
         }
+
+        foreach (var name in settings.Defaults.Inherit.Where(n => !FormatDefaults.Names.Contains(n) && _project.Natives.Find(n) == null))
+            _diagnostics.Warning($"defaults.inherit: '{name}' is neither a setting ({string.Join(", ", FormatDefaults.Names)}) nor a native type", file);
 
         if (!TypeExpressions.IsIdentifier(settings.Name))
             _diagnostics.Error($"A library's name must be an identifier, as its definitions are referenced as {settings.Name}.Name", file);

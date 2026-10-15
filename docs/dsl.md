@@ -13,7 +13,8 @@ defaults:
   endian: big            # little | big: default byte order of fixed-width numbers
   length: varint32       # prefix type of strings, bytes, arrays and maps without an explicit length
   string: utf8           # utf8 | mutf8 | ascii | latin1 | utf16le | utf16be
-  nbt: java-network      # java | java-network | bedrock | bedrock-network; no default, needed when nbt is used
+  nbt: java-network      # arguments of a native type, here the NBT flavor: java | java-network | bedrock | bedrock-network
+                         # (no default; needed when nbt is used without one)
 sources:                 # globs; a type in a later glob replaces the one with the same name in an earlier glob
   - imported/**/*.yaml
   - overrides/**/*.yaml
@@ -143,7 +144,7 @@ fields:
 | `uuid` | 16 bytes: two 64-bit halves, most significant first, in the byte order (`uuidle` for Bedrock) |
 | `string` | Default encoding with the default length prefix |
 | `bytes`, `bytes[16]`, `bytes[eof]` | Raw bytes (shown as hex) |
-| `nbt` | One NBT tag in the default flavor (shown as SNBT) |
+| `nbt`, `nbt(java)` | One NBT tag in the default or the given flavor (shown as SNBT); see [native types](#native-types) |
 | `Name` | Another definition |
 | `T[]` | Array with the default length prefix |
 | `T[4]`, `T[u16]`, `T[eof]`, `T[count * 2]` | Fixed count, prefix type, until the end, expression over earlier fields |
@@ -152,7 +153,7 @@ fields:
 Mapping forms: `{array: T, length: L}`, `{string: mutf8, length: L}` (`length: zero` for zero-terminated),
 `{bytes: L}`, `{map: {key: K, value: V}, length: L}`, `{optional: T}`, `{sized: T, length: L}` (a value inside a
 length-delimited section), `{fixed: i32, fraction: 5}` (fixed point), `{nbt: java-network}`,
-`{type: Enum, as: zigzag32}`, `{type: Variant, tag: "expression"}`. A length `L` is a number, a primitive (prefix),
+`{native: name, args: [a, b]}`, `{type: Enum, as: zigzag32}`, `{type: Variant, tag: "expression"}`. A length `L` is a number, a primitive (prefix),
 `eof`, `zero`, `default` or an expression.
 
 `{array: Item, until: "index == 255"}` is a list without a count that ends with the first element for which the
@@ -160,6 +161,21 @@ condition is true; that element is part of the list (a sentinel such as Java's e
 continuation bit as in `until: "!slot.more"`). The elements must be structs, and the condition uses their fields
 (`_parent` is the struct holding the array). An external variant tag (`tag: "expression"`) whose cases have text tags
 compares strings, e.g. a recipe type name stored before the recipe id.
+
+### Native types
+
+A native type is one the DSL can't describe; code that comes with Format Studio reads, writes, shows and generates
+it. It is written as its name with arguments, `name(a, b)`, or as `{native: name, args: [a, b]}` (needed when an
+argument contains `,`, brackets or `:`). Arguments left out, or written as `default`, come from the project's
+`defaults` under the type's name (one value, or a list), then from the parameter's own default; a required one that
+is still missing is an error. The name of a native type always means the native type: a definition can't use it.
+
+| Native type | Parameters | Value |
+|---|---|---|
+| `nbt` | `flavor`: `java` (big endian, named root), `java-network` (unnamed root, since 1.20.2), `bedrock` (little endian), `bedrock-network` (varints); no default | SNBT text, or `{"name": ..., "snbt": ...}` for a named root |
+
+Generated code reads and writes NBT as its raw bytes. Libraries of native types of your own are planned
+(see [libraries](libraries.md)).
 
 ### Expressions
 

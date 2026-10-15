@@ -1,12 +1,13 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 
 namespace FormatStudio.Dsl;
 
 /// <summary>
 /// The short string form of type expressions: <c>u16be</c>, <c>Foo[]</c>, <c>Foo[4]</c>, <c>Foo[u8]</c>, <c>Foo[eof]</c>,
-/// <c>Foo[count]</c>, <c>Foo?</c>, <c>string</c>, <c>bytes</c>, <c>nbt</c>.
+/// <c>Foo[count]</c>, <c>Foo?</c>, <c>string</c>, <c>bytes</c>, <c>nbt</c>, <c>nbt(java)</c>.
 /// </summary>
 public static partial class TypeExpressions
 {
@@ -50,7 +51,16 @@ public static partial class TypeExpressions
         {
             case "string": return new StringRef(null, LengthSpec.Default);
             case "bytes": return new BytesRef(LengthSpec.Default);
-            case "nbt": return new NbtRef(null);
+        }
+
+        if (NativeTypes.IsBuiltIn(text)) return new NativeRef(text);
+        if (text.EndsWith(')'))
+        {
+            var open = text.IndexOf('(');
+            var name = open > 0 ? text[..open].Trim() : "";
+            if (!IsTypeName(name)) throw new System.FormatException($"Invalid type expression '{text}'");
+            var args = text[(open + 1)..^1];
+            return new NativeRef(name, args.Trim().Length == 0 ? [] : args.Split(',').Select(a => a.Trim()).ToList());
         }
 
         if (Primitives.TryParse(text, out var primitive)) return primitive;
@@ -99,8 +109,10 @@ public static partial class TypeExpressions
                 return $"bytes[{FormatLength(bytes.Length)}]";
             case ArrayRef { Element: BytesRef }:
                 return null;
-            case NbtRef { Flavor: null }:
-                return "nbt";
+            case NativeRef { Args.Count: 0 } native when NativeTypes.IsBuiltIn(native.Name):
+                return native.Name;
+            case NativeRef native when native.Args.All(IsArgument):
+                return native.ToString();
             case OptionalRef optional:
                 return TryFormat(optional.Inner) is { } inner ? inner + "?" : null;
             case ArrayRef array when array.Length.Kind is not (LengthKind.Zero or LengthKind.Until):
@@ -112,22 +124,8 @@ public static partial class TypeExpressions
         }
     }
 
-    public static string FlavorName(NbtFlavor flavor) => flavor switch
-    {
-        NbtFlavor.Java => "java",
-        NbtFlavor.JavaNetwork => "java-network",
-        NbtFlavor.Bedrock => "bedrock",
-        _ => "bedrock-network",
-    };
-
-    public static NbtFlavor ParseFlavor(string text) => text switch
-    {
-        "java" => NbtFlavor.Java,
-        "java-network" => NbtFlavor.JavaNetwork,
-        "bedrock" => NbtFlavor.Bedrock,
-        "bedrock-network" => NbtFlavor.BedrockNetwork,
-        _ => throw new System.FormatException($"Unknown NBT flavor '{text}' (java, java-network, bedrock, bedrock-network)"),
-    };
+    /// <summary>Whether a native type argument can be written in the short form <c>name(a, b)</c>.</summary>
+    public static bool IsArgument(string text) => text.Length > 0 && text.Trim() == text && text.IndexOfAny([',', '(', ')', '[', ']', '{', '}', '?', '#', ':']) < 0;
 
     public static string EncodingName(StringEncoding encoding) => encoding switch
     {

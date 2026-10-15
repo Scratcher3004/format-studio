@@ -32,7 +32,7 @@ public sealed class Codec(FormatProject project)
     /// <summary>Parses a type name or type expression.</summary>
     public static TypeRef ParseType(string text) => TypeExpressions.Parse(text);
 
-    public DecodeResult Decode(string type, byte[] data) => Decode(ParseType(type), data);
+    public DecodeResult Decode(string type, byte[] data) => Decode(project.Normalize(ParseType(type)), data);
 
     public DecodeResult Decode(TypeRef type, byte[] data)
     {
@@ -63,7 +63,7 @@ public sealed class Codec(FormatProject project)
         return new DecodeResult(value, root, diagnostics, reader.Position);
     }
 
-    public EncodeResult Encode(string type, JsonNode? value) => Encode(ParseType(type), value);
+    public EncodeResult Encode(string type, JsonNode? value) => Encode(project.Normalize(ParseType(type)), value);
 
     public EncodeResult Encode(TypeRef type, JsonNode? value)
     {
@@ -272,8 +272,11 @@ public sealed class Codec(FormatProject project)
                     node.Display = value.ToString("R", CultureInfo.InvariantCulture);
                     return JsonValues.FromDouble(value);
                 }
-                case NbtRef nbt:
-                    return Nbt.ReadValue(new NativeReader(this, scope, node, path), Project.Defaults.NbtFlavorOf(nbt));
+                case NativeRef native:
+                {
+                    var bound = Project.Bind(native);
+                    return bound.Type.Read(new NativeReader(this, scope, node, path), bound.Args);
+                }
                 case NamedRef named:
                     return ReadNamed(named, scope, node, path);
                 default:
@@ -651,9 +654,12 @@ public sealed class Codec(FormatProject project)
                     writer.WriteInteger(fixedPoint.Base.Kind, codec.EndianOf(fixedPoint.Base), (decimal)raw);
                     break;
                 }
-                case NbtRef nbt:
-                    Nbt.WriteValue(new NativeWriter(this, scope, path), Project.Defaults.NbtFlavorOf(nbt), value);
+                case NativeRef native:
+                {
+                    var bound = Project.Bind(native);
+                    bound.Type.Write(new NativeWriter(this, scope, path), bound.Args, value);
                     break;
+                }
                 case NamedRef named:
                     WriteNamed(named, value, scope, path);
                     break;
@@ -828,7 +834,12 @@ public sealed class Codec(FormatProject project)
             }
         }
 
-        private bool IsNullable(TypeRef type) => Project.Unalias(type) is OptionalRef or NbtRef;
+        private bool IsNullable(TypeRef type) => Project.Unalias(type) switch
+        {
+            OptionalRef => true,
+            NativeRef native => Project.Bind(native).Type.Nullable,
+            _ => false,
+        };
 
         private JsonNode? FromExprValue(object? value, TypeRef type) => value switch
         {

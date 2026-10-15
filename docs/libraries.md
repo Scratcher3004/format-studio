@@ -48,8 +48,9 @@ versions and packages.
 - **Dependencies of libraries** are loaded too, but only reachable by their qualified name (`units.Meter`), not by
   name alone. Each library is loaded once per project; two different versions of one library are an error, as are
   libraries that depend on each other.
-- **Defaults.** A library's definitions keep the library's defaults (endian, length prefix, string encoding, NBT
-  flavor), whatever the project's are. Settings listed in the library's `inherit` come from the project instead.
+- **Defaults.** A library's definitions keep the library's defaults (endian, length prefix, string encoding, the
+  arguments of native types such as the NBT flavor), whatever the project's are. Settings listed in the library's
+  `inherit` (`endian`, `length`, `string` or a native type's name such as `nbt`) come from the project instead.
 - **Read-only.** Library definitions are checked when loaded (their errors are reported with the library's name) and
   can't be edited in the project. The web UI lists them per library in the sidebar and shows them as the project
   sees them: names qualified, defaults written out (`show geo.Point` on the command line).

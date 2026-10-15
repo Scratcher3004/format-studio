@@ -38,6 +38,16 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         return definition.Owner == null ? $"{folder}/{definition.Name}.g.cs" : $"{Pascal(definition.Owner.Name)}/{folder}/{definition.Name}.g.cs";
     }
 
+    protected override string Generator => Streams ? "csharp-stream" : "csharp";
+
+    protected override string Marker => CSharpGenerator.FileMarker;
+
+    protected override string NativeNamespace => options.Namespace + ".Natives";
+
+    protected override string RuntimeNamespace => options.RuntimeNamespace;
+
+    protected override string NativeFilePath(string fileName) => $"Natives/{fileName}";
+
     protected override void Finish()
     {
         if (Project.Packets.Any()) Output.Files.Add(new GeneratedFile($"{options.Registry}.g.cs", Registry()));
@@ -100,7 +110,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     {
         PrimitiveRef primitive => PrimitiveType(primitive.Kind),
         StringRef => "string",
-        BytesRef or NbtRef => "byte[]",
+        BytesRef => "byte[]",
+        NativeRef native => NativeType(native),
         ArrayRef array => Type(array.Element, qualified) + "[]",
         MapRef map => $"global::System.Collections.Generic.KeyValuePair<{Type(map.Key, qualified)}, {Type(map.Value, qualified)}>[]",
         OptionalRef optional => Nullable(Type(optional.Inner, qualified)),
@@ -114,10 +125,17 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     private static string Nullable(string type) => type.EndsWith('?') ? type : type + "?";
 
+    private string NativeType(NativeRef native)
+    {
+        var (codegen, args) = Native(native);
+        return NativeTemplate(codegen.Type, args, new Dictionary<string, string>());
+    }
+
     private bool IsValueType(TypeRef type) => Project.Unalias(type) switch
     {
         PrimitiveRef or FixedPointRef => true,
         SizedRef sized => IsValueType(sized.Inner),
+        NativeRef native => Native(native).Codegen.IsValueType,
         NamedRef named => Definition(named.Name) is EnumDef or BitfieldDef || Definition(named.Name) is StructDef or VariantDef && !IsClass(Definition(named.Name)),
         _ => false,
     };
@@ -537,8 +555,11 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
             }
             case FixedPointRef fixedPoint:
                 return $"({reader}.Read{Method(fixedPoint.Base)}() / {Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d)";
-            case NbtRef nbt:
-                return $"{reader}.ReadNbt{Project.Defaults.NbtFlavorOf(nbt)}()";
+            case NativeRef native:
+            {
+                var (codegen, args) = Native(native);
+                return NativeTemplate(codegen.Read, args, new Dictionary<string, string> { ["reader"] = reader, ["pass-reader"] = Pass(reader) });
+            }
             case NamedRef named:
                 switch (Definition(named.Name))
                 {
@@ -678,9 +699,15 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
                 w.Line($"{writer}.Write{Method(fixedPoint.Base)}(({PrimitiveType(fixedPoint.Base.Kind)})global::System.Math.Round({value} * " +
                        $"{Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d));");
                 break;
-            case NbtRef nbt:
-                w.Line($"{writer}.WriteNbt{Project.Defaults.NbtFlavorOf(nbt)}({value});");
+            case NativeRef native:
+            {
+                var (codegen, args) = Native(native);
+                w.Line(NativeTemplate(codegen.Write, args, new Dictionary<string, string>
+                {
+                    ["writer"] = writer, ["pass-writer"] = Pass(writer), ["value"] = value,
+                }) + ";");
                 break;
+            }
             case NamedRef named:
                 switch (Definition(named.Name))
                 {

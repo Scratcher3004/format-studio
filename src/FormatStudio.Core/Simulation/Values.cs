@@ -198,8 +198,11 @@ internal sealed class ValueContext
                 return JsonValues.String(node);
             case BytesRef:
                 return JsonValues.String(node) is { } hex ? Hex.Parse(hex) : null;
-            case NbtRef:
-                return node.ToJsonString();
+            case NativeRef native:
+            {
+                var bound = Project.Bind(native);
+                return bound.Type.ExpressionValue(node, bound.Args);
+            }
             case OptionalRef optional:
                 return ToExprValue(node, optional.Inner, parent);
             case SizedRef sized:

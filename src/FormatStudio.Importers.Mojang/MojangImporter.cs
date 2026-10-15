@@ -377,7 +377,7 @@ public sealed partial class MojangImporter
                 return new NamedRef(inlineName);
             default:
                 _nbtFields.Add($"`{path}`" + (schema["description"] is { } description ? $" ({Shorten(description.ToString())})" : ""));
-                return new NbtRef(null);
+                return new NativeRef("nbt");
         }
     }
 
@@ -800,7 +800,7 @@ public sealed partial class MojangImporter
     private void Validate(FormatDefaults? defaults)
     {
         // Without a project, check with the defaults of the Bedrock network protocol (untyped properties are NBT).
-        defaults ??= new FormatDefaults { Nbt = NbtFlavor.BedrockNetwork };
+        defaults ??= new FormatDefaults { Natives = { ["nbt"] = ["bedrock-network"] } };
         var project = FormatProject.InMemory(_definitions.Values, new ProjectSettings { Defaults = defaults });
         Validation.Validator.Validate(project);
         _result.Diagnostics.AddRange(project.Diagnostics.Where(d => d.Severity != Severity.Info));

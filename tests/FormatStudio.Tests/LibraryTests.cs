@@ -149,6 +149,30 @@ public class LibraryTests
         Assert.Equal("0102" + "0001" + "00", Hex.Format(encoded.Bytes));
     }
 
+    [Theory]
+    [InlineData("nbt: java", "java")]
+    [InlineData("nbt: java\n  inherit: [nbt]", "bedrock-network")]
+    public void NativeTypeDefaultsAreBakedUnlessInherited(string defaults, string flavor)
+    {
+        var libraries = TestPaths.NewTempDirectory();
+        Pack(libraries, LibraryFile("tags", "1", $"defaults:\n  {defaults}"),
+            ("types/Tagged.yaml", "struct: Tagged\nfields:\n  - a: nbt\n  - b: nbt(java-network)\n"));
+        var directory = TestPaths.NewTempDirectory();
+        WriteFiles(directory, ("app.fstudio.yaml", $"""
+            name: app
+            defaults:
+              nbt: bedrock-network
+            libraries: [{Path.GetRelativePath(directory, libraries).Replace('\\', '/')}]
+            dependencies:
+              - library: tags
+            """));
+        var project = FormatProject.Load(directory);
+        AssertValid(project);
+        var tagged = (StructDef)project.Find("tags.Tagged")!;
+        Assert.Equal([flavor], project.Bind((NativeRef)tagged.Fields[0].Type).Args.Values);
+        Assert.Equal(["java-network"], project.Bind((NativeRef)tagged.Fields[1].Type).Args.Values);
+    }
+
     [Fact]
     public void VersionsAreChosen()
     {
@@ -273,7 +297,8 @@ public class LibraryTests
             kind: library
             version: "1"
             defaults:
-              inherit: [string, endian]
+              nbt: java
+              inherit: [string, nbt, endian]
             dependencies:
               - library: geo
                 version: "1.0"
@@ -283,7 +308,8 @@ public class LibraryTests
             """, "app.fstudio.yaml");
         var again = ProjectSettings.Parse(settings.ToYaml(), "app.fstudio.yaml");
         Assert.Equal(ProjectKind.Library, again.Kind);
-        Assert.Equal(["endian", "string"], again.Defaults.Inherit.Order());
+        Assert.Equal(["endian", "nbt", "string"], again.Defaults.Inherit.Order());
+        Assert.Equal(["java"], again.Defaults.Natives["nbt"]);
         var dependency = Assert.Single(again.Dependencies);
         Assert.Equal(("geo", "1.0", "g", true, "Geo.Types", "geo.types"),
             (dependency.Library, dependency.Version, dependency.Alias, dependency.SkipCodegen, dependency.Namespace, dependency.Package));

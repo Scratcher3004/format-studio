@@ -54,8 +54,11 @@ public sealed class DefaultValues
                 return Generate(sized.Inner, field, scope, depth + 1);
             case FixedPointRef:
                 return Float();
-            case NbtRef:
-                return JsonValue.Create("{}");
+            case NativeRef native:
+            {
+                var bound = _project.Bind(native);
+                return bound.Type.DefaultValue(bound.Args);
+            }
             case NamedRef named:
                 return Named(named, field, scope, depth);
             default:

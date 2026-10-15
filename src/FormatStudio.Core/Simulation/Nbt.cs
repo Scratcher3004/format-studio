@@ -5,6 +5,18 @@ using FormatStudio.Model;
 
 namespace FormatStudio.Simulation;
 
+public enum NbtFlavor
+{
+    /// <summary>Big endian, named root (Java files and pre-1.20.2 network).</summary>
+    Java,
+    /// <summary>Big endian, unnamed root (Java network since 1.20.2).</summary>
+    JavaNetwork,
+    /// <summary>Little endian, named root (Bedrock files).</summary>
+    Bedrock,
+    /// <summary>Little endian with varints for ints, longs and lengths, named root (Bedrock network).</summary>
+    BedrockNetwork,
+}
+
 public enum NbtType : byte
 {
     End = 0,
@@ -39,6 +51,23 @@ public sealed class NbtCompound : List<KeyValuePair<string, NbtTag>>;
 public static class Nbt
 {
     private const int MaxDepth = 512;
+
+    public static string FlavorName(NbtFlavor flavor) => flavor switch
+    {
+        NbtFlavor.Java => "java",
+        NbtFlavor.JavaNetwork => "java-network",
+        NbtFlavor.Bedrock => "bedrock",
+        _ => "bedrock-network",
+    };
+
+    public static NbtFlavor ParseFlavor(string text) => text switch
+    {
+        "java" => NbtFlavor.Java,
+        "java-network" => NbtFlavor.JavaNetwork,
+        "bedrock" => NbtFlavor.Bedrock,
+        "bedrock-network" => NbtFlavor.BedrockNetwork,
+        _ => throw new System.FormatException($"Unknown NBT flavor '{text}' (java, java-network, bedrock, bedrock-network)"),
+    };
 
     private static Endian EndianOf(NbtFlavor flavor) => flavor is NbtFlavor.Java or NbtFlavor.JavaNetwork ? Endian.Big : Endian.Little;
 

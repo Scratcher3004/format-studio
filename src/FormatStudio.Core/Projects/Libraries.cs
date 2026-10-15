@@ -214,7 +214,7 @@ public sealed class LibraryLoader
         if (package.Settings.Kind != ProjectKind.Library) throw new FormatDefinitionException($"{package.Origin} is not a library (kind: library)");
 
         // The library as a project of its own, to check it and resolve its names as it sees them.
-        var library = new FormatProject(package.Settings, _project.Directory);
+        var library = new FormatProject(package.Settings, _project.Directory) { Natives = _project.Natives };
         foreach (var (path, text) in package.Files)
             if (DslReader.Read(text, $"{package.Origin}!/{path}", library.Diagnostics) is { } definition) library.Add(definition);
         foreach (var dependency in package.Settings.Dependencies)
@@ -236,7 +236,7 @@ public sealed class LibraryLoader
     {
         private readonly FormatDefaults _defaults = library.Defaults;
 
-        private bool Inherits(string setting) => _defaults.Inherit.Contains(setting);
+        private bool Inherits(string setting) => _defaults.Inherits(setting);
 
         public void Bake(IEnumerable<TypeDef> definitions)
         {
@@ -296,6 +296,20 @@ public sealed class LibraryLoader
             _ => length,
         };
 
+        /// <summary>The arguments the reference leaves out, from the library's defaults for the type.</summary>
+        private NativeRef Native(NativeRef native)
+        {
+            if (Inherits(native.Name) || !_defaults.Natives.TryGetValue(native.Name, out var defaults)) return native;
+            var args = new List<string>();
+            for (var i = 0; i < Math.Max(native.Args.Count, defaults.Count); i++)
+            {
+                var given = i < native.Args.Count ? native.Args[i].Trim() : null;
+                args.Add(given is null or "" or "default" && i < defaults.Count ? defaults[i] : given!);
+            }
+
+            return native with { Args = args };
+        }
+
         private TypeRef Type(TypeRef type) => type switch
         {
             PrimitiveRef primitive => Primitive(primitive),
@@ -307,7 +321,7 @@ public sealed class LibraryLoader
             OptionalRef optional => new OptionalRef(Type(optional.Inner)),
             SizedRef sized => new SizedRef(Type(sized.Inner), Length(sized.Length)),
             FixedPointRef fixedPoint => fixedPoint with { Base = Primitive(fixedPoint.Base) },
-            NbtRef nbt => new NbtRef(nbt.Flavor ?? (Inherits("nbt") ? null : _defaults.Nbt)),
+            NativeRef native => Native(native),
             _ => type,
         };
     }

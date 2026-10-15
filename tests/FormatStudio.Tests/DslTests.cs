@@ -38,6 +38,10 @@ public class DslTests
     [InlineData("string[][]", "string[][]")]
     [InlineData("bytes", "bytes")]
     [InlineData("nbt", "nbt")]
+    [InlineData("nbt()", "nbt")]
+    [InlineData("nbt(java-network)", "nbt(java-network)")]
+    [InlineData("nbt( bedrock )?", "nbt(bedrock)?")]
+    [InlineData("geo.rgb(bgr, 2)[]", "geo.rgb(bgr, 2)[]")]
     public void TypeExpressionsRoundTrip(string text, string expected)
     {
         Assert.Equal(expected, TypeExpressions.TryFormat(TypeExpressions.Parse(text)));
@@ -64,7 +68,10 @@ public class DslTests
             DslReader.ReadType("{string: mutf8, length: u16}"));
         Assert.Equal(new BytesRef(new LengthSpec(LengthKind.Fixed, Fixed: 16)), DslReader.ReadType("{bytes: 16}"));
         Assert.Equal(new FixedPointRef(new PrimitiveRef(PrimitiveKind.I32), 5), DslReader.ReadType("{fixed: i32, fraction: 5}"));
-        Assert.Equal(new NbtRef(NbtFlavor.JavaNetwork), DslReader.ReadType("{nbt: java-network}"));
+        Assert.Equal(new NativeRef("nbt", ["java-network"]), DslReader.ReadType("{nbt: java-network}"));
+        Assert.Equal(new NativeRef("nbt"), DslReader.ReadType("{nbt: default}"));
+        Assert.Equal(new NativeRef("rgb", ["bgr", "x, y"]), DslReader.ReadType("{native: rgb, args: [bgr, \"x, y\"]}"));
+        Assert.Equal("{native: rgb, args: [bgr, \"x, y\"]}", DslWriter.FormatType(new NativeRef("rgb", ["bgr", "x, y"])));
         Assert.Equal(new NamedRef("Mode", new PrimitiveRef(PrimitiveKind.ZigZag32)), DslReader.ReadType("{type: Mode, as: zigzag32}"));
         var map = Assert.IsType<MapRef>(DslReader.ReadType("{map: {key: string, value: i32}, length: u32}"));
         Assert.Equal(new PrimitiveRef(PrimitiveKind.U32), map.Length.Prefix);

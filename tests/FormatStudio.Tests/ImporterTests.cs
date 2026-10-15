@@ -86,7 +86,7 @@ public class ImporterTests
         Assert.Equal("Died in Raid?", packet.Fields[1].Title);
         Assert.Equal(new NamedRef("GameMode", new PrimitiveRef(PrimitiveKind.ZigZag32)), packet.Fields[0].Type);
         Assert.IsType<OptionalRef>(packet.Fields[4].Type);
-        Assert.IsType<NbtRef>(packet.Fields[5].Type);
+        Assert.IsType<NativeRef>(packet.Fields[5].Type);
         Assert.Equal(LengthKind.Fixed, Assert.IsType<ArrayRef>(packet.Fields[7].Type).Length.Kind);
         Assert.Equal(new BytesRef(new LengthSpec(LengthKind.Prefix, new PrimitiveRef(PrimitiveKind.U32))), packet.Fields[8].Type);
         Assert.IsType<StringRef>(Assert.IsType<MapRef>(packet.Fields[9].Type).Key);

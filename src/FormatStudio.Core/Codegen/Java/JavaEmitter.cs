@@ -36,6 +36,16 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     protected override string PathOf(TypeDef definition) => $"{PackagePath(PackageOf(definition))}/{definition.Name}.java";
 
+    protected override string Generator => "java-stream";
+
+    protected override string Marker => JavaGenerator.FileMarker;
+
+    protected override string NativeNamespace => options.Package + ".natives";
+
+    protected override string RuntimeNamespace => options.RuntimePackage;
+
+    protected override string NativeFilePath(string fileName) => $"{PackagePath(NativeNamespace)}/{fileName}";
+
     protected override void Finish()
     {
         if (Project.Packets.Any()) Output.Files.Add(new GeneratedFile($"{PackagePath(options.Package)}/{options.Registry}.java", Registry()));
@@ -164,6 +174,12 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         _ => type,
     };
 
+    private string NativeType(NativeRef native)
+    {
+        var (codegen, args) = Native(native);
+        return NativeTemplate(codegen.Type, args, new Dictionary<string, string>());
+    }
+
     private static bool IsPrimitive(string type) => Box(type) != type;
 
     /// <summary>The Java type of a value; <paramref name="boxed"/> for generic arguments and values that may be null.</summary>
@@ -173,7 +189,8 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         {
             PrimitiveRef primitive => PrimitiveType(primitive.Kind),
             StringRef => "String",
-            BytesRef or NbtRef => "byte[]",
+            BytesRef => "byte[]",
+            NativeRef native => NativeType(native),
             ArrayRef array when Arrays => $"{Type(array.Element)}[]",
             ArrayRef array => $"java.util.List<{Type(array.Element, true)}>",
             MapRef map => $"java.util.List<java.util.Map.Entry<{Type(map.Key, true)}, {Type(map.Value, true)}>>",
@@ -306,7 +323,8 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         var suffix = (type != null ? Project.Unalias(type) : null) switch
         {
             StringRef => ".length()",
-            BytesRef or NbtRef => ".length",
+            BytesRef => ".length",
+            NativeRef native when NativeType(native).EndsWith("[]", StringComparison.Ordinal) => ".length",
             ArrayRef when Arrays => ".length",
             null when value.Kind == ValueKind.Text => ".length()",
             _ => ".size()",
@@ -782,8 +800,11 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
             }
             case FixedPointRef fixedPoint:
                 return $"({reader}.read{Method(fixedPoint.Base)}() / {Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d)";
-            case NbtRef nbt:
-                return $"{reader}.readNbt{Project.Defaults.NbtFlavorOf(nbt)}()";
+            case NativeRef native:
+            {
+                var (codegen, args) = Native(native);
+                return NativeTemplate(codegen.Read, args, new Dictionary<string, string> { ["reader"] = reader, ["pass-reader"] = reader });
+            }
             case NamedRef named:
                 switch (Definition(named.Name))
                 {
@@ -900,9 +921,15 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
                 w.Line($"{writer}.write{Method(fixedPoint.Base)}(({RuntimeType(fixedPoint.Base.Kind)}) Math.round({value} * " +
                        $"{Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d));");
                 break;
-            case NbtRef nbt:
-                w.Line($"{writer}.writeNbt{Project.Defaults.NbtFlavorOf(nbt)}({value});");
+            case NativeRef native:
+            {
+                var (codegen, args) = Native(native);
+                w.Line(NativeTemplate(codegen.Write, args, new Dictionary<string, string>
+                {
+                    ["writer"] = writer, ["pass-writer"] = writer, ["value"] = value,
+                }) + ";");
                 break;
+            }
             case NamedRef named:
                 switch (Definition(named.Name))
                 {

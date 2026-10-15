@@ -71,8 +71,11 @@ public sealed class RandomValues
                 var raw = Primitive(fixedPoint.Base.Kind, null);
                 return JsonValues.FromDouble((double)JsonValues.Number(raw)!.Value / Math.Pow(2, fixedPoint.FractionBits));
             }
-            case NbtRef:
-                return JsonValue.Create(RandomSnbt(depth));
+            case NativeRef native:
+            {
+                var bound = _project.Bind(native);
+                return depth >= MaxDepth ? bound.Type.DefaultValue(bound.Args) : bound.Type.RandomValue(bound.Args, _random, depth);
+            }
             case NamedRef named:
                 return Named(named, field, scope, depth);
             default:
@@ -157,12 +160,6 @@ public sealed class RandomValues
         var builder = new StringBuilder(count);
         for (var i = 0; i < count; i++) builder.Append(alphabet[_random.Next(alphabet.Length)]);
         return builder.ToString();
-    }
-
-    private string RandomSnbt(int depth)
-    {
-        if (depth >= MaxDepth) return "{}";
-        return $"{{name:\"n{_random.Next(100)}\",value:{_random.Next(-1000, 1000)},list:[{_random.Next(10)}b,{_random.Next(10)}b]}}";
     }
 
     private JsonNode? Named(NamedRef named, FieldDef? field, StructScope? scope, int depth)

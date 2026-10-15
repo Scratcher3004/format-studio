@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using FormatStudio.Dsl;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 using Microsoft.Extensions.FileSystemGlobbing;
 
 namespace FormatStudio.Projects;
@@ -12,20 +13,26 @@ public sealed class FormatDefaults
     /// <summary>The prefix of strings, bytes, arrays and maps with a default length.</summary>
     public PrimitiveRef Length { get; set; } = new(PrimitiveKind.VarUInt32);
     public StringEncoding String { get; set; } = StringEncoding.Utf8;
-    /// <summary>The flavor of <c>nbt</c> without one. There is no built-in default; using NBT without either is an error.</summary>
-    public NbtFlavor? Nbt { get; set; }
 
     /// <summary>
-    /// Libraries only: the settings (<see cref="Names"/>) that come from the project using the library instead of from
-    /// these defaults.
+    /// The arguments of native types that a reference leaves out, by type name: <c>nbt: java</c> gives <c>nbt</c> the
+    /// flavor <c>java</c>.
+    /// </summary>
+    public Dictionary<string, IReadOnlyList<string>> Natives { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Libraries only: the settings (<see cref="Names"/> or native type names) that come from the project using the
+    /// library instead of from these defaults.
     /// </summary>
     public HashSet<string> Inherit { get; set; } = new(StringComparer.Ordinal);
 
-    /// <summary>The names of the settings, as in the project file.</summary>
-    public static IReadOnlyList<string> Names { get; } = ["endian", "length", "string", "nbt"];
+    /// <summary>Libraries only: every setting comes from the project using the library (<c>inherit: true</c>).</summary>
+    public bool InheritAll { get; set; }
 
-    public NbtFlavor NbtFlavorOf(NbtRef nbt) => nbt.Flavor ?? Nbt
-        ?? throw new FormatDefinitionException("NBT without a flavor: set defaults.nbt in the project or write {nbt: <flavor>}");
+    /// <summary>The names of the settings other than native types, as in the project file.</summary>
+    public static IReadOnlyList<string> Names { get; } = ["endian", "length", "string"];
+
+    public bool Inherits(string setting) => InheritAll || Inherit.Contains(setting);
 }
 
 public enum ProjectKind
@@ -151,18 +158,28 @@ public sealed class ProjectSettings
 
             if (defaults["string"]?.GetValue<string>() is { } encoding)
                 settings.Defaults.String = Wrap(() => TypeExpressions.ParseEncoding(encoding), file);
-            if (defaults["nbt"]?.GetValue<string>() is { } flavor)
-                settings.Defaults.Nbt = Wrap(() => TypeExpressions.ParseFlavor(flavor), file);
+            foreach (var (key, value) in defaults)
+            {
+                // Everything else names a native type (checked by the validator, which knows the project's types).
+                if (FormatDefaults.Names.Contains(key) || key == "inherit") continue;
+                settings.Defaults.Natives[key] = value switch
+                {
+                    JsonArray args => args.Select(arg => arg?.ToString() ?? "").ToList(),
+                    null => [],
+                    _ => [value.ToString()],
+                };
+            }
+
             switch (defaults["inherit"])
             {
                 case JsonValue all when all.GetValueKind() == System.Text.Json.JsonValueKind.True:
-                    settings.Defaults.Inherit.UnionWith(FormatDefaults.Names);
+                    settings.Defaults.InheritAll = true;
                     break;
                 case JsonArray names:
                     foreach (var name in names.Select(n => n?.ToString() ?? ""))
                     {
-                        if (!FormatDefaults.Names.Contains(name))
-                            throw new FormatDefinitionException($"Unknown default '{name}' in inherit ({string.Join(", ", FormatDefaults.Names)})", new SourceLocation(file));
+                        if (!FormatDefaults.Names.Contains(name) && !TypeExpressions.IsTypeName(name))
+                            throw new FormatDefinitionException($"Unknown default '{name}' in inherit ({string.Join(", ", FormatDefaults.Names)} or a native type)", new SourceLocation(file));
                         settings.Defaults.Inherit.Add(name);
                     }
 
@@ -257,8 +274,16 @@ public sealed class ProjectSettings
             { "length", Defaults.Length.ToString() },
             { "string", TypeExpressions.EncodingName(Defaults.String) },
         };
-        if (Defaults.Nbt is { } nbt) defaults.Add("nbt", TypeExpressions.FlavorName(nbt));
-        defaults.AddIf("inherit", FormatDefaults.Names.Where(Defaults.Inherit.Contains).Cast<object?>().ToList());
+        foreach (var (native, args) in Defaults.Natives)
+            defaults.Add(native, args.Count == 1 ? args[0] : args.Cast<object?>().ToList());
+        if (Defaults.InheritAll) defaults.Add("inherit", true);
+        else
+        {
+            defaults.AddIf("inherit", FormatDefaults.Names.Where(Defaults.Inherit.Contains)
+                .Concat(Defaults.Inherit.Where(name => !FormatDefaults.Names.Contains(name)).Order(StringComparer.Ordinal))
+                .Cast<object?>().ToList());
+        }
+
         map.Add("defaults", defaults);
         map.AddIf("dependencies", Dependencies.Select(dependency =>
         {
@@ -349,6 +374,8 @@ public sealed class FormatProject
     public FileSandbox Sandbox { get; init; } = FileSandbox.Unrestricted;
     public DiagnosticBag Diagnostics { get; } = [];
     public List<SampleDef> Samples { get; } = [];
+    /// <summary>The native types the project's definitions can use.</summary>
+    public NativeTypes Natives { get; init; } = NativeTypes.BuiltIn;
 
     public FormatProject(ProjectSettings settings, string directory, string? filePath = null)
     {
@@ -422,7 +449,42 @@ public sealed class FormatProject
     /// <summary>The protocols a packet belongs to.</summary>
     public IEnumerable<ProtocolDef> ProtocolsOf(StructDef packet) => Settings.Protocols.Where(p => p.Contains(packet));
 
-    public void Add(TypeDef definition) => _types[definition.Name] = definition;
+    public void Add(TypeDef definition)
+    {
+        Normalize(definition);
+        _types[definition.Name] = definition;
+    }
+
+    /// <summary>
+    /// A type expression with the bare names of native types as <see cref="NativeRef"/>: without arguments, the parser
+    /// can't tell <c>rgb</c> from the name of a definition. Native types take precedence.
+    /// </summary>
+    public TypeRef Normalize(TypeRef type) => type switch
+    {
+        NamedRef { As: null, Tag: null } named when Natives.Find(named.Name) != null => new NativeRef(named.Name),
+        ArrayRef array => array with { Element = Normalize(array.Element) },
+        MapRef map => map with { Key = Normalize(map.Key), Value = Normalize(map.Value) },
+        OptionalRef optional => new OptionalRef(Normalize(optional.Inner)),
+        SizedRef sized => sized with { Inner = Normalize(sized.Inner) },
+        _ => type,
+    };
+
+    private void Normalize(TypeDef definition)
+    {
+        switch (definition)
+        {
+            case StructDef structDef:
+                foreach (var field in structDef.Fields) field.Type = Normalize(field.Type);
+                break;
+            case VariantDef variant:
+                if (variant.Tag != null) variant.Tag = Normalize(variant.Tag);
+                foreach (var variantCase in variant.Cases.Where(c => c.Type != null)) variantCase.Type = Normalize(variantCase.Type!);
+                break;
+            case AliasDef alias:
+                alias.Target = Normalize(alias.Target);
+                break;
+        }
+    }
 
     public bool Remove(string name) => _types.Remove(name);
 
@@ -432,13 +494,16 @@ public sealed class FormatProject
     /// </summary>
     public FormatProject With(TypeDef definition)
     {
-        var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox };
+        var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox, Natives = Natives };
         foreach (var type in _types.Values) copy.Add(type);
         foreach (var module in _modules.Values) copy.AddModule(module);
         foreach (var (alias, module) in _dependencies) copy.AddModule(module, alias);
         copy.Add(definition);
         return copy;
     }
+
+    /// <summary>The native type of a reference, with its arguments completed from the project's defaults.</summary>
+    public BoundNative Bind(NativeRef native) => Natives.Bind(native, Defaults);
 
     /// <summary>Follows aliases until a non-alias type expression.</summary>
     public TypeRef Unalias(TypeRef type)
@@ -487,12 +552,13 @@ public sealed class FormatProject
     }
 
     /// <summary>Loads a project file, or the single <c>*.fstudio.yaml</c> in a directory.</summary>
-    public static FormatProject Load(string path, FileSandbox? sandbox = null)
+    /// <param name="natives">The native types; null for the built-in ones.</param>
+    public static FormatProject Load(string path, FileSandbox? sandbox = null, NativeTypes? natives = null)
     {
         sandbox ??= FileSandbox.Unrestricted;
         path = ResolveFile(path, sandbox);
         var settings = ProjectSettings.Parse(File.ReadAllText(path), path);
-        var project = new FormatProject(settings, Path.GetDirectoryName(path)!, path) { Sandbox = sandbox };
+        var project = new FormatProject(settings, Path.GetDirectoryName(path)!, path) { Sandbox = sandbox, Natives = natives ?? NativeTypes.BuiltIn };
         project.LoadSources();
         LibraryLoader.LoadDependencies(project);
         project.LoadSamples();
@@ -556,7 +622,7 @@ public sealed class FormatProject
                 }
 
                 origin[definition.Name] = patternIndex;
-                _types[definition.Name] = definition;
+                Add(definition);
             }
         }
     }
@@ -746,7 +812,7 @@ public sealed class FormatProject
         System.IO.Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         File.WriteAllText(file, DslWriter.Write(definition));
         definition.Source ??= new SourceLocation(Relative(file), 1, 1);
-        _types[definition.Name] = definition;
+        Add(definition);
         return file;
     }
 }

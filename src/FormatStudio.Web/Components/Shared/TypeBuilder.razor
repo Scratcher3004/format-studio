@@ -1,4 +1,5 @@
 @using FormatStudio.Dsl
+@using FormatStudio.Natives
 @* Builds a type expression from dropdowns. Arrays, optionals, maps and sized values nest another builder. *@
 <div class="type-builder">
     @if (ShowText)
@@ -72,16 +73,41 @@
                 <MudNumericField T="int" Value="fixedPoint.FractionBits" ValueChanged="n => Changed(fixedPoint with { FractionBits = n })"
                                  Label="Fraction bits" Min="0" Max="63" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 120px" />
                 break;
-            case NbtRef nbt:
-                <MudSelect T="NbtFlavor?" Value="nbt.Flavor" ValueChanged="f => Changed(new NbtRef(f))" Label="Flavor" Variant="Variant.Outlined"
-                           Margin="Margin.Dense" Dense="true" Style="min-width: 160px; max-width: 180px"
-                           ToStringFunc="@(f => f is { } flavor ? TypeExpressions.FlavorName(flavor) : "Default")">
-                    <MudSelectItem T="NbtFlavor?" Value="null">Default</MudSelectItem>
-                    @foreach (var flavor in Enum.GetValues<NbtFlavor>())
+            case NativeRef native:
+                <MudSelect T="string" Value="@native.Name" ValueChanged="@(n => Changed(new NativeRef(n)))" Label="@("Type")" Variant="@Variant.Outlined"
+                           Margin="@Margin.Dense" Dense="@true" Style="@("min-width: 120px; max-width: 160px")">
+                    @foreach (var type in Natives.All.OrderBy(t => t.Name, StringComparer.Ordinal))
                     {
-                        <MudSelectItem T="NbtFlavor?" Value="flavor">@TypeExpressions.FlavorName(flavor)</MudSelectItem>
+                        <MudSelectItem T="string" Value="@type.Name">@type.Name</MudSelectItem>
                     }
                 </MudSelect>
+                @if (Natives.Find(native.Name) is { } nativeType)
+                {
+                    @for (var i = 0; i < nativeType.Parameters.Count; i++)
+                    {
+                        var index = i;
+                        var parameter = nativeType.Parameters[i];
+                        var arg = Argument(native, index);
+                        @if (parameter.Kind == NativeParameterKind.Choice && parameter.Choices != null)
+                        {
+                            <MudSelect T="string" Value="@arg" ValueChanged="@(a => Changed(WithArgument(native, index, a)))" Label="@Title(parameter.Name)"
+                                       Variant="@Variant.Outlined" Margin="@Margin.Dense" Dense="@true" HelperText="@parameter.Description"
+                                       Style="@("min-width: 160px; max-width: 180px")" ToStringFunc="@(a => a == "" ? "Default" : a)">
+                                <MudSelectItem T="string" Value="@("")">Default</MudSelectItem>
+                                @foreach (var choice in parameter.Choices)
+                                {
+                                    <MudSelectItem T="string" Value="@choice">@choice</MudSelectItem>
+                                }
+                            </MudSelect>
+                        }
+                        else
+                        {
+                            <MudTextField T="string" Value="@arg" ValueChanged="@(a => Changed(WithArgument(native, index, a)))" Label="@Title(parameter.Name)"
+                                          Placeholder="@("default")" HelperText="@parameter.Description" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                                          Style="@("min-width: 140px")" />
+                        }
+                    }
+                }
                 break;
         }
     </div>
@@ -89,23 +115,23 @@
     {
         case ArrayRef array:
             <div class="type-nested">
-                <TypeBuilder Value="array.Element" ValueChanged="t => Changed(array with { Element = t })" Label="Element" TypeNames="TypeNames" Find="Find" />
+                <TypeBuilder Value="array.Element" ValueChanged="t => Changed(array with { Element = t })" Label="Element" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
             </div>
             break;
         case OptionalRef optional:
             <div class="type-nested">
-                <TypeBuilder Value="optional.Inner" ValueChanged="t => Changed(new OptionalRef(t))" Label="Value" TypeNames="TypeNames" Find="Find" />
+                <TypeBuilder Value="optional.Inner" ValueChanged="t => Changed(new OptionalRef(t))" Label="Value" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
             </div>
             break;
         case SizedRef sized:
             <div class="type-nested">
-                <TypeBuilder Value="sized.Inner" ValueChanged="t => Changed(sized with { Inner = t })" Label="Content" TypeNames="TypeNames" Find="Find" />
+                <TypeBuilder Value="sized.Inner" ValueChanged="t => Changed(sized with { Inner = t })" Label="Content" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
             </div>
             break;
         case MapRef map:
             <div class="type-nested">
-                <TypeBuilder Value="map.Key" ValueChanged="t => Changed(map with { Key = t })" Label="Key" TypeNames="TypeNames" Find="Find" />
-                <TypeBuilder Value="map.Value" ValueChanged="t => Changed(map with { Value = t })" Label="Value" TypeNames="TypeNames" Find="Find" />
+                <TypeBuilder Value="map.Key" ValueChanged="t => Changed(map with { Key = t })" Label="Key" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
+                <TypeBuilder Value="map.Value" ValueChanged="t => Changed(map with { Value = t })" Label="Value" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
             </div>
             break;
     }
@@ -121,17 +147,19 @@
     [Parameter] public Func<string, TypeDef?>? Find { get; set; }
     /// <summary>Shows a text field with the whole expression above the controls.</summary>
     [Parameter] public bool ShowText { get; set; }
+    /// <summary>The native types offered.</summary>
+    [Parameter] public NativeTypes Natives { get; set; } = NativeTypes.BuiltIn;
 
     private string? _textError;
 
-    private enum Kind { Primitive, Reference, String, Bytes, Array, Optional, Map, Sized, FixedPoint, Nbt }
+    private enum Kind { Primitive, Reference, String, Bytes, Array, Optional, Map, Sized, FixedPoint, Native }
 
     private static string KindName(Kind kind) => kind switch
     {
         Kind.Primitive => "Number",
         Kind.Reference => "Other type",
         Kind.FixedPoint => "Fixed point",
-        Kind.Nbt => "NBT",
+        Kind.Native => "Native (NBT, ...)",
         _ => kind.ToString(),
     };
 
@@ -146,8 +174,24 @@
         MapRef => Kind.Map,
         SizedRef => Kind.Sized,
         FixedPointRef => Kind.FixedPoint,
-        _ => Kind.Nbt,
+        _ => Kind.Native,
     };
+
+    /// <summary>An argument as written, or "" when it is left to the defaults.</summary>
+    private static string Argument(NativeRef native, int index) =>
+        index < native.Args.Count && native.Args[index] is var arg && arg != "default" ? arg : "";
+
+    /// <summary>The reference with one argument changed; arguments left to the defaults at the end are dropped.</summary>
+    private static NativeRef WithArgument(NativeRef native, int index, string? value)
+    {
+        var args = native.Args.ToList();
+        while (args.Count <= index) args.Add("default");
+        args[index] = string.IsNullOrWhiteSpace(value) ? "default" : value.Trim();
+        while (args.Count > 0 && args[^1] == "default") args.RemoveAt(args.Count - 1);
+        return native with { Args = args };
+    }
+
+    private static string Title(string name) => name.Length == 0 ? name : char.ToUpperInvariant(name[0]) + name[1..];
 
     /// <summary>The short form, or the mapping form for types that have none.</summary>
     public static string Format(TypeRef type) => DslWriter.FormatType(type);
@@ -180,7 +224,7 @@
             Kind.Map => new MapRef(new StringRef(null, LengthSpec.Default), Value, LengthSpec.Default),
             Kind.Sized => new SizedRef(Value, LengthSpec.Default),
             Kind.FixedPoint => new FixedPointRef(new PrimitiveRef(PrimitiveKind.I32), 5),
-            _ => new NbtRef(null),
+            _ => new NativeRef(Natives.All.FirstOrDefault()?.Name ?? "nbt"),
         });
     }
 

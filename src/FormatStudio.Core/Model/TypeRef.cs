@@ -253,20 +253,19 @@ public sealed record FixedPointRef(PrimitiveRef Base, int FractionBits) : TypeRe
     public override string ToString() => $"fixed({Base}, {FractionBits})";
 }
 
-public enum NbtFlavor
+/// <summary>
+/// A value of a native type (<c>nbt</c>, ...), one the DSL can't describe: code reads and writes it. <see cref="Args"/>
+/// are the arguments as written; those left out come from the project's defaults (see <c>NativeTypes.Bind</c>).
+/// </summary>
+public sealed record NativeRef(string Name, IReadOnlyList<string> Args) : TypeRef
 {
-    /// <summary>Big endian, named root (Java files and pre-1.20.2 network).</summary>
-    Java,
-    /// <summary>Big endian, unnamed root (Java network since 1.20.2).</summary>
-    JavaNetwork,
-    /// <summary>Little endian, named root (Bedrock files).</summary>
-    Bedrock,
-    /// <summary>Little endian with varints for ints, longs and lengths, named root (Bedrock network).</summary>
-    BedrockNetwork,
-}
+    public NativeRef(string name) : this(name, [])
+    {
+    }
 
-/// <summary>An NBT tag. <see cref="Flavor"/> is null when the project default applies.</summary>
-public sealed record NbtRef(NbtFlavor? Flavor) : TypeRef
-{
-    public override string ToString() => $"nbt({Flavor?.ToString() ?? "default"})";
+    public bool Equals(NativeRef? other) => other != null && Name == other.Name && Args.SequenceEqual(other.Args);
+
+    public override int GetHashCode() => Args.Aggregate(Name.GetHashCode(), HashCode.Combine);
+
+    public override string ToString() => Args.Count == 0 ? Name : $"{Name}({string.Join(", ", Args)})";
 }
