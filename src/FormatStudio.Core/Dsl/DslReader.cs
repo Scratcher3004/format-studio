@@ -10,7 +10,7 @@ namespace FormatStudio.Dsl;
 public sealed class DslReader
 {
     private static readonly string[] KindKeys = ["packet", "struct", "enum", "variant", "alias", "bitfield"];
-    private static readonly HashSet<string> CommonKeys = ["title", "doc"];
+    private static readonly HashSet<string> CommonKeys = ["title", "doc", "skipCodegen"];
 
     private readonly string _file;
     private readonly DiagnosticBag _diagnostics;
@@ -140,8 +140,27 @@ public sealed class DslReader
         };
         definition.Title = OptionalString(map, "title");
         definition.Doc = OptionalString(map, "doc");
+        definition.SkipCodegen = Get(map, "skipCodegen") is { } skip ? ReadSkip(skip) : null;
         definition.Source = Where(root);
         return definition;
+    }
+
+    /// <summary><c>skipCodegen: true</c> (every target) or a list of target and generator names.</summary>
+    private CodegenSkip? ReadSkip(YamlNode node)
+    {
+        if (node is YamlSequenceNode sequence)
+        {
+            var names = sequence.Children.Select(n => Scalar(n, "skipCodegen")).Distinct(StringComparer.Ordinal).ToList();
+            return names.Count > 0 ? new CodegenSkip(false, names) : null;
+        }
+
+        var text = Scalar(node, "skipCodegen");
+        return text switch
+        {
+            "true" or "True" or "TRUE" => CodegenSkip.Everywhere,
+            "false" or "False" or "FALSE" or "" => null,
+            _ => new CodegenSkip(false, [text]),
+        };
     }
 
     private StructDef ReadStruct(YamlMappingNode map, string name, bool packet)

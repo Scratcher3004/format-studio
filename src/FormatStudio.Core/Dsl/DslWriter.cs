@@ -23,11 +23,13 @@ public static class DslWriter
 
                 map.AddIf("title", definition.Title);
                 map.AddIf("doc", definition.Doc);
+                map.AddIf("skipCodegen", Skip(definition.SkipCodegen));
                 map.Add("fields", structDef.Fields.Select(f => (object?)Field(f)).ToList());
                 break;
             case EnumDef enumDef:
                 map.AddIf("title", definition.Title);
                 map.AddIf("doc", definition.Doc);
+                map.AddIf("skipCodegen", Skip(definition.SkipCodegen));
                 map.Add("type", enumDef.Type.ToString());
                 map.AddIf("flags", enumDef.Flags);
                 map.AddIf("allowUnknown", enumDef.AllowUnknown);
@@ -52,6 +54,7 @@ public static class DslWriter
             case VariantDef variant:
                 map.AddIf("title", definition.Title);
                 map.AddIf("doc", definition.Doc);
+                map.AddIf("skipCodegen", Skip(definition.SkipCodegen));
                 if (variant.Tag != null) map.Add("tag", Type(variant.Tag));
                 map.Add("cases", variant.Cases.Select(c =>
                 {
@@ -65,11 +68,13 @@ public static class DslWriter
             case AliasDef alias:
                 map.AddIf("title", definition.Title);
                 map.AddIf("doc", definition.Doc);
+                map.AddIf("skipCodegen", Skip(definition.SkipCodegen));
                 map.Add("type", Type(alias.Target));
                 break;
             case BitfieldDef bitfield:
                 map.AddIf("title", definition.Title);
                 map.AddIf("doc", definition.Doc);
+                map.AddIf("skipCodegen", Skip(definition.SkipCodegen));
                 map.Add("type", bitfield.Base.ToString());
                 map.AddIf("lsbFirst", bitfield.LsbFirst);
                 map.Add("fields", bitfield.Members.Select(m =>
@@ -85,6 +90,58 @@ public static class DslWriter
         }
 
         return map;
+    }
+
+    private static object? Skip(CodegenSkip? skip) => skip switch
+    {
+        null => null,
+        { All: true } => true,
+        _ => skip.Targets.Cast<object?>().ToList(),
+    };
+
+    /// <summary>
+    /// Sets <c>skipCodegen</c> in a definition's YAML and keeps the rest of the text, comments included: replaces the
+    /// entry, or adds it after <c>doc</c>, <c>title</c> or the packet header like <see cref="Write"/> does.
+    /// </summary>
+    public static string SetSkipCodegen(string text, CodegenSkip? skip)
+    {
+        var newline = text.Contains("\r\n") ? "\r\n" : "\n";
+        var lines = text.Replace("\r\n", "\n").Split('\n').ToList();
+        var entry = skip is null or { All: false, Targets.Count: 0 } ? [] : YamlEmitter.Write(new YMap { { "skipCodegen", Skip(skip) } }).TrimEnd('\n').Split('\n');
+
+        var keys = Enumerable.Range(0, lines.Count).Select(i => (Index: i, Key: TopLevelKey(lines[i]))).Where(k => k.Key != null).ToList();
+        if (keys.FirstOrDefault(k => k.Key == "skipCodegen") is { Key: not null } existing)
+        {
+            lines.RemoveRange(existing.Index, EntryEnd(lines, existing.Index) - existing.Index);
+            lines.InsertRange(existing.Index, entry);
+        }
+        else if (entry.Length > 0)
+        {
+            var after = keys.Where((k, i) => i == 0 || k.Key is "id" or "groups" or "title" or "doc").Select(k => k.Index).DefaultIfEmpty(-1).Max();
+            lines.InsertRange(after < 0 ? 0 : EntryEnd(lines, after), entry);
+        }
+
+        return string.Join(newline, lines);
+    }
+
+    private static string? TopLevelKey(string line)
+    {
+        var colon = line.IndexOf(':');
+        return colon > 0 && line[0] is not (' ' or '\t' or '-' or '#') && line[..colon].All(c => char.IsLetterOrDigit(c) || c == '_') ? line[..colon] : null;
+    }
+
+    /// <summary>The line after a top-level entry: its value continues on indented lines and <c>- </c> items.</summary>
+    private static int EntryEnd(List<string> lines, int start)
+    {
+        var end = start + 1;
+        for (var i = start + 1; i < lines.Count; i++)
+        {
+            if (lines[i].Trim().Length == 0) continue;
+            if (lines[i][0] is not (' ' or '\t' or '-')) break;
+            end = i + 1;
+        }
+
+        return end;
     }
 
     private static object Field(FieldDef field)

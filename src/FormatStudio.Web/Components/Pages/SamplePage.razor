@@ -1,0 +1,219 @@
+@page "/p/{ProjectId}/sample/{Id}"
+@using System.Text.Json
+@using System.Text.RegularExpressions
+@inherits ProjectComponent
+@inject ISnackbar Snackbar
+@inject IDialogService Dialogs
+@inject NavigationManager Navigation
+@*
+    Views, edits, adds and deletes one sample. The simulator below decodes the sample's hex (or encodes its value) into the
+    hex view, so that a sample that fails can be debugged byte by byte; its value and hex are what gets saved.
+*@
+
+<PageTitle>@(_original?.Name ?? "New sample") - Format Studio</PageTitle>
+
+@if (_missing)
+{
+    <MudAlert Severity="@MudBlazor.Severity.Warning">There is no sample @Id. <MudLink Href="@Link("")">Back to the overview</MudLink></MudAlert>
+}
+else
+{
+    <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="@(2)" Class="mb-1">
+        <MudChip T="string" Color="@Color.Primary" Size="@Size.Small">sample</MudChip>
+        <MudText Typo="@Typo.h5">@(_original?.Name ?? "New sample")</MudText>
+        @if (_check != null)
+        {
+            <MudChip T="string" Size="@Size.Small" Variant="@Variant.Outlined" Color="@(_check == "ok" ? Color.Success : Color.Error)"
+                     Icon="@(_check == "ok" ? Icons.Material.Filled.Check : Icons.Material.Filled.ErrorOutline)">@Truncate(_check)</MudChip>
+        }
+    </MudStack>
+    @if (_original != null)
+    {
+        <MudText Typo="@Typo.body2" Class="mud-text-secondary mono mb-3">@_original.Source?.File</MudText>
+    }
+
+    <MudGrid Spacing="@(2)" Class="mb-2">
+        <MudItem xs="12" md="3">
+            <MudTextField T="string" @bind-Value="_name" Label="Name" Variant="@Variant.Outlined" Margin="@Margin.Dense" Required="@true" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudAutocomplete T="string" @bind-Value="_type" SearchFunc="SearchType" CoerceValue="@true" MaxItems="@(50)" Label="Type"
+                             Variant="@Variant.Outlined" Margin="@Margin.Dense" Dense="@true"
+                             HelperText="@(_type is { Length: > 0 } ? Projects.Project?.Find(_type)?.Kind : "a type expression, e.g. Handshake")" />
+        </MudItem>
+        <MudItem xs="12" md="5">
+            <MudAutocomplete T="string" @bind-Value="_file" SearchFunc="SearchFile" CoerceValue="@true" Label="File" Variant="@Variant.Outlined"
+                             Margin="@Margin.Dense" Dense="@true" HelperText="Relative to the project; other samples in the file are kept" />
+        </MudItem>
+    </MudGrid>
+
+    <MudStack Row="@true" Spacing="@(2)" Class="mb-3">
+        <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">Save</MudButton>
+        <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.FactCheck" OnClick="Check">Check</MudButton>
+        @if (_original != null)
+        {
+            <MudButton Variant="@Variant.Text" StartIcon="@Icons.Material.Filled.Undo" OnClick="Load">Revert</MudButton>
+            <MudButton Variant="@Variant.Text" StartIcon="@Icons.Material.Filled.ContentCopy" OnClick="Duplicate">Duplicate</MudButton>
+            <MudSpacer />
+            <MudButton Variant="@Variant.Text" Color="@Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="Delete">Delete</MudButton>
+        }
+    </MudStack>
+
+    @if (!string.IsNullOrWhiteSpace(_type))
+    {
+        <SimulatorPanel Type="@_type" @bind-Json="_json" @bind-HexText="_hex" />
+    }
+    else
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true">Choose the type of the sample to edit its value and bytes.</MudAlert>
+    }
+}
+
+@code {
+    /// <summary>The position in the project's samples, or <c>new</c>.</summary>
+    [Parameter] public string Id { get; set; } = "";
+
+    private int? Index => int.TryParse(Id, out var index) ? index : null;
+
+    private SampleDef? _original;
+    private bool _missing;
+    private string _name = "";
+    private string _type = "";
+    private string _file = "";
+    private string _json = "";
+    private string _hex = "";
+    private string? _check;
+    private string? _loadedId;
+
+    protected override void OnParametersSet()
+    {
+        if (_loadedId != Id) Load();
+    }
+
+    private void Load()
+    {
+        _loadedId = Id;
+        var samples = Projects.Project?.Samples ?? [];
+        _original = Index is { } index && index >= 0 && index < samples.Count ? samples[index] : null;
+        _missing = _original == null && Id != "new";
+        _check = null;
+        if (_original == null)
+        {
+            _name = _type = "";
+            _file = Projects.Project?.DefaultSampleFile() ?? "samples/samples.yaml";
+            _json = _hex = "";
+            return;
+        }
+
+        _name = _original.Name;
+        _type = _original.Type;
+        _file = _original.Source?.File ?? "";
+        _json = _original.Value != null ? JsonValues.ToText(_original.Value) : "";
+        _hex = _original.Hex ?? "";
+    }
+
+    private static string Truncate(string text) => text.Length > 80 ? text[..80] + "…" : text;
+
+    private Task<IEnumerable<string>> SearchType(string? text, CancellationToken token) =>
+        Task.FromResult((Projects.Project?.Types.Keys ?? [])
+            .Where(name => string.IsNullOrWhiteSpace(text) || name.Contains(text, StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.Ordinal).AsEnumerable());
+
+    private Task<IEnumerable<string>> SearchFile(string? text, CancellationToken token) =>
+        Task.FromResult((Projects.Project?.Samples ?? []).Select(s => s.Source?.File).OfType<string>()
+            .Append(Projects.Project?.DefaultSampleFile()).OfType<string>().Distinct()
+            .Where(file => string.IsNullOrWhiteSpace(text) || file.Contains(text, StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.Ordinal).AsEnumerable());
+
+    /// <summary>The sample as edited, or null after showing what is wrong with it.</summary>
+    private SampleDef? Edited()
+    {
+        string? problem = null;
+        JsonNode? value = null;
+        if (string.IsNullOrWhiteSpace(_name)) problem = "The sample needs a name.";
+        else if (string.IsNullOrWhiteSpace(_type)) problem = "The sample needs a type.";
+        else if (string.IsNullOrWhiteSpace(_json) && string.IsNullOrWhiteSpace(_hex)) problem = "The sample needs a value, hex or both.";
+        else
+        {
+            try
+            {
+                Codec.ParseType(_type);
+                if (!string.IsNullOrWhiteSpace(_hex)) Hex.Parse(_hex);
+                if (!string.IsNullOrWhiteSpace(_json)) value = JsonNode.Parse(_json);
+            }
+            catch (Exception e) when (e is System.FormatException or JsonException)
+            {
+                problem = e.Message;
+            }
+        }
+
+        if (problem != null)
+        {
+            Snackbar.Add(problem, MudBlazor.Severity.Error);
+            return null;
+        }
+
+        return new SampleDef
+        {
+            Name = _name.Trim(),
+            Type = _type.Trim(),
+            Value = value,
+            // Hex from the simulator comes in lines of 16 bytes; samples keep it on one line.
+            Hex = string.IsNullOrWhiteSpace(_hex) ? null : Regex.Replace(_hex.Trim(), @"\s+", " "),
+        };
+    }
+
+    private void Check()
+    {
+        if (Edited() is { } sample) _check = Projects.CheckSample(sample);
+    }
+
+    private void Save()
+    {
+        if (Edited() is not { } sample) return;
+        string written;
+        try
+        {
+            written = Projects.SaveSample(sample, _file.Trim(), _original);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
+        {
+            Snackbar.Add($"Not saved: {e.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        var samples = Projects.Project?.Samples ?? [];
+        var file = Projects.Project?.Relative(written);
+        var saved = samples.FindLastIndex(s => s.Source?.File == file && s.Name == sample.Name);
+        Snackbar.Add($"Saved '{sample.Name}' to {file}.", MudBlazor.Severity.Success);
+        if (saved < 0) Navigation.NavigateTo(Link(""));
+        else if (saved != Index) Navigation.NavigateTo(Link($"sample/{saved}"));
+        else Load();
+    }
+
+    private void Duplicate()
+    {
+        _original = null;
+        _name += "-copy";
+        _check = null;
+    }
+
+    private async Task Delete()
+    {
+        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete sample", $"Delete '{_original!.Name}' from {_original.Source?.File}?",
+            yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
+        {
+            Projects.DeleteSample(_original);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
+        {
+            Snackbar.Add($"Not deleted: {e.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        Snackbar.Add($"Deleted '{_original.Name}'.", MudBlazor.Severity.Success);
+        Navigation.NavigateTo(Link(""));
+    }
+}

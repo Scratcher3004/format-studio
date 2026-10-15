@@ -1,66 +1,72 @@
-# C# generator
+# C# generators
+
+Two generators produce the same types and differ in what they read from and write to:
+
+| Generator | Reader / writer | Use for |
+|---|---|---|
+| `csharp` | `ref struct FormatReader` over `ReadOnlySpan<byte>`, `ref struct FormatWriter` over `IBufferWriter<byte>` | Whole messages in memory; no allocations besides the values |
+| `csharp-stream` | `FormatStreamReader` / `FormatStreamWriter` classes over a `System.IO.Stream` | Network and file streams, without buffering whole messages |
 
 ```yaml
 codegen:
   - name: csharp
-    generator: csharp
+    generator: csharp            # or csharp-stream
     output: generated/csharp     # inside the project folder
     options:
       namespace: My.Protocol
       registry: Packets
 ```
 
-Options: `namespace`, `registry` (static class with the packet id dispatch), `exclude` (types written by hand: they
-are referenced but not generated), `validateRanges`, `validateEnums`, and the runtime names below.
+Options: `namespace`, `registry` (static class with the packet id dispatch), `validateRanges`, `validateEnums` (reject
+values that are not members, except for flags enums and enums with `allowUnknown`), and the runtime names below.
+Definitions written by hand are skipped with `skipCodegen` in the definition (see
+[code generation](codegen.md#skipping-definitions), which also describes what all generators share).
 
-- Structs become `partial struct`s with public fields and `static Read(ref reader)` / `Write(ref writer)`; types that
-  contain themselves by value become `sealed partial class`es.
-- Packets implement the packet interface with `static uint PacketId`; `<registry>.Dispatch(id, ref reader, ref visitor)`
+- Structs become `partial struct`s with public fields and `static Read(reader)` / `Write(writer)` (by `ref` for
+  spans); types that contain themselves by value become `sealed partial class`es.
+- Packets implement the packet interface with `static uint PacketId`; `<registry>.Dispatch(id, reader, ref visitor)`
   switches over the ids without boxing.
 - Variants are tagged structs: `Kind` (the tag enum, or a nested `Case` enum), one field per case,
-  `FromCase(...)` factories, `Read(ref reader, kind)` / `WriteContent` for external tags. With string tags the `Case`
+  `FromCase(...)` factories, `Read(reader, kind)` / `WriteContent` for external tags. With string tags the `Case`
   values are the case indexes, and `CaseOf(tag)` / `TagOf(kind)` convert.
 - Arrays with `until` are read element by element until the condition holds for the last one read.
 - Aliases are inlined, computed and const fields are not exposed, conditional fields are nullable.
-- Counts are checked against the remaining bytes and `maxItems` before allocating.
+- Counts are checked against the remaining bytes and `maxItems` before allocating. A `FormatStreamReader` over a
+  stream of unknown length (not seekable, or `length: -1`) checks counts against `MaxCount` (16M) instead, and `eof`
+  lengths read until the stream ends.
 - NBT is kept as raw bytes (`byte[]`).
-- Not supported: `_parent` and `_root` in expressions, and members of bit fields (`flags.hasMax`). The registry
-  dispatches by id alone, so packets that share an id in different groups (protocol states, directions) are reported
-  and only the first is dispatched.
-
-The output only goes to the target's folder inside the project, and only files starting with the generated-file
-marker are replaced or deleted (others are reported and left alone). Copying the reviewed output into a source tree is
-deliberately a manual step.
 
 ## Runtime
 
-The generated code calls a small runtime. The `default` profile uses `FormatStudio.Runtime` (no dependencies; reference
-the project or copy its three files):
+The generated code calls a small runtime, `FormatStudio.Runtime` (no dependencies; reference the project or copy its
+files):
 
-| Option | Default | |
-|---|---|---|
-| `runtimeNamespace` | `FormatStudio.Runtime` | |
-| `reader` | `FormatReader` | `ref struct` over a `ReadOnlySpan<byte>` |
-| `writer` | `FormatWriter` | `ref struct` over an `IBufferWriter<byte>` |
-| `serializableInterface` | `IFormatSerializable` | `static abstract T Read(ref reader)`, `void Write(ref writer)` |
-| `packetInterface` | `IFormatPacket` | adds `static abstract uint PacketId` |
-| `visitorInterface` | `IFormatPacketVisitor` | `void Visit<T>(ref T packet) where T : packet interface` |
-| `exception` | `FormatDataException` | thrown for malformed data |
+| Option | `csharp` | `csharp-stream` | |
+|---|---|---|---|
+| `runtimeNamespace` | `FormatStudio.Runtime` | `FormatStudio.Runtime` | |
+| `reader` | `FormatReader` | `FormatStreamReader` | |
+| `writer` | `FormatWriter` | `FormatStreamWriter` | |
+| `serializableInterface` | `IFormatSerializable` | `IFormatStreamSerializable` | `static abstract T Read(reader)`, `void Write(writer)` |
+| `packetInterface` | `IFormatPacket` | `IFormatStreamPacket` | adds `static abstract uint PacketId` |
+| `visitorInterface` | `IFormatPacketVisitor` | `IFormatStreamPacketVisitor` | `void Visit<T>(ref T packet) where T : packet interface` |
+| `exception` | `FormatDataException` | `FormatDataException` | thrown for malformed data |
 
-To use your own runtime, set these options to its type names. It needs the same methods as `FormatReader` and
-`FormatWriter`: `Read<Kind>()` / `Write<Kind>(value)` for every primitive (`U8`, `I16LE`, `U32BE`, `VarUInt32`,
-`ZigZag64`, `UuidLE`, `F64BE`, ...), `ReadUtf8(count)`, `ReadUtf8Zero()`, `ReadBytes(count)`, `Slice(length)`,
-`CheckCount(count, minElementSize, max)`, `Remaining`, `Utf8Length(text)`, and `ReadNbt<Flavor>()` /
-`WriteNbt<Flavor>(raw)` for the NBT flavors the project uses (`Java`, `JavaNetwork`, `Bedrock`, `BedrockNetwork`).
+To use your own runtime, set these options to its type names. It needs the same methods as the default reader and
+writer: `Read<Kind>()` / `Write<Kind>(value)` for every primitive (`U8`, `I16LE`, `U32BE`, `VarUInt32`, `ZigZag64`,
+`UuidLE`, `F64BE`, ...), `ReadUtf8(count)`, `ReadUtf8Zero()`, `ReadBytes(count)`, `Slice(length)`,
+`CheckCount(count, minElementSize, max)`, `Utf8Length(text)`, and `ReadNbt<Flavor>()` / `WriteNbt<Flavor>(raw)` for
+the NBT flavors the project uses (`Java`, `JavaNetwork`, `Bedrock`, `BedrockNetwork`). For `eof` lengths, span readers
+need `Remaining`; stream readers need `AtEnd`, `ReadToEnd()` and `ReadUtf8ToEnd()`.
 
 ## Checking generated code
 
-`FormatStudio.Testing` compiles a target's output with Roslyn against a runtime assembly and checks it against the
-simulator: random values encoded by the simulator must be read and written back byte for byte by the generated code.
+See [code generation](codegen.md#checking-generated-code): `GeneratedCodeVerifier.CheckAgainstSimulator` compiles a
+`csharp` or `csharp-stream` target with Roslyn and compares it byte for byte with the simulator.
 
-```csharp
-var project = FormatProject.Load("path/to/project");
-var target = project.Settings.Codegen.Single(t => t.Name == "csharp");
-var failures = GeneratedCodeVerifier.CheckAgainstSimulator(project, target, typeof(MyReader).Assembly, iterations: 5);
-Assert.Empty(failures);
-```
+## Not supported
+
+- Everything that [no generator supports](codegen.md#not-supported-by-any-generator).
+- Packet ids outside the `uint` range (negative ids).
+- `csharp` (spans): reading from a stream; the whole message must be in memory. Use `csharp-stream` for streams.
+- `csharp-stream`: reading without allocating; values are read through a small buffer, and `sized` values are
+  written to a temporary buffer to learn their length.

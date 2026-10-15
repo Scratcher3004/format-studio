@@ -13,4 +13,9 @@
         <InternalsVisibleTo Include="FormatStudio.Tests" />
     </ItemGroup>
 
+    <ItemGroup>
+        <!-- The Java runtime is written into the output of the java-stream generator. -->
+        <EmbeddedResource Include="..\FormatStudio.Runtime.Java\formatstudio\runtime\*.java" LogicalName="JavaRuntime/%(Filename)%(Extension)" />
+    </ItemGroup>
+
 </Project>

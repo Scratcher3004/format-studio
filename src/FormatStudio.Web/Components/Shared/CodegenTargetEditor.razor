@@ -1,0 +1,250 @@
+@using FormatStudio.Codegen
+
+@* Adds or edits a codegen target. The form is built from the generator's option descriptions; options the generator
+   doesn't know are kept as they are. *@
+<MudPaper Outlined="@true" Class="pa-3 mb-3">
+    <MudText Typo="@Typo.h6" Class="mb-2">@(Target == null ? "New code generation target" : $"Edit target '{Target.Name}'")</MudText>
+    <MudGrid Spacing="2">
+        <MudItem xs="12" md="4">
+            <MudSelect T="ICodeGenerator" Value="@_generator" ValueChanged="@SelectGenerator" ToStringFunc="@(g => g?.Title)" Label="Language"
+                       Variant="@Variant.Outlined" Margin="@Margin.Dense">
+                @foreach (var generator in CodeGeneration.Generators)
+                {
+                    <MudSelectItem Value="@generator">@generator.Title</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudTextField T="string" @bind-Value="@_name" Label="Name" HelperText="Used by 'format-studio generate <name>'"
+                          Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudTextField T="string" @bind-Value="@_output" Label="Output folder" HelperText="Relative to the project folder; generated files only go here"
+                          Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" Class="mono" />
+        </MudItem>
+    </MudGrid>
+    <MudText Typo="@Typo.body2" Class="my-2">@_generator.Description</MudText>
+
+    <MudGrid Spacing="2">
+        @foreach (var option in _generator.Options.Where(o => !o.Advanced))
+        {
+            <MudItem xs="12" md="@(option.Kind == CodegenOptionKind.Bool ? 6 : 4)">
+                @OptionField(option)
+            </MudItem>
+        }
+    </MudGrid>
+    @if (_generator.Options.Any(o => o.Advanced))
+    {
+        <MudExpansionPanels Elevation="0" Class="mt-2">
+            <MudExpansionPanel Text="Runtime names and other advanced options">
+                <MudGrid Spacing="2">
+                    @foreach (var option in _generator.Options.Where(o => o.Advanced))
+                    {
+                        <MudItem xs="12" md="4">
+                            @OptionField(option)
+                        </MudItem>
+                    }
+                </MudGrid>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
+    @if (Project != null)
+    {
+        var skipped = CodeGeneration.Skipped(Project, new CodegenTarget { Name = (_name ?? "").Trim(), Generator = _generator.Name, Output = "" })
+            .Order(StringComparer.Ordinal).ToList();
+        <MudText Typo="@Typo.subtitle2" Class="mt-3">Skipped types</MudText>
+        <MudText Typo="@Typo.body2" Class="mud-text-secondary">
+            Set on each definition's page (Code generation). Skipped types are referenced but not generated, so their code comes from elsewhere.
+        </MudText>
+        @if (skipped.Count == 0)
+        {
+            <MudText Typo="@Typo.body2">None: this target generates every definition.</MudText>
+        }
+        else
+        {
+            <MudChipSet T="string" ReadOnly="@true">
+                @foreach (var name in skipped)
+                {
+                    <MudChip T="string" Value="@name" Size="@Size.Small" Class="mono">@name</MudChip>
+                }
+            </MudChipSet>
+        }
+    }
+    @if (_obsoleteExclude != null)
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true" Class="mt-2">
+            The option 'exclude' (@_obsoleteExclude) is removed when saving: choose "Skipped by" under Code generation on each definition's Code tab instead.
+        </MudAlert>
+    }
+    @if (_extra.Count > 0)
+    {
+        <MudText Typo="@Typo.caption" Class="d-block mt-2">
+            Kept as they are (unknown to @_generator.Title): @string.Join(", ", _extra.Select(o => o.Key))
+        </MudText>
+    }
+    @if (_error != null)
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Error" Dense="@true" Class="mt-2">@_error</MudAlert>
+    }
+    <MudStack Row="@true" Spacing="2" Class="mt-3">
+        <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="@Save">
+            @(Target == null ? "Add target" : "Save")
+        </MudButton>
+        <MudButton Variant="@Variant.Text" OnClick="@OnCancel">Cancel</MudButton>
+    </MudStack>
+</MudPaper>
+
+@code {
+    /// <summary>The target to edit, or null for a new one.</summary>
+    [Parameter] public CodegenTarget? Target { get; set; }
+
+    /// <summary>The generator of a new target.</summary>
+    [Parameter] public ICodeGenerator? Generator { get; set; }
+
+    /// <summary>The project, to list the definitions that skip this target.</summary>
+    [Parameter] public FormatProject? Project { get; set; }
+
+    /// <summary>Names of the other targets; a target's name must be unique.</summary>
+    [Parameter] public IReadOnlyCollection<string> TakenNames { get; set; } = [];
+
+    [Parameter] public EventCallback<CodegenTarget> OnSave { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private ICodeGenerator _generator = CodeGeneration.Generators[0];
+    private string? _name;
+    private string? _output;
+    private readonly Dictionary<string, string?> _texts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, bool> _flags = new(StringComparer.Ordinal);
+    private JsonObject _extra = [];
+    /// <summary>The types of the old <c>exclude</c> option, which <see cref="TypeDef.SkipCodegen"/> replaced; dropped on save.</summary>
+    private string? _obsoleteExclude;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        if (Target != null)
+        {
+            _generator = CodeGeneration.TryFind(Target.Generator) ?? _generator;
+            _name = Target.Name;
+            _output = Target.Output;
+            Load(Target.Options);
+            return;
+        }
+
+        _generator = Generator ?? _generator;
+        _name = UniqueName(_generator.Name);
+        _output = _generator.DefaultOutput;
+        Load([]);
+    }
+
+    private RenderFragment OptionField(CodegenOption option) => option.Kind switch
+    {
+        CodegenOptionKind.Bool => @<MudCheckBox T="bool" Value="@_flags[option.Key]" ValueChanged="@(v => _flags[option.Key] = v)"
+                                                 Label="@option.Label" Color="@Color.Primary" title="@option.Description" />,
+        CodegenOptionKind.Choice => @<MudSelect T="string" Value="@(_texts[option.Key] ?? option.Default?.ToString())" ValueChanged="@(v => _texts[option.Key] = v)"
+                                                Label="@option.Label" HelperText="@option.Description" Variant="@Variant.Outlined" Margin="@Margin.Dense">
+                                         @foreach (var choice in option.Choices ?? [])
+                                         {
+                                             <MudSelectItem Value="@choice">@choice</MudSelectItem>
+                                         }
+                                     </MudSelect>,
+        _ => @<MudTextField T="string" Value="@_texts[option.Key]" ValueChanged="@(v => _texts[option.Key] = v)" Label="@option.Label"
+                            Placeholder="@option.Default?.ToString()" Immediate="@true"
+                            HelperText="@(option.Kind == CodegenOptionKind.List ? option.Description + " Separate with commas." : option.Description)"
+                            Variant="@Variant.Outlined" Margin="@Margin.Dense" />,
+    };
+
+    /// <summary>Fills the form from saved options; values the generator doesn't describe go to <see cref="_extra"/>.</summary>
+    private void Load(JsonObject options)
+    {
+        _texts.Clear();
+        _flags.Clear();
+        _extra = (JsonObject)options.DeepClone();
+        if (_extra["exclude"] is { } exclude)
+        {
+            _obsoleteExclude = exclude is JsonArray list ? string.Join(", ", list) : exclude.ToString();
+            _extra.Remove("exclude");
+        }
+        foreach (var option in _generator.Options)
+        {
+            var value = _extra[option.Key];
+            _extra.Remove(option.Key);
+            switch (option.Kind)
+            {
+                case CodegenOptionKind.Bool:
+                    _flags[option.Key] = value is JsonValue flag && flag.TryGetValue<bool>(out var b) ? b : option.Default?.GetValue<bool>() ?? false;
+                    break;
+                case CodegenOptionKind.List:
+                    _texts[option.Key] = value is JsonArray list ? string.Join(", ", list.Select(e => e?.ToString())) : value?.ToString();
+                    break;
+                default:
+                    _texts[option.Key] = value?.ToString();
+                    break;
+            }
+        }
+    }
+
+    private JsonObject Options()
+    {
+        var options = (JsonObject)_extra.DeepClone();
+        foreach (var option in _generator.Options)
+        {
+            JsonNode? value = option.Kind switch
+            {
+                CodegenOptionKind.Bool => JsonValue.Create(_flags[option.Key]),
+                CodegenOptionKind.List => new JsonArray((_texts[option.Key] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(item => (JsonNode)JsonValue.Create(item)).ToArray()),
+                _ => _texts[option.Key]?.Trim() is { Length: > 0 } text ? JsonValue.Create(text) : null,
+            };
+            // Defaults are left out, so that the project file only lists what differs.
+            if (!option.IsDefault(value)) options[option.Key] = value;
+        }
+
+        return options;
+    }
+
+    private void SelectGenerator(ICodeGenerator generator)
+    {
+        var previous = _generator;
+        var options = Options();
+        _generator = generator;
+        if (string.IsNullOrWhiteSpace(_output) || _output == previous.DefaultOutput) _output = generator.DefaultOutput;
+        if (string.IsNullOrWhiteSpace(_name) || _name == UniqueName(previous.Name)) _name = UniqueName(generator.Name);
+        // Options with the same key (namespace, registry, ...) carry over; the others are dropped.
+        var kept = new JsonObject();
+        foreach (var option in generator.Options.Where(o => options.ContainsKey(o.Key))) kept[option.Key] = options[option.Key]!.DeepClone();
+        Load(kept);
+        _error = null;
+    }
+
+    private string UniqueName(string name)
+    {
+        if (!TakenNames.Contains(name)) return name;
+        for (var i = 2; ; i++)
+            if (!TakenNames.Contains($"{name}-{i}")) return $"{name}-{i}";
+    }
+
+    private async Task Save()
+    {
+        var target = new CodegenTarget
+        {
+            Name = (_name ?? "").Trim(),
+            Generator = _generator.Name,
+            Output = (_output ?? "").Trim().Replace('\\', '/'),
+            Options = Options(),
+        };
+        try
+        {
+            CodeGeneration.Check(target);
+            if (TakenNames.Contains(target.Name)) throw new FormatDefinitionException($"There is already a target named '{target.Name}'");
+        }
+        catch (FormatDefinitionException e)
+        {
+            _error = e.Message;
+            return;
+        }
+
+        _error = null;
+        await OnSave.InvokeAsync(target);
+    }
+}

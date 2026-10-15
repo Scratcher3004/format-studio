@@ -4,7 +4,7 @@
 <MudGrid Spacing="2">
     <MudItem xs="12" md="6">
         <MudText Typo="Typo.subtitle2">Value (JSON)</MudText>
-        <textarea class="code-editor" rows="14" spellcheck="false" @bind="_json" @bind:event="oninput"></textarea>
+        <textarea class="code-editor" rows="14" spellcheck="false" @bind="_json" @bind:event="oninput" @bind:after="PublishJson"></textarea>
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
             <MudNumericField T="int" @bind-Value="_seed" Label="Seed" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 120px" />
             <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Casino" OnClick="Random">Random value</MudButton>
@@ -13,7 +13,7 @@
     </MudItem>
     <MudItem xs="12" md="6">
         <MudText Typo="Typo.subtitle2">Bytes (hex)</MudText>
-        <textarea class="code-editor" rows="14" spellcheck="false" @bind="_hex" @bind:event="oninput"></textarea>
+        <textarea class="code-editor" rows="14" spellcheck="false" @bind="_hex" @bind:event="oninput" @bind:after="PublishHex"></textarea>
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.ArrowBack" OnClick="Decode">Decode</MudButton>
             <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Loop" OnClick="RoundTrip">Round trip</MudButton>
@@ -51,6 +51,15 @@
 
 @code {
     [Parameter, EditorRequired] public string Type { get; set; } = "";
+    /// <summary>
+    /// The value as JSON, when bound. Unbound, the panel starts with a default value of the type. Bound, the panel starts
+    /// with the given value and hex and shows how the bytes decode (or, without hex, how the value encodes).
+    /// </summary>
+    [Parameter] public string? Json { get; set; }
+    [Parameter] public EventCallback<string> JsonChanged { get; set; }
+    /// <summary>The bytes as hex, when bound.</summary>
+    [Parameter] public string? HexText { get; set; }
+    [Parameter] public EventCallback<string> HexTextChanged { get; set; }
 
     private string _json = "";
     private string _hex = "";
@@ -63,17 +72,85 @@
     private string? _message;
     private MudBlazor.Severity _messageSeverity;
     private string? _lastType;
+    /// <summary>The bound texts last received or sent, to tell changes by the parent from our own.</summary>
+    private string? _lastJson, _lastHex;
 
-    protected override void OnParametersSet()
+    private bool Bound => Json != null || HexText != null;
+
+    protected override async Task OnParametersSetAsync()
     {
-        if (_lastType == Type) return;
+        var typeChanged = _lastType != Type;
+        var jsonChanged = Json != null && Json != _lastJson;
+        var hexChanged = HexText != null && HexText != _lastHex;
+        if (!typeChanged && !jsonChanged && !hexChanged) return;
         _lastType = Type;
-        _hex = "";
+        if (jsonChanged) _json = _lastJson = Json!;
+        if (hexChanged) _hex = _lastHex = HexText!;
+        if (typeChanged)
+        {
+            _bytes = null;
+            _root = _selected = null;
+            _diagnostics = [];
+            _message = null;
+            if (Json == null) _json = DefaultJson() ?? "";
+            if (HexText == null) _hex = "";
+        }
+
+        if (!Bound) return;
+        if (typeChanged && string.IsNullOrWhiteSpace(_json) && string.IsNullOrWhiteSpace(_hex))
+        {
+            _json = DefaultJson() ?? "";
+            await PublishJson();
+        }
+
+        Preview();
+    }
+
+    private async Task PublishJson()
+    {
+        _lastJson = _json;
+        await JsonChanged.InvokeAsync(_json);
+    }
+
+    private async Task PublishHex()
+    {
+        _lastHex = _hex;
+        await HexTextChanged.InvokeAsync(_hex);
+    }
+
+    /// <summary>
+    /// Shows the bytes in the hex view without changing the texts: the hex decoded, or without hex, the value encoded.
+    /// </summary>
+    private void Preview()
+    {
         _bytes = null;
         _root = _selected = null;
         _diagnostics = [];
         _message = null;
-        _json = DefaultJson() ?? "";
+        if (Codec is not { } codec || string.IsNullOrWhiteSpace(Type)) return;
+        try
+        {
+            var type = Codec.ParseType(Type);
+            if (!string.IsNullOrWhiteSpace(_hex))
+            {
+                var bytes = Hex.Parse(_hex);
+                var result = Annotate(codec, type, bytes, updateJson: false);
+                Show(result.Success ? $"Decoded {result.Consumed} of {bytes.Length} bytes." : "Decoding failed; the structure shows how far it got.",
+                    result.Success ? MudBlazor.Severity.Info : MudBlazor.Severity.Error);
+            }
+            else if (!string.IsNullOrWhiteSpace(_json))
+            {
+                var encoded = codec.Encode(type, JsonNode.Parse(_json));
+                _diagnostics = encoded.Diagnostics;
+                if (!encoded.Success) return;
+                Annotate(codec, type, encoded.Bytes, updateJson: false);
+                Show($"There is no hex; showing the {encoded.Bytes.Length} bytes the value encodes to.");
+            }
+        }
+        catch (Exception e) when (e is System.FormatException or JsonException or Expressions.ExprException or FormatDefinitionException)
+        {
+            Show(e.Message, MudBlazor.Severity.Error);
+        }
     }
 
     /// <summary>A zero/empty value of the type as a template to edit, or null when the type does not parse.</summary>
@@ -113,14 +190,15 @@
         _messageSeverity = severity;
     }
 
-    private void Random()
+    private async Task Random()
     {
         if (Projects.Project == null || !TryType(out var type)) return;
         try
         {
             _json = JsonValues.ToText(new RandomValues(Projects.Project, _seed++).Generate(type));
             Show(null);
-            Encode();
+            await PublishJson();
+            await Encode();
         }
         catch (Exception e) when (e is Expressions.ExprException or FormatDefinitionException)
         {
@@ -128,7 +206,7 @@
         }
     }
 
-    private void Encode()
+    private async Task Encode()
     {
         if (Codec is not { } codec || !TryType(out var type)) return;
         JsonNode? value;
@@ -151,11 +229,12 @@
         }
 
         _hex = Hex.FormatLines(result.Bytes);
+        await PublishHex();
         Show($"Encoded {result.Bytes.Length} bytes.", MudBlazor.Severity.Success);
         Annotate(codec, type, result.Bytes, updateJson: false);
     }
 
-    private void Decode()
+    private async Task Decode()
     {
         if (Codec is not { } codec || !TryType(out var type)) return;
         byte[] bytes;
@@ -171,6 +250,7 @@
 
         _diagnostics = [];
         var result = Annotate(codec, type, bytes, updateJson: true);
+        if (result.Value != null) await PublishJson();
         Show(result.Success ? $"Decoded {result.Consumed} of {bytes.Length} bytes." : "Decoding failed; the structure shows how far it got.",
             result.Success ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
     }

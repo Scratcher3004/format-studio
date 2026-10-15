@@ -36,6 +36,8 @@ public sealed class SampleDef
     /// <summary>The expected encoding, if known.</summary>
     public string? Hex { get; set; }
     public SourceLocation? Source { get; set; }
+    /// <summary>The position of the sample among the samples of its file.</summary>
+    public int Index { get; set; }
 }
 
 /// <summary>The contents of a <c>*.fstudio.yaml</c> project file.</summary>
@@ -141,13 +143,46 @@ public sealed class ProjectSettings
         map.Add("sources", Sources.Cast<object?>().ToList());
         map.AddIf("samples", Samples.Cast<object?>().ToList());
         if (Import.Count > 0) map.Add("import", Import);
-        map.AddIf("codegen", Codegen.Select(target =>
-        {
-            var targetMap = new YMap { { "name", target.Name }, { "generator", target.Generator }, { "output", target.Output } };
-            if (target.Options.Count > 0) targetMap.Add("options", target.Options);
-            return (object?)targetMap;
-        }).ToList());
+        map.AddIf("codegen", CodegenYaml(Codegen));
         return YamlEmitter.Write(map);
+    }
+
+    private static List<object?> CodegenYaml(IEnumerable<CodegenTarget> targets) => targets.Select(target =>
+    {
+        var targetMap = new YMap { { "name", target.Name }, { "generator", target.Generator }, { "output", target.Output } };
+        if (target.Options.Count > 0) targetMap.Add("options", target.Options);
+        return (object?)targetMap;
+    }).ToList();
+
+    /// <summary>
+    /// Replaces the top-level <c>codegen</c> section of a project file's text with <paramref name="targets"/> (removes it
+    /// when there are none, appends it when there was none). The rest of the file, comments included, stays as it is.
+    /// </summary>
+    public static string ReplaceCodegen(string text, IReadOnlyList<CodegenTarget> targets)
+    {
+        var newline = text.Contains("\r\n") ? "\r\n" : "\n";
+        var lines = text.Replace("\r\n", "\n").Split('\n').ToList();
+        var section = targets.Count == 0
+            ? []
+            : YamlEmitter.Write(new YMap { { "codegen", CodegenYaml(targets) } }).TrimEnd('\n').Split('\n');
+        var start = lines.FindIndex(line => System.Text.RegularExpressions.Regex.IsMatch(line, @"^codegen\s*:"));
+        if (start < 0)
+        {
+            if (section.Length == 0) return text;
+            while (lines.Count > 0 && lines[^1].Trim().Length == 0) lines.RemoveAt(lines.Count - 1);
+            lines.AddRange(section);
+            lines.Add("");
+            return string.Join(newline, lines);
+        }
+
+        // The section goes on while lines are indented, empty or list items at the margin ("- name: ...").
+        var end = start + 1;
+        while (end < lines.Count && (lines[end].Length == 0 || lines[end][0] is ' ' or '\t' || lines[end].StartsWith('-') && !lines[end].StartsWith("---")))
+            end++;
+        while (end > start + 1 && lines[end - 1].Trim().Length == 0) end--;
+        lines.RemoveRange(start, end - start);
+        lines.InsertRange(start, section);
+        return string.Join(newline, lines);
     }
 }
 
@@ -321,31 +356,88 @@ public sealed class FormatProject
             var relative = Relative(file);
             try
             {
-                var root = YamlValues.ParseYaml(File.ReadAllText(file));
-                IEnumerable<JsonObject> entries = root switch
-                {
-                    JsonArray array => array.OfType<JsonObject>(),
-                    JsonObject obj when obj["samples"] is JsonArray array => array.OfType<JsonObject>(),
-                    JsonObject obj => [obj],
-                    _ => [],
-                };
-                foreach (var entry in entries)
-                {
-                    Samples.Add(new SampleDef
-                    {
-                        Name = entry["sample"]?.ToString() ?? entry["name"]?.ToString() ?? Path.GetFileNameWithoutExtension(file),
-                        Type = entry["type"]?.ToString() ?? throw new FormatDefinitionException("A sample needs a 'type'"),
-                        Value = entry["value"]?.DeepClone(),
-                        Hex = entry["hex"]?.ToString(),
-                        Source = new SourceLocation(relative),
-                    });
-                }
+                var entries = SampleFiles.Entries(YamlValues.ParseYaml(File.ReadAllText(file)));
+                for (var index = 0; index < entries.Count; index++)
+                    Samples.Add(SampleFiles.Read(entries[index], Path.GetFileNameWithoutExtension(file), relative, index));
             }
             catch (Exception e) when (e is FormatDefinitionException or YamlDotNet.Core.YamlException or InvalidOperationException)
             {
                 Diagnostics.Error(e.Message, new SourceLocation(relative));
             }
         }
+    }
+
+    /// <summary>Whether the sample patterns include a file of the project, i.e. its samples are loaded when it exists.</summary>
+    public bool IsSampleFile(string file)
+    {
+        var relative = Relative(Path.GetFullPath(file, Directory));
+        if (relative.StartsWith("../", StringComparison.Ordinal) || relative == "..") return false;
+        var matcher = new Matcher(StringComparison.Ordinal);
+        matcher.AddIncludePatterns(Settings.Samples);
+        return matcher.Match(relative).HasMatches;
+    }
+
+    /// <summary>
+    /// The file new samples go to by default: the first file with samples, or <c>samples.yaml</c> in the folder of the
+    /// first sample pattern. Null when the project has no sample patterns.
+    /// </summary>
+    public string? DefaultSampleFile()
+    {
+        if (Samples.FirstOrDefault()?.Source?.File is { } existing) return existing;
+        foreach (var pattern in Settings.Samples)
+        {
+            var wildcard = pattern.IndexOfAny(['*', '?', '[']);
+            var folder = (wildcard < 0 ? Path.GetDirectoryName(pattern) ?? "" : pattern[..wildcard]).TrimEnd('/', '\\');
+            var file = folder.Length > 0 ? folder + "/samples.yaml" : "samples.yaml";
+            if (IsSampleFile(file)) return file;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Writes a sample to <paramref name="file"/> (relative to the project), replacing <paramref name="original"/> when it
+    /// is in that file, or adding it at the end. An original in another file is removed from there.
+    /// </summary>
+    public string SaveSample(SampleDef sample, string file, SampleDef? original = null)
+    {
+        var path = Sandbox.Check(Path.GetFullPath(file, Directory));
+        if (!path.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
+            throw new FormatDefinitionException($"{file} isn't a .yaml file");
+        if (!IsSampleFile(path))
+        {
+            throw new FormatDefinitionException(Settings.Samples.Count == 0
+                ? "The project has no sample patterns; add e.g. 'samples: [samples/**/*.yaml]' to the project file"
+                : $"{Relative(path)} isn't matched by the project's sample patterns ({string.Join(", ", Settings.Samples)}), so it wouldn't be loaded");
+        }
+
+        var sameFile = original?.Source?.File is { } originalFile && Path.GetFullPath(originalFile, Directory) == path;
+        var text = File.Exists(path) ? File.ReadAllText(path) : null;
+        if (sameFile) CheckUnchanged(text, original!);
+        var updated = SampleFiles.Replace(text, sameFile ? original!.Index : null, sample);
+        System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, updated);
+        if (original != null && !sameFile) DeleteSample(original);
+        return path;
+    }
+
+    /// <summary>Removes a sample from its file, and deletes the file when no sample is left.</summary>
+    public void DeleteSample(SampleDef sample)
+    {
+        var path = Sandbox.Check(Path.GetFullPath(sample.Source?.File ?? throw new FormatDefinitionException($"'{sample.Name}' has no file"), Directory));
+        var text = File.Exists(path) ? File.ReadAllText(path) : null;
+        CheckUnchanged(text, sample);
+        var updated = SampleFiles.Replace(text, sample.Index, null);
+        if (updated == null) File.Delete(path);
+        else File.WriteAllText(path, updated);
+    }
+
+    /// <summary>Makes sure the sample is still at its index, so that a file changed since loading isn't overwritten blindly.</summary>
+    private static void CheckUnchanged(string? text, SampleDef sample)
+    {
+        var entries = text == null ? [] : SampleFiles.Entries(YamlValues.ParseYaml(text));
+        if (sample.Index >= entries.Count || SampleFiles.NameOf(entries[sample.Index]) is { } name && name != sample.Name)
+            throw new FormatDefinitionException($"{sample.Source?.File} changed since it was loaded; reload the project and try again");
     }
 
     /// <summary>
@@ -391,6 +483,24 @@ public sealed class FormatProject
         }
         matcher.AddExclude("**/*" + ProjectSettings.Extension);
         return matcher.Match(relative).HasMatches;
+    }
+
+    /// <summary>
+    /// Writes the codegen targets to the project file; only its <c>codegen</c> section changes (see
+    /// <see cref="ProjectSettings.ReplaceCodegen"/>).
+    /// </summary>
+    public void SaveCodegen(IReadOnlyList<CodegenTarget> targets)
+    {
+        var file = Sandbox.Check(FilePath ?? throw new FormatDefinitionException("The project has no file"));
+        foreach (var target in targets) Codegen.CodeGeneration.Check(target);
+        if (targets.GroupBy(t => t.Name).FirstOrDefault(g => g.Count() > 1) is { } duplicate)
+            throw new FormatDefinitionException($"Two codegen targets are named '{duplicate.Key}'");
+
+        var updated = ProjectSettings.ReplaceCodegen(File.ReadAllText(file), targets);
+        var parsed = ProjectSettings.Parse(updated, file);
+        if (parsed.Codegen.Count != targets.Count) throw new FormatDefinitionException("The codegen section of the project file couldn't be updated");
+        File.WriteAllText(file, updated);
+        Settings.Codegen = parsed.Codegen;
     }
 
     /// <summary>Writes a definition back to its file and replaces it in the project.</summary>

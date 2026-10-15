@@ -24,8 +24,28 @@ public abstract class TypeDef
     public string? Doc { get; set; }
     public SourceLocation? Source { get; set; }
 
+    /// <summary>Code generation skips this definition (e.g. it is written by hand); null when every target generates it.</summary>
+    public CodegenSkip? SkipCodegen { get; set; }
+
     /// <summary>The DSL keyword: struct, packet, enum, variant, alias, bitfield.</summary>
     public abstract string Kind { get; }
+}
+
+/// <summary>
+/// Which codegen targets skip a definition: all of them, or those whose name or generator is listed. Skipped types are
+/// still referenced by the generated code, so their code must come from elsewhere.
+/// </summary>
+public sealed record CodegenSkip(bool All, IReadOnlyList<string> Targets)
+{
+    public static CodegenSkip Everywhere { get; } = new(true, []);
+
+    /// <param name="target">The target's name.</param>
+    /// <param name="generator">The target's generator, e.g. <c>java-stream</c>.</param>
+    public bool Skips(string target, string generator) => All || Targets.Contains(target) || Targets.Contains(generator);
+
+    public bool Equals(CodegenSkip? other) => other != null && All == other.All && Targets.SequenceEqual(other.Targets);
+
+    public override int GetHashCode() => HashCode.Combine(All, Targets.Count);
 }
 
 public sealed class FieldDef

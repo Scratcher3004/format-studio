@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-    <!-- The runtime that C# generated with the "default" profile calls. No dependencies, so it can also be copied. -->
+    <!-- The runtime that generated C# calls (spans: FormatReader/FormatWriter, streams: FormatStreamReader/FormatStreamWriter).
+         No dependencies, so it can also be copied. -->
     <PropertyGroup>
         <RootNamespace>FormatStudio.Runtime</RootNamespace>
     </PropertyGroup>

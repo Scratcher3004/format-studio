@@ -12,7 +12,7 @@ namespace FormatStudio.Web;
 public sealed class ProjectService
 {
     private readonly Lock _lock = new();
-    private GeneratedOutput? _generated;
+    private readonly Dictionary<string, GeneratedOutput> _generated = new(StringComparer.Ordinal);
 
     public ProjectService(string path, FileSandbox? sandbox = null)
     {
@@ -45,7 +45,7 @@ public sealed class ProjectService
                 LoadError = e.Message;
             }
 
-            _generated = null;
+            _generated.Clear();
             Version++;
         }
 
@@ -86,6 +86,56 @@ public sealed class ProjectService
         File.WriteAllText(file, text);
         Reload();
         return file;
+    }
+
+    /// <summary>Writes a sample (see <see cref="FormatProject.SaveSample"/>) and reloads.</summary>
+    public string SaveSample(SampleDef sample, string file, SampleDef? original)
+    {
+        var written = Project!.SaveSample(sample, file, original);
+        Reload();
+        return written;
+    }
+
+    public void DeleteSample(SampleDef sample)
+    {
+        Project!.DeleteSample(sample);
+        Reload();
+    }
+
+    /// <summary>
+    /// Checks a sample: its value must encode to its hex (when both are given), and its bytes must round trip.
+    /// Returns "ok" or what went wrong.
+    /// </summary>
+    public string CheckSample(SampleDef sample)
+    {
+        try
+        {
+            var codec = new Codec(Project!);
+            var type = Codec.ParseType(sample.Type);
+            byte[] bytes;
+            if (sample.Value != null)
+            {
+                var encoded = codec.Encode(type, sample.Value);
+                if (!encoded.Success) return "encode failed: " + encoded.Diagnostics.First(d => d.Severity == Severity.Error).Message;
+                if (sample.Hex != null && !Hex.Parse(sample.Hex).AsSpan().SequenceEqual(encoded.Bytes)) return $"differs: {Hex.Format(encoded.Bytes)}";
+                bytes = encoded.Bytes;
+            }
+            else if (sample.Hex != null)
+            {
+                bytes = Hex.Parse(sample.Hex);
+            }
+            else
+            {
+                return "no value or hex";
+            }
+
+            var roundTrip = Simulator.RoundTripBytes(codec, type, bytes);
+            return roundTrip.Success ? "ok" : "round trip failed: " + roundTrip.Diagnostics.First(d => d.Severity == Severity.Error).Message;
+        }
+        catch (Exception e) when (e is System.FormatException or FormatDefinitionException or Expressions.ExprException)
+        {
+            return e.Message;
+        }
     }
 
     /// <summary>
@@ -141,15 +191,34 @@ public sealed class ProjectService
         _ => false,
     };
 
-    /// <summary>The output of the first codegen target, generated once per project version.</summary>
+    /// <summary>The output of a codegen target, generated once per project version and target settings.</summary>
     public GeneratedOutput Generated(CodegenTarget target)
     {
+        var key = target.Name + "\n" + target.Generator + "\n" + target.Options.ToJsonString();
         lock (_lock)
         {
-            return _generated ??= CodeGeneration.Generate(Project!, target);
+            if (!_generated.TryGetValue(key, out var output)) _generated[key] = output = CodeGeneration.Generate(Project!, target);
+            return output;
         }
     }
 
-    public CodegenTarget DefaultTarget => Project?.Settings.Codegen.FirstOrDefault()
-        ?? new CodegenTarget { Name = "csharp", Generator = "csharp", Output = "generated/csharp" };
+    /// <summary>
+    /// Targets to show generated code with: the project's codegen targets, then the defaults of each generator that no
+    /// target uses.
+    /// </summary>
+    public IReadOnlyList<CodegenTarget> PreviewTargets
+    {
+        get
+        {
+            var targets = Project?.Settings.Codegen ?? [];
+            return targets.Concat(CodeGeneration.Generators.Where(g => targets.All(t => t.Generator != g.Name)).Select(CodeGeneration.DefaultTarget)).ToList();
+        }
+    }
+
+    /// <summary>Writes the codegen targets to the project file (see <see cref="FormatProject.SaveCodegen"/>) and reloads.</summary>
+    public void SaveCodegen(IReadOnlyList<CodegenTarget> targets)
+    {
+        Project!.SaveCodegen(targets);
+        Reload();
+    }
 }

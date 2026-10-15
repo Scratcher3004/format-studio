@@ -1,4 +1,5 @@
 @page "/p/{ProjectId}/type/{Name}"
+@using FormatStudio.Codegen
 @using FormatStudio.Dsl
 @inherits ProjectComponent
 @inject ISnackbar Snackbar
@@ -69,15 +70,35 @@ else
                 </Actions>
             </DefinitionEditor>
         </MudTabPanel>
-        <MudTabPanel Text="C#">
-            @if (_csharp == null)
+        <MudTabPanel Text="Code">
+            <MudStack Row="@true" AlignItems="@AlignItems.Start" Spacing="2" Class="mb-4">
+                <div class="grow">
+                    <CodegenSkipEditor @bind-Value="_skip" Targets="@(Projects.Project?.Settings.Codegen ?? [])" />
+                </div>
+                @if (!SameSkip(_skip, _definition.SkipCodegen))
+                {
+                    <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" Class="mt-2" OnClick="@SaveSkip"
+                               Disabled="@(_imported && _overrideFile == null)">@(_imported ? "Save as override" : "Save")</MudButton>
+                    <MudButton Variant="@Variant.Text" StartIcon="@Icons.Material.Filled.Undo" Class="mt-2" OnClick="@(() => _skip = _definition.SkipCodegen)">Revert</MudButton>
+                }
+            </MudStack>
+            <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="2" Class="mb-2">
+                <MudSelect T="string" Value="@_targetKey" ValueChanged="@SelectTarget" ToStringFunc="@(key => TargetLabel(FindTarget(key)))" Label="Target"
+                           Variant="@Variant.Outlined" Margin="@Margin.Dense" Style="max-width: 420px">
+                    @foreach (var target in Projects.PreviewTargets)
+                    {
+                        <MudSelectItem Value="@Key(target)">@TargetLabel(target)</MudSelectItem>
+                    }
+                </MudSelect>
+                @if (_code == null)
+                {
+                    <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Code" OnClick="@Generate">Generate</MudButton>
+                    <MudText Typo="@Typo.caption">Generates the whole project once per target.</MudText>
+                }
+            </MudStack>
+            @if (_code != null)
             {
-                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Code" OnClick="Generate">Generate</MudButton>
-                <MudText Typo="Typo.caption" Class="ml-2">Generates the whole project once (target '@Projects.DefaultTarget.Name').</MudText>
-            }
-            else
-            {
-                <pre class="code-block">@_csharp</pre>
+                <pre class="code-block">@_code</pre>
             }
         </MudTabPanel>
         <MudTabPanel Text="@($"Used by ({_references.Count})")">
@@ -100,7 +121,10 @@ else
     private bool _imported;
     private string? _overrideFile;
     private string _text = "";
-    private string? _csharp;
+    private string? _code;
+    private string? _targetKey;
+    /// <summary>The Code tab's skipCodegen, saved on its own.</summary>
+    private CodegenSkip? _skip;
     private int _tab;
     private DiagnosticBag _diagnostics = [];
     private List<(TypeDef User, string Where)> _references = [];
@@ -115,9 +139,10 @@ else
     {
         _loadedName = Name;
         _definition = Projects.Project?.Find(Name);
-        _csharp = null;
+        _code = null;
         _diagnostics = [];
         if (_definition == null) return;
+        _skip = _definition.SkipCodegen;
         _imported = Projects.IsImported(_definition);
         _overrideFile = _imported ? Projects.OverrideFile(_definition) : null;
         _text = Projects.Text(_definition);
@@ -151,13 +176,93 @@ else
         else Load();
     }
 
+    private static bool SameSkip(CodegenSkip? a, CodegenSkip? b) =>
+        a?.All == b?.All && (a?.Targets ?? []).SequenceEqual(b?.Targets ?? []);
+
+    /// <summary>
+    /// Saves only skipCodegen: the file keeps its other text and comments, and unsaved changes on the Edit tab stay
+    /// (with the same change). Imported definitions are saved as an override.
+    /// </summary>
+    private void SaveSkip()
+    {
+        var skip = _skip is { All: false, Targets.Count: 0 } ? null : _skip;
+        var fileName = _definition!.Source?.File ?? Name + ".yaml";
+        var current = Projects.Text(_definition);
+        var draft = _text != current ? _text : null;
+        var text = DslWriter.SetSkipCodegen(current, skip);
+        var (parsed, _) = Projects.Check(text, fileName);
+        if (_imported || parsed == null || !SameSkip(parsed.SkipCodegen, skip))
+        {
+            // Not a plain file (or an unusual layout): write the whole definition.
+            var definition = Projects.Check(current, fileName).Definition;
+            if (definition == null)
+            {
+                Snackbar.Add("Not saved: the definition's file has errors.", MudBlazor.Severity.Error);
+                return;
+            }
+
+            definition.SkipCodegen = skip;
+            text = DslWriter.Write(definition);
+        }
+
+        string written;
+        try
+        {
+            written = Projects.Save(_definition, text, _imported ? _overrideFile : null);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
+        {
+            Snackbar.Add($"Not saved: {e.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        Snackbar.Add($"Saved {Projects.Project?.Relative(written)}.", MudBlazor.Severity.Success);
+        var hadCode = _code != null;
+        Load();
+        if (draft != null) _text = DslWriter.SetSkipCodegen(draft, skip);
+        if (hadCode) Generate();
+    }
+
+    private static string Key(CodegenTarget target) => target.Name + "@" + target.Generator;
+
+    private CodegenTarget FindTarget(string? key)
+    {
+        var targets = Projects.PreviewTargets;
+        return targets.FirstOrDefault(t => Key(t) == key) ?? targets[0];
+    }
+
+    private string TargetLabel(CodegenTarget target)
+    {
+        var title = CodeGeneration.TryFind(target.Generator)?.Title ?? target.Generator;
+        return Projects.Project?.Settings.Codegen.Contains(target) == true ? $"{target.Name} ({title})" : $"{title}, default options";
+    }
+
+    private void SelectTarget(string key)
+    {
+        _targetKey = key;
+        if (_code != null) Generate();
+    }
+
     private void Generate()
     {
-        var output = Projects.Generated(Projects.DefaultTarget);
-        var file = output.Files.FirstOrDefault(f => Path.GetFileName(f.Path) == Name + ".g.cs");
+        var target = FindTarget(_targetKey);
+        _targetKey = Key(target);
+        GeneratedOutput output;
+        try
+        {
+            output = Projects.Generated(target);
+        }
+        catch (FormatDefinitionException e)
+        {
+            _code = "// " + e.Message;
+            return;
+        }
+
+        var file = output.FileOf(Name);
         var problems = output.Diagnostics.Where(d => d.Message.StartsWith(Name + ":", StringComparison.Ordinal)).Select(d => d.ToString());
-        _csharp = file?.Content ?? (_definition is AliasDef
-            ? "// Aliases are inlined where they are used."
+        var skipped = _definition?.SkipCodegen?.Skips(target.Name, target.Generator) == true;
+        _code = file?.Content ?? (_definition is AliasDef ? "// Aliases are inlined where they are used."
+            : skipped ? $"// {Name} is skipped by target '{target.Name}' (skipCodegen): its code comes from elsewhere."
             : "// Nothing generated.\n" + string.Join("\n", problems.Select(p => "// " + p)));
     }
 }

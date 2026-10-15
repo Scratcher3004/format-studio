@@ -127,29 +127,40 @@ internal static class Commands
 
     public static int Show(string[] args)
     {
-        var line = CommandLine.Parse(args, ["project"], ["csharp"]);
-        if (line.Positional.Count != 1) throw new UsageException("Usage: format-studio show <type> [--csharp]");
+        var line = CommandLine.Parse(args, ["project", "target"], ["csharp"]);
+        if (line.Positional.Count != 1) throw new UsageException("Usage: format-studio show <type> [--target <target|generator>] [--csharp]");
         var project = LoadProject(line);
         var definition = project.Find(line.Positional[0]) ?? throw new UsageException($"Unknown type '{line.Positional[0]}'.");
-        if (!line.Has("csharp"))
+        var targetName = line.Single("target") ?? (line.Has("csharp") ? "csharp" : null);
+        if (targetName == null)
         {
             Console.Write(DslWriter.Write(definition));
             return 0;
         }
 
-        var target = project.Settings.Codegen.FirstOrDefault(t => t.Generator == "csharp")
-                     ?? new CodegenTarget { Name = "csharp", Generator = "csharp", Output = "generated" };
+        var target = FindTarget(project, targetName);
         var output = CodeGeneration.Generate(project, target);
-        var file = output.Files.FirstOrDefault(f => Path.GetFileName(f.Path) == definition.Name + ".g.cs");
+        var file = output.FileOf(definition.Name);
         if (file == null)
         {
-            Console.Error.WriteLine($"No C# file for {definition.Name} (aliases are inlined).");
+            Console.Error.WriteLine($"No {target.Generator} file for {definition.Name} (aliases are inlined, definitions with skipCodegen are skipped).");
             PrintDiagnostics(output.Diagnostics.Where(d => d.Message.StartsWith(definition.Name + ":", StringComparison.Ordinal)));
             return 1;
         }
 
         Console.Write(file.Content);
         return 0;
+    }
+
+    /// <summary>A codegen target of the project by name, else the first one with that generator, else the generator's defaults.</summary>
+    private static CodegenTarget FindTarget(FormatProject project, string name)
+    {
+        var targets = project.Settings.Codegen;
+        if ((targets.FirstOrDefault(t => t.Name == name) ?? targets.FirstOrDefault(t => t.Generator == name)) is { } target) return target;
+        var generator = CodeGeneration.TryFind(name)
+            ?? throw new UsageException($"No codegen target or generator '{name}' (targets: {string.Join(", ", targets.Select(t => t.Name).DefaultIfEmpty("none"))}; " +
+                                        $"generators: {string.Join(", ", CodeGeneration.Generators.Select(g => g.Name))}).");
+        return CodeGeneration.DefaultTarget(generator);
     }
 
     // ------------------------------------------------------------------ simulation
@@ -368,6 +379,29 @@ internal static class Commands
         }
 
         return exit;
+    }
+
+    public static int Generators(string[] args)
+    {
+        var line = CommandLine.Parse(args, [], ["verbose"]);
+        line.MaxPositional(0, "format-studio generators [--verbose]");
+        foreach (var generator in CodeGeneration.Generators)
+        {
+            Console.WriteLine($"{generator.Name,-16} {generator.Title} (default output: {generator.DefaultOutput})");
+            Console.WriteLine($"{"",-16} {generator.Description}");
+            foreach (var option in generator.Options.Where(o => line.Has("verbose") || !o.Advanced))
+            {
+                var defaultValue = option.Choices != null ? $" (one of {string.Join(", ", option.Choices)}; default: {option.Default})"
+                    : option.Default != null ? $" (default: {option.Default.ToJsonString()})" : "";
+                Console.WriteLine($"{"",-18}{option.Key,-24}{option.Description}{defaultValue}");
+            }
+
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("Add a target to the project file:");
+        Console.WriteLine("  codegen:\n    - name: java\n      generator: java-stream\n      output: generated/java\n      options: {package: com.example.protocol}");
+        return 0;
     }
 
     public static int Web(string[] args)

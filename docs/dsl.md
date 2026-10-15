@@ -21,7 +21,7 @@ samples:                 # values with known encodings, checked by "format-studi
   - samples/**/*.yaml
 import:                  # importer settings, see "Mojang importer"
   mojang: { schema: ..., output: imported }
-codegen:                 # code generation targets
+codegen:                 # code generation targets: csharp, csharp-stream, java-stream (see codegen.md)
   - name: csharp
     generator: csharp
     output: generated/csharp   # inside the project folder
@@ -31,6 +31,8 @@ codegen:                 # code generation targets
 ## Definitions
 
 Each file holds one definition. The key naming the kind carries the name; `title` and `doc` are allowed everywhere.
+`skipCodegen: true` (or a list of codegen targets and generators) leaves a definition out of the generated code, e.g.
+because it is written by hand; see [code generation](codegen.md#skipping-definitions).
 Names are identifiers (`[A-Za-z_][A-Za-z0-9_]*`).
 
 ```yaml

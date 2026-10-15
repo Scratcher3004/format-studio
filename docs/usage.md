@@ -11,7 +11,7 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 | `new <folder>` | Create an empty project |
 | `validate` | Check references, expressions, tags, ids |
 | `list [--kind packet] [--filter text]` | List definitions |
-| `show <type> [--csharp]` | Print the definition or its generated C# |
+| `show <type> [--target <target\|generator>]` | Print the definition, or its generated code (`--csharp` is `--target csharp`) |
 | `decode <type> --hex ... [--tree]` | Decode bytes; `--tree` prints every value with its byte range |
 | `decode-packet --hex ... --header varuint32 --id-mask 0x3ff` | Read a packet id, then the packet |
 | `encode <type> --json ... \| --random --seed 1` | Encode a value (or a random one) |
@@ -19,7 +19,8 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 | `identify --hex ...` | Try every packet (or struct) and rank the matches |
 | `samples` | Check the project's samples |
 | `import <importer> [options] [--dry-run]` | Run an importer (see [importers](importers.md)) |
-| `generate [target] [--dry-run]` | Run the codegen targets |
+| `generate [target] [--dry-run]` | Run the codegen targets (see [code generation](codegen.md)) |
+| `generators [--verbose]` | List the code generators and their options |
 
 ## Web UI
 
@@ -43,9 +44,9 @@ can be open in different tabs. The id is the file name plus a hash of the path; 
 long as the project is in the recent list or the workspace. The project name in the app bar switches projects.
 
 Type browser with filter; per type: structure table, simulator (JSON ⇄ hex with an annotated hex view and value
-tree, random values, round trip), editor (imported files are saved as overrides), generated C#, references. Also
-pages for identify, round-trip fuzzing over all types, code generation (preview and write), imports (dry run and
-report) and new definitions.
+tree, random values, round trip), editor (imported files are saved as overrides), generated code for any target or
+language, references. Also pages for identify, round-trip fuzzing over all types, code generation (add, edit and
+remove targets, preview and write), imports (dry run and report) and new definitions.
 
 The editor of new and existing definitions has two views of the same YAML, switched with Builder / YAML:
 
@@ -62,3 +63,10 @@ The editor of new and existing definitions has two views of the same YAML, switc
 Validation runs on every change. Next to the editor, **sample data** (pasted hex or an uploaded file, at most
 64 KiB, optionally skipping a header) is decoded with the definition as it is being edited, with the annotated hex
 view, value tree and JSON, so a packet can be built field by field against a capture.
+
+The **samples** of a project are listed on the overview (long hex is cut; hover for all of it), where they can be
+checked, deleted or opened. A sample's page edits its name, type, file, value and hex, and decodes the hex (or, without
+hex, encodes the value) into the annotated hex view and value tree, so a failing sample can be debugged byte by byte;
+Encode, Decode and Round trip work as on the Simulate page, and their results are what Save writes. New samples go to
+a file matched by the project's `samples` patterns (by default the first file with samples). Saving or deleting
+rewrites the sample file, keeping its shape and the other samples but not comments.

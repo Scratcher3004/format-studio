@@ -38,6 +38,12 @@ public sealed class Validator
 
     private void Check(TypeDef definition)
     {
+        if (definition.SkipCodegen is { All: false } skip)
+        {
+            foreach (var name in skip.Targets.Where(n => Codegen.CodeGeneration.TryFind(n) == null && _project.Settings.Codegen.All(t => t.Name != n)))
+                _diagnostics.Warning($"{definition.Name}: skipCodegen names '{name}', which is neither a codegen target nor a generator", definition.Source);
+        }
+
         switch (definition)
         {
             case StructDef structDef:

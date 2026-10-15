@@ -20,8 +20,9 @@ const string usage = """
       format-studio validate
           Checks all definitions; exit code 1 on errors.
       format-studio list [--kind packet|struct|enum|variant|alias|bitfield] [--filter <text>]
-      format-studio show <type> [--csharp]
-          Prints a definition (DSL) or its generated C#.
+      format-studio show <type> [--target <target|generator>] [--csharp]
+          Prints a definition (DSL), or its generated code for a codegen target of the project or a generator's
+          defaults (--csharp is --target csharp).
       format-studio decode <type> (--hex <hex> | --file <file>) [--tree] [--json-only]
           Decodes bytes as a type. --tree prints the annotated byte ranges.
       format-studio decode-packet (--hex <hex> | --file <file>) --header <primitive> [--id-mask <mask>] [--tree]
@@ -36,6 +37,8 @@ const string usage = """
           Runs the project's samples: encodes each value and compares with the expected hex.
       format-studio generate [<target>...] [--no-clean] [--dry-run]
           Runs the project's codegen targets. Output only goes to the target's output folder.
+      format-studio generators [--verbose]
+          Lists the code generators (csharp, csharp-stream, java-stream) and their options.
       format-studio web [--project <p>] [--workspace <folder>] [--urls <url>]
           Hint for starting the web UI (FormatStudio.Web).
     """;
@@ -64,6 +67,7 @@ try
         "identify" => Commands.Identify(args[1..]),
         "samples" => Commands.Samples(args[1..]),
         "generate" => Commands.Generate(args[1..]),
+        "generators" => Commands.Generators(args[1..]),
         "web" => Commands.Web(args[1..]),
         _ => throw new UsageException($"Unknown command '{args[0]}'."),
     };

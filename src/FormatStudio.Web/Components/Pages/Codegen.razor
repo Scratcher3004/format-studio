@@ -2,43 +2,92 @@
 @using FormatStudio.Codegen
 @inherits ProjectComponent
 @inject ISnackbar Snackbar
+@inject IDialogService Dialogs
 
 <PageTitle>Code generation - Format Studio</PageTitle>
 
-<MudText Typo="Typo.h5" Class="mb-2">Code generation</MudText>
-<MudAlert Severity="MudBlazor.Severity.Info" Dense="true" Class="mb-3">
+<MudStack Row="@true" AlignItems="@AlignItems.Center" Class="mb-2">
+    <MudText Typo="@Typo.h5">Code generation</MudText>
+    <MudSpacer />
+    @if (Projects.Project is { Settings.Codegen.Count: > 0 } && !_adding)
+    {
+        <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => StartAdding(null))">Add target</MudButton>
+    }
+</MudStack>
+<MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true" Class="mb-3">
     Files are only written to the target's output folder inside the project, and only files with the generated-file
-    marker are replaced or deleted. Copy the reviewed output into the consuming project by hand.
+    marker are replaced or deleted. Copy the reviewed output into the consuming project by hand. Targets are saved in
+    the <code>codegen</code> section of the project file.
 </MudAlert>
 
 @if (Projects.Project is { } project)
 {
-    @if (project.Settings.Codegen.Count == 0)
+    @if (_adding)
     {
-        <MudAlert Severity="MudBlazor.Severity.Warning">The project has no codegen targets.</MudAlert>
+        <CodegenTargetEditor Generator="@_newGenerator" Project="@project" TakenNames="@project.Settings.Codegen.Select(t => t.Name).ToList()"
+                             OnSave="@(target => Save(project, null, target))" OnCancel="@(() => _adding = false)" />
     }
+    else if (project.Settings.Codegen.Count == 0)
+    {
+        <MudText Typo="@Typo.body1" Class="mb-2">
+            This project has no code generation targets yet. Pick a language to add one, or preview its output first.
+        </MudText>
+        <MudGrid Spacing="2" Class="mb-3">
+            @foreach (var generator in CodeGeneration.Generators)
+            {
+                <MudItem xs="12" md="4">
+                    <MudPaper Outlined="@true" Class="pa-3" Style="height: 100%; display: flex; flex-direction: column">
+                        <MudText Typo="@Typo.h6">@generator.Title</MudText>
+                        <MudText Typo="@Typo.body2" Class="mb-2" Style="flex: 1">@generator.Description</MudText>
+                        <MudText Typo="@Typo.caption" Class="mono mb-2">→ @generator.DefaultOutput</MudText>
+                        <MudStack Row="@true" Spacing="2">
+                            <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => StartAdding(generator))">Add</MudButton>
+                            <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="@(() => Preview(CodeGeneration.DefaultTarget(generator), false))">Preview</MudButton>
+                        </MudStack>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+
     @foreach (var target in project.Settings.Codegen)
     {
-        <MudPaper Outlined="true" Class="pa-3 mb-3">
-            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-                <MudText Typo="Typo.h6">@target.Name</MudText>
-                <MudChip T="string" Size="Size.Small">@target.Generator</MudChip>
-                <MudText Typo="Typo.body2" Class="mono">→ @target.Output</MudText>
+        @if (target == _editing)
+        {
+            <CodegenTargetEditor Target="@target" Project="@project" TakenNames="@project.Settings.Codegen.Where(t => t != target).Select(t => t.Name).ToList()"
+                                 OnSave="@(changed => Save(project, target, changed))" OnCancel="@(() => _editing = null)" />
+            continue;
+        }
+
+        var generator = CodeGeneration.TryFind(target.Generator);
+        <MudPaper Outlined="@true" Class="pa-3 mb-3">
+            <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="2" Wrap="@Wrap.Wrap">
+                <MudText Typo="@Typo.h6">@target.Name</MudText>
+                <MudChip T="string" Size="@Size.Small" Color="@(generator == null ? Color.Error : Color.Default)">@(generator?.Title ?? $"unknown generator '{target.Generator}'")</MudChip>
+                <MudText Typo="@Typo.body2" Class="mono">→ @target.Output</MudText>
                 <MudSpacer />
-                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="() => Preview(project, target)">Preview</MudButton>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="() => Write(project, target)"
-                           Disabled="project.Diagnostics.HasErrors">Write</MudButton>
+                <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="@(() => Preview(target, true))" Disabled="@(generator == null)">Preview</MudButton>
+                <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="@(() => Write(project, target))"
+                           Disabled="@(project.Diagnostics.HasErrors || generator == null)">Write</MudButton>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" title="Edit" OnClick="@(() => { _editing = target; _adding = false; })" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" title="Delete" OnClick="@(() => Delete(project, target))" />
             </MudStack>
             @if (target.Options.Count > 0)
             {
-                <pre class="code-block small">@target.Options.ToJsonString()</pre>
+                <MudText Typo="@Typo.caption" Class="mono d-block mt-1">
+                    @string.Join(", ", target.Options.Select(o => $"{o.Key}: {(o.Value is JsonArray list ? string.Join(" ", list) : o.Value?.ToString())}"))
+                </MudText>
+            }
+            @if (CodeGeneration.Skipped(project, target).Order(StringComparer.Ordinal).ToList() is { Count: > 0 } skipped)
+            {
+                <MudText Typo="@Typo.caption" Class="d-block mt-1">Skipped types: <span class="mono">@string.Join(", ", skipped)</span></MudText>
             }
         </MudPaper>
     }
 
     @if (_summary != null)
     {
-        <MudAlert Severity="@(_summary.Refused.Count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning)" Dense="true" Class="mb-2">
+        <MudAlert Severity="@(_summary.Refused.Count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning)" Dense="@true" Class="mb-2">
             @_summary.Written.Count written, @_summary.Unchanged unchanged, @_summary.Deleted.Count deleted@(_summary.Refused.Count > 0 ? $", {_summary.Refused.Count} refused (no generated-file marker)" : "")
             in @_summary.OutputDirectory
         </MudAlert>
@@ -46,17 +95,20 @@
 
     @if (_output != null)
     {
-        <DiagnosticList Items="_output.Diagnostics" />
+        <MudText Typo="@Typo.subtitle1" Class="mb-1">
+            Preview of @(_previewed?.Name)@(_previewSaved ? "" : " (default options, not saved)")
+        </MudText>
+        <DiagnosticList Items="@_output.Diagnostics" />
         <MudGrid Spacing="2">
             <MudItem xs="12" md="3">
-                <MudTextField T="string" @bind-Value="_fileFilter" Immediate="true" Placeholder="Filter files" Variant="Variant.Outlined" Margin="Margin.Dense" />
+                <MudTextField T="string" @bind-Value="@_fileFilter" Immediate="@true" Placeholder="Filter files" Variant="@Variant.Outlined" Margin="@Margin.Dense" />
                 <div class="file-list">
                     @foreach (var file in _output.Files.Where(f => string.IsNullOrEmpty(_fileFilter) || f.Path.Contains(_fileFilter, StringComparison.OrdinalIgnoreCase)).Take(500))
                     {
-                        <div class="@(file == _file ? "file-item file-selected" : "file-item")" @onclick="() => _file = file">@file.Path</div>
+                        <div class="@(file == _file ? "file-item file-selected" : "file-item")" @onclick="@(() => _file = file)">@file.Path</div>
                     }
                 </div>
-                <MudText Typo="Typo.caption">@_output.Files.Count files</MudText>
+                <MudText Typo="@Typo.caption">@_output.Files.Count files</MudText>
             </MudItem>
             <MudItem xs="12" md="9">
                 @if (_file != null)
@@ -70,15 +122,36 @@
 
 @code {
     private GeneratedOutput? _output;
+    private CodegenTarget? _previewed;
+    private bool _previewSaved;
     private GeneratedFile? _file;
     private WriteSummary? _summary;
     private string? _fileFilter;
+    private bool _adding;
+    private ICodeGenerator? _newGenerator;
+    private CodegenTarget? _editing;
 
-    private void Preview(FormatProject project, CodegenTarget target)
+    private void StartAdding(ICodeGenerator? generator)
     {
-        _output = CodeGeneration.Generate(project, target);
-        _file = _output.Files.FirstOrDefault();
-        _summary = null;
+        _newGenerator = generator;
+        _adding = true;
+        _editing = null;
+    }
+
+    private void Preview(CodegenTarget target, bool saved)
+    {
+        try
+        {
+            _output = Projects.Generated(target);
+            _previewed = target;
+            _previewSaved = saved;
+            _file = _output.Files.FirstOrDefault(f => f.TypeName != null) ?? _output.Files.FirstOrDefault();
+            _summary = null;
+        }
+        catch (FormatDefinitionException e)
+        {
+            Snackbar.Add(e.Message, MudBlazor.Severity.Error);
+        }
     }
 
     private void Write(FormatProject project, CodegenTarget target)
@@ -86,11 +159,52 @@
         try
         {
             _output = CodeGeneration.Generate(project, target);
+            _previewed = target;
+            _previewSaved = true;
             _summary = CodeGeneration.Write(project, target, _output);
         }
-        catch (Exception e) when (e is FormatDefinitionException or IOException)
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
         {
             Snackbar.Add(e.Message, MudBlazor.Severity.Error);
         }
+    }
+
+    /// <summary>Adds <paramref name="changed"/> (when <paramref name="original"/> is null) or replaces the original.</summary>
+    private void Save(FormatProject project, CodegenTarget? original, CodegenTarget changed)
+    {
+        var targets = project.Settings.Codegen.ToList();
+        var index = original != null ? targets.IndexOf(original) : -1;
+        if (index >= 0) targets[index] = changed;
+        else targets.Add(changed);
+        if (Store(targets, $"Saved target '{changed.Name}' to the project file.")) Close();
+    }
+
+    private async Task Delete(FormatProject project, CodegenTarget target)
+    {
+        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete target",
+            $"Remove the target '{target.Name}' from the project file? Files already generated in {target.Output} are kept.", yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        if (Store(project.Settings.Codegen.Where(t => t != target).ToList(), $"Removed target '{target.Name}'.") && _previewSaved && _previewed?.Name == target.Name) _output = null;
+    }
+
+    private bool Store(List<CodegenTarget> targets, string message)
+    {
+        try
+        {
+            Projects.SaveCodegen(targets);
+            Snackbar.Add(message, MudBlazor.Severity.Success);
+            return true;
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
+        {
+            Snackbar.Add($"Not saved: {e.Message}", MudBlazor.Severity.Error);
+            return false;
+        }
+    }
+
+    private void Close()
+    {
+        _adding = false;
+        _editing = null;
     }
 }

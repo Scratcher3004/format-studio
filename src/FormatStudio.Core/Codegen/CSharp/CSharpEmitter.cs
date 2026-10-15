@@ -1,0 +1,878 @@
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
+using FormatStudio.Model;
+using FormatStudio.Projects;
+
+namespace FormatStudio.Codegen.CSharp;
+
+/// <summary>C# syntax for the <see cref="Emitter"/>; spans and streams differ only in a few places (see <see cref="CSharpIo"/>).</summary>
+internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options) : Emitter(project, options.Exclude)
+{
+    private HashSet<string>? _classes;
+
+    private static readonly HashSet<string> Keywords =
+    [
+        "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const", "continue", "decimal",
+        "default", "delegate", "do", "double", "else", "enum", "event", "explicit", "extern", "false", "finally", "fixed", "float", "for",
+        "foreach", "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock", "long", "namespace", "new", "null",
+        "object", "operator", "out", "override", "params", "private", "protected", "public", "readonly", "ref", "return", "sbyte",
+        "sealed", "short", "sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw", "true", "try", "typeof",
+        "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "virtual", "void", "volatile", "while",
+    ];
+
+    /// <summary>Member names the generated code itself uses.</summary>
+    private static readonly HashSet<string> Reserved = ["Read", "Write", "WriteContent", "Id", "PacketId", "Kind", "Case"];
+
+    private bool Streams => options.Io == CSharpIo.Stream;
+
+    protected override string PathOf(TypeDef definition)
+    {
+        var folder = definition switch
+        {
+            StructDef { IsPacket: true } => "Packets",
+            StructDef or BitfieldDef => "Types",
+            EnumDef => "Enums",
+            _ => "Variants",
+        };
+        return $"{folder}/{definition.Name}.g.cs";
+    }
+
+    protected override void Finish()
+    {
+        if (Project.Packets.Any()) Output.Files.Add(new GeneratedFile($"{options.Registry}.g.cs", Registry()));
+    }
+
+    // ------------------------------------------------------------------ I/O model
+
+    private string ReaderParameter => Streams ? $"{options.ReaderType} reader" : $"ref {options.ReaderType} reader";
+
+    private string WriterParameter(string name = "writer") => Streams ? $"{options.WriterType} {name}" : $"ref {options.WriterType} {name}";
+
+    /// <summary>A reader or writer as an argument (by reference for spans).</summary>
+    private string Pass(string name) => Streams ? name : "ref " + name;
+
+    // ------------------------------------------------------------------ names and types
+
+    private static string Id(string name) => Keywords.Contains(name) ? "@" + name : name;
+
+    private string Global(string typeName) => $"global::{options.Namespace}.{typeName}";
+
+    /// <summary>The C# member name of a field or case, avoiding the enclosing type name and generated members.</summary>
+    private static string Member(string name, string owner) => name == owner || Reserved.Contains(name) ? name + "Value" : Id(name);
+
+    protected override string MemberName(string name, string owner) => Member(name, owner);
+
+    /// <summary>Types that contain themselves by value must be classes.</summary>
+    private bool IsClass(string name) => (_classes ??= SelfContainingTypes()).Contains(name);
+
+    private static string PrimitiveType(PrimitiveKind kind) => kind switch
+    {
+        PrimitiveKind.Bool => "bool",
+        PrimitiveKind.U8 => "byte",
+        PrimitiveKind.I8 => "sbyte",
+        PrimitiveKind.U16 => "ushort",
+        PrimitiveKind.I16 => "short",
+        PrimitiveKind.U32 or PrimitiveKind.VarUInt32 => "uint",
+        PrimitiveKind.I32 or PrimitiveKind.VarInt32 or PrimitiveKind.ZigZag32 => "int",
+        PrimitiveKind.U64 or PrimitiveKind.VarUInt64 => "ulong",
+        PrimitiveKind.I64 or PrimitiveKind.VarInt64 or PrimitiveKind.ZigZag64 => "long",
+        PrimitiveKind.F32 => "float",
+        PrimitiveKind.F64 => "double",
+        _ => "global::System.Guid",
+    };
+
+    /// <summary>The C# type of a value; <paramref name="qualified"/> uses global:: names (for method bodies).</summary>
+    private string Type(TypeRef type, bool qualified = false) => type switch
+    {
+        PrimitiveRef primitive => PrimitiveType(primitive.Kind),
+        StringRef => "string",
+        BytesRef or NbtRef => "byte[]",
+        ArrayRef array => Type(array.Element, qualified) + "[]",
+        MapRef map => $"global::System.Collections.Generic.KeyValuePair<{Type(map.Key, qualified)}, {Type(map.Value, qualified)}>[]",
+        OptionalRef optional => Nullable(Type(optional.Inner, qualified)),
+        SizedRef sized => Type(sized.Inner, qualified),
+        FixedPointRef => "double",
+        NamedRef named => Definition(named.Name) is AliasDef alias && !IsExcluded(named.Name)
+            ? Type(alias.Target, qualified)
+            : qualified ? Global(named.Name) : named.Name,
+        _ => throw new CodegenException($"Unsupported type {type}"),
+    };
+
+    private static string Nullable(string type) => type.EndsWith('?') ? type : type + "?";
+
+    private bool IsValueType(TypeRef type) => Project.Unalias(type) switch
+    {
+        PrimitiveRef or FixedPointRef => true,
+        SizedRef sized => IsValueType(sized.Inner),
+        NamedRef named => Definition(named.Name) is EnumDef or BitfieldDef || Definition(named.Name) is StructDef or VariantDef && !IsClass(named.Name),
+        _ => false,
+    };
+
+    private static string Literal(string text) => JsonSerializer.Serialize(text);
+
+    private static string Escape(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    private static void Doc(CodeWriter w, string? doc, params string?[] remarks)
+    {
+        if (doc != null)
+        {
+            w.Line("/// <summary>");
+            foreach (var line in doc.Split('\n')) w.Line(("/// " + Escape(line)).TrimEnd());
+            w.Line("/// </summary>");
+        }
+
+        var parts = remarks.Where(r => r != null).ToList();
+        if (parts.Count > 0) w.Line($"/// <remarks>{Escape(string.Join(" ", parts))}</remarks>");
+    }
+
+    private string Header()
+    {
+        var builder = new StringBuilder();
+        builder.Append(CSharpGenerator.FileMarker).Append('\n');
+        builder.Append($"// Generated by format-studio from project '{Project.Settings.Name}'{(Project.Settings.Version != null ? $" ({Project.Settings.Version})" : "")}.\n");
+        builder.Append("// Do not edit: change the format definitions and regenerate.\n");
+        builder.Append("#nullable enable\n");
+        builder.Append("#pragma warning disable CS1591, CS0108, CS8618\n\n");
+        builder.Append($"using {options.RuntimeNamespace};\n\n");
+        builder.Append($"namespace {options.Namespace};\n\n");
+        return builder.ToString();
+    }
+
+    // ------------------------------------------------------------------ expression syntax
+
+    protected override string NumberLiteral(decimal value) =>
+        value > long.MaxValue ? $"{value.ToString(CultureInfo.InvariantCulture)}UL" : $"{value.ToString(CultureInfo.InvariantCulture)}L";
+
+    protected override string StringLiteral(string text) => Literal(text);
+
+    protected override Value EnumConstant(EnumDef enumDef, string member)
+    {
+        var access = $"{Global(enumDef.Name)}.{Id(member)}";
+        return new Value($"(long){access}", access, ValueKind.Number, new NamedRef(enumDef.Name));
+    }
+
+    protected override string Convert(string access, ValueKind kind, TypeRef declared, bool mayBeNull)
+    {
+        var safe = mayBeNull && IsValueType(declared) ? $"({access} ?? default)" : access;
+        return kind switch
+        {
+            ValueKind.Bool => safe,
+            ValueKind.Float => $"(double){safe}",
+            _ => $"(long){safe}",
+        };
+    }
+
+    protected override string IndexAccess(string target, string index) => $"{target}[{index}]";
+
+    protected override string Length(Value value) =>
+        value.MayBeNull ? $"(long)({value.Raw}?.Length ?? 0)" : $"(long){value.Raw}.Length";
+
+    protected override string ByteLength(Value value) =>
+        $"(long)global::System.Text.Encoding.UTF8.GetByteCount({(value.MayBeNull ? $"{value.Raw} ?? \"\"" : value.Raw)})";
+
+    protected override string TagNumber(Value value) => $"(long){value.Raw}.Kind";
+
+    protected override string TagText(VariantDef variant, Value value) => $"{Global(variant.Name)}.TagOf({value.Raw}.Kind)";
+
+    protected override string TextCompare(string left, string right, string op) => $"({left} {op} {right})";
+
+    // ------------------------------------------------------------------ enums and bitfields
+
+    protected override string Enum(EnumDef enumDef)
+    {
+        var w = new CodeWriter();
+        Doc(w, enumDef.Doc, enumDef.Title != null ? $"Schema name: {enumDef.Title}." : null, $"Default wire type: {enumDef.Type}.");
+        if (enumDef.Flags) w.Line("[global::System.Flags]");
+        w.Open($"public enum {enumDef.Name} : {PrimitiveType(enumDef.Type.Kind)}");
+        foreach (var member in enumDef.Members)
+        {
+            Doc(w, member.Doc, member.Title != null ? $"Schema name: {member.Title}." : null);
+            w.Line($"{Id(member.Name)} = {member.Value.ToString(CultureInfo.InvariantCulture)},");
+        }
+
+        w.Close();
+        return Header() + w;
+    }
+
+    protected override string Bitfield(BitfieldDef bitfield)
+    {
+        var w = new CodeWriter();
+        Doc(w, bitfield.Doc, $"Packed into {bitfield.Base}.");
+        w.Open($"public partial struct {bitfield.Name} : {options.SerializableInterface}<{bitfield.Name}>");
+        foreach (var member in bitfield.Members) w.Line($"public {BitMemberType(member)} {Member(member.Name, bitfield.Name)};");
+        w.Line();
+
+        w.Open($"public static {bitfield.Name} Read({ReaderParameter})");
+        w.Line($"var raw = (ulong)reader.Read{Method(bitfield.Base)}();");
+        w.Line($"var result = new {bitfield.Name}();");
+        foreach (var (member, shift) in Simulation.Bitfields.Layout(bitfield))
+        {
+            var mask = member.Bits >= 64 ? "ulong.MaxValue" : $"0x{(1UL << member.Bits) - 1:X}UL";
+            var field = Member(member.Name, bitfield.Name);
+            var value = member.Signed
+                ? $"(long)(raw << {64 - shift - member.Bits}) >> {64 - member.Bits}"
+                : $"(raw >> {shift}) & {mask}";
+            w.Line(member.Type switch
+            {
+                "bool" => $"result.{field} = ((raw >> {shift}) & 1UL) != 0;",
+                null => $"result.{field} = ({BitMemberType(member)})({value});",
+                var enumName => $"result.{field} = ({Global(enumName)})({value});",
+            });
+        }
+
+        w.Line("return result;");
+        w.Close();
+        w.Line();
+
+        w.Open($"public readonly void Write({WriterParameter()})");
+        w.Line("ulong raw = 0;");
+        foreach (var (member, shift) in Simulation.Bitfields.Layout(bitfield))
+        {
+            var mask = member.Bits >= 64 ? "ulong.MaxValue" : $"0x{(1UL << member.Bits) - 1:X}UL";
+            var field = Member(member.Name, bitfield.Name);
+            var value = member.Type switch
+            {
+                "bool" => $"({field} ? 1UL : 0UL)",
+                null when member.Signed => $"(ulong)(long){field}",
+                null => $"(ulong){field}",
+                _ => $"(ulong)(long){field}",
+            };
+            w.Line($"raw |= ({value} & {mask}) << {shift};");
+        }
+
+        w.Line($"writer.Write{Method(bitfield.Base)}(({PrimitiveType(bitfield.Base.Kind)})raw);");
+        w.Close();
+        w.Close();
+        return Header() + w;
+    }
+
+    private static string BitMemberType(BitFieldMember member) => member.Type switch
+    {
+        "bool" => "bool",
+        null => (member.Signed, member.Bits) switch
+        {
+            (true, <= 32) => "int",
+            (true, _) => "long",
+            (false, <= 32) => "uint",
+            _ => "ulong",
+        },
+        var enumName => enumName,
+    };
+
+    // ------------------------------------------------------------------ structs
+
+    protected override string Struct(StructDef structDef)
+    {
+        var name = structDef.Name;
+        var isClass = IsClass(name);
+        var w = new CodeWriter();
+        var remarks = new List<string?>
+        {
+            structDef.Title != null ? $"Schema name: {structDef.Title}." : null,
+            structDef.IsPacket ? $"Packet id {structDef.Id}." : null,
+            isClass ? "A class because it contains itself." : null,
+        };
+        Doc(w, structDef.Doc, remarks.ToArray());
+
+        var interfaceName = structDef.IsPacket ? options.PacketInterface : options.SerializableInterface;
+        w.Open($"public {(isClass ? "sealed partial class" : "partial struct")} {name} : {interfaceName}<{name}>");
+        if (structDef.IsPacket)
+        {
+            if (structDef.Id == null) throw new CodegenException("A packet needs an id");
+            w.Line($"public const uint Id = {structDef.Id};");
+            w.Line();
+            w.Line("public static uint PacketId => Id;");
+            w.Line();
+        }
+
+        foreach (var field in structDef.Fields.Where(f => f.IsInput))
+        {
+            Doc(w, field.Doc, field.Title != null ? $"Schema name: {field.Title}." : null, $"Wire: {Describe(field.Type)}.",
+                field.If != null ? $"Only present if {field.If}." : null);
+            w.Line($"public {FieldType(field)} {Member(field.Name, name)};");
+            w.Line();
+        }
+
+        ReadMethod(structDef, w);
+        w.Line();
+        WriteMethod(structDef, w, isClass);
+        w.Close();
+        return Header() + w;
+    }
+
+    private string FieldType(FieldDef field)
+    {
+        var type = Type(field.Type);
+        return field.If != null ? Nullable(type) : type;
+    }
+
+    private static string Access(FieldDef field, string prefix, StructDef owner) =>
+        field.IsInput ? prefix + Member(field.Name, owner.Name) : $"__{field.Name}";
+
+    private void ReadMethod(StructDef structDef, CodeWriter w)
+    {
+        var name = structDef.Name;
+        w.Open($"public static {name} Read({ReaderParameter})");
+        w.Line($"var result = new {Global(name)}();");
+        var known = new Dictionary<string, FieldDef>(StringComparer.Ordinal);
+        var resolve = ReadScope(known, f => Access(f, "result.", structDef));
+        foreach (var field in structDef.Fields)
+        {
+            var context = new Context { Field = field, Resolve = resolve };
+            if (!field.IsInput) w.Line($"{FieldType(field)} __{field.Name} = {(field.If != null || IsValueType(field.Type) ? "default" : "default!")};");
+            if (field.If != null) w.Open($"if ({Condition(field.If, context)})");
+            var value = Read(field.Type, w, context);
+            var access = Access(field, "result.", structDef);
+            w.Line($"{access} = {value};");
+            if (field.Const != null)
+            {
+                var constant = Constant(field);
+                w.Line($"if ({access} != {constant}) throw new {options.ExceptionType}(\"{name}.{field.Name} must be {constant.Replace("\"", "\\\"")}\");");
+            }
+
+            if (options.ValidateRanges && (field.Min != null || field.Max != null) && Project.Unalias(field.Type) is PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool })
+            {
+                var checks = new List<string>();
+                if (field.Min is { } min) checks.Add($"{access} < {min.ToString(CultureInfo.InvariantCulture)}");
+                if (field.Max is { } max) checks.Add($"{access} > {max.ToString(CultureInfo.InvariantCulture)}");
+                w.Line($"if ({string.Join(" || ", checks)}) throw new {options.ExceptionType}(\"{name}.{field.Name} is out of range\");");
+            }
+
+            if (field.If != null) w.Close();
+            known[field.Name] = field;
+        }
+
+        w.Line("return result;");
+        w.Close();
+    }
+
+    private string Constant(FieldDef field)
+    {
+        var resolved = Project.Unalias(field.Type);
+        var constant = field.Const!;
+        switch (resolved)
+        {
+            case NamedRef named when Definition(named.Name) is EnumDef enumDef:
+                var memberName = constant.GetValueKind() == JsonValueKind.String ? constant.GetValue<string>() : null;
+                if (memberName != null && enumDef.FindByName(memberName) != null) return $"{Global(enumDef.Name)}.{Id(memberName)}";
+                return $"({Global(enumDef.Name)}){Simulation.JsonValues.Number(constant)}";
+            case PrimitiveRef { Kind: PrimitiveKind.Bool }:
+                return constant.GetValueKind() == JsonValueKind.True ? "true" : "false";
+            case PrimitiveRef { Kind: PrimitiveKind.F32 or PrimitiveKind.F64 } primitive:
+                return $"({PrimitiveType(primitive.Kind)}){Simulation.JsonValues.Double(constant)?.ToString("R", CultureInfo.InvariantCulture)}";
+            case PrimitiveRef { Kind: not PrimitiveKind.Uuid } primitive:
+                return $"({PrimitiveType(primitive.Kind)}){Simulation.JsonValues.Number(constant)?.ToString(CultureInfo.InvariantCulture)}";
+            case StringRef:
+                return Literal(constant.ToString());
+            default:
+                throw new CodegenException($"A const of type {Describe(field.Type)} is not supported");
+        }
+    }
+
+    private void WriteMethod(StructDef structDef, CodeWriter w, bool isClass)
+    {
+        var name = structDef.Name;
+        w.Open($"public {(isClass ? "" : "readonly ")}void Write({WriterParameter()})");
+        var computedDone = new HashSet<string>(StringComparer.Ordinal);
+        var resolve = WriteScope(structDef, computedDone, f => Access(f, "this.", structDef), Constant);
+        var context = new Context { Resolve = resolve };
+
+        // Computed fields are calculated first, so that they can describe later fields (e.g. a count before a list).
+        foreach (var field in structDef.Fields.Where(f => f.Computed != null))
+        {
+            var code = Expression(field.Computed!, context, out var kind);
+            var type = Type(field.Type);
+            var resolved = Project.Unalias(field.Type);
+            if (resolved is PrimitiveRef { Kind: PrimitiveKind.Bool }) code = kind == ValueKind.Bool ? code : $"({code} != 0)";
+            else if (kind == ValueKind.Bool) code = $"({type})({code} ? 1 : 0)";
+            else code = resolved is NamedRef ? $"({Type(field.Type, true)})({code})" : $"({type})({code})";
+            w.Line($"{type} __{field.Name} = {code};");
+            computedDone.Add(field.Name);
+        }
+
+        foreach (var field in structDef.Fields)
+        {
+            var fieldContext = new Context { Resolve = resolve, Field = field };
+            if (field.If != null) w.Open($"if ({Condition(field.If, fieldContext)})");
+            var value = field.Const != null ? Constant(field) : Access(field, "this.", structDef);
+            if (field.If != null && field.Const == null)
+            {
+                var present = Temp("value");
+                w.Line($"var {present} = {value} ?? throw new {options.ExceptionType}(\"{name}.{field.Name} is required when {field.If.Replace("\"", "'")}\");");
+                value = present;
+            }
+
+            Write(field.Type, value, w, fieldContext);
+            if (field.If != null) w.Close();
+        }
+
+        w.Close();
+    }
+
+    // ------------------------------------------------------------------ reading values
+
+    private string ReadCount(LengthSpec length, CodeWriter w, Context context, int minSize, int? max)
+    {
+        string raw;
+        switch (length.Kind)
+        {
+            case LengthKind.Fixed:
+                return length.Fixed.ToString(CultureInfo.InvariantCulture);
+            case LengthKind.Default or LengthKind.Prefix:
+                raw = $"{context.Reader}.Read{Method(length.Prefix ?? Project.Defaults.Length)}()";
+                break;
+            case LengthKind.Expression:
+                raw = Expression(length.Expression!, context, out _);
+                break;
+            default:
+                throw new CodegenException($"Length {length} is not supported here");
+        }
+
+        var count = Temp("count");
+        w.Line($"var {count} = {context.Reader}.CheckCount({raw}, {minSize}{(max != null ? $", {max}" : "")});");
+        return count;
+    }
+
+    private string Read(TypeRef type, CodeWriter w, Context context)
+    {
+        var reader = context.Reader;
+        switch (type)
+        {
+            case PrimitiveRef primitive:
+                return $"{reader}.Read{Method(primitive)}()";
+            case StringRef str:
+                if ((str.Encoding ?? Project.Defaults.String) != StringEncoding.Utf8)
+                    throw new CodegenException($"String encoding {str.Encoding} is not supported by the C# generator");
+                return str.Length.Kind switch
+                {
+                    LengthKind.Zero => $"{reader}.ReadUtf8Zero()",
+                    LengthKind.Eof => Streams ? $"{reader}.ReadUtf8ToEnd()" : $"{reader}.ReadUtf8({reader}.Remaining)",
+                    _ => $"{reader}.ReadUtf8({ReadCount(str.Length, w, context, 1, null)})",
+                };
+            case BytesRef bytes:
+                if (bytes.Length.Kind == LengthKind.Eof) return Streams ? $"{reader}.ReadToEnd()" : $"{reader}.ReadBytes({reader}.Remaining)";
+                return $"{reader}.ReadBytes({ReadCount(bytes.Length, w, context, 1, context.Field?.MaxItems)})";
+            case ArrayRef array:
+            {
+                var elementType = Type(array.Element, true);
+                var result = Temp("array");
+                var elementContext = context.Element();
+                if (array.Length.Kind == LengthKind.Until)
+                {
+                    var list = Temp("list");
+                    var item = Temp("item");
+                    w.Line($"var {list} = new global::System.Collections.Generic.List<{elementType}>();");
+                    w.Open("while (true)");
+                    w.Line($"var {item} = {Read(array.Element, w, elementContext)};");
+                    w.Line($"{list}.Add({item});");
+                    w.Line($"if ({Condition(array.Length.Expression!, ElementContext(array, item))}) break;");
+                    w.Close();
+                    w.Line($"var {result} = {list}.ToArray();");
+                    return result;
+                }
+
+                if (array.Length.Kind == LengthKind.Eof)
+                {
+                    var list = Temp("list");
+                    w.Line($"var {list} = new global::System.Collections.Generic.List<{elementType}>();");
+                    w.Open(Streams ? $"while (!{reader}.AtEnd)" : $"while ({reader}.Remaining > 0)");
+                    w.Line($"{list}.Add({Read(array.Element, w, elementContext)});");
+                    w.Close();
+                    w.Line($"var {result} = {list}.ToArray();");
+                    return result;
+                }
+
+                var count = ReadCount(array.Length, w, context, MinSize(array.Element), context.Field?.MaxItems);
+                w.Line($"var {result} = {NewArray(elementType, count)};");
+                var index = Temp("i");
+                w.Open($"for (var {index} = 0; {index} < {result}.Length; {index}++)");
+                w.Line($"{result}[{index}] = {Read(array.Element, w, elementContext)};");
+                w.Close();
+                return result;
+            }
+            case MapRef map:
+            {
+                var entryType = $"global::System.Collections.Generic.KeyValuePair<{Type(map.Key, true)}, {Type(map.Value, true)}>";
+                var count = ReadCount(map.Length, w, context, MinSize(map.Key), context.Field?.MaxItems);
+                var result = Temp("map");
+                w.Line($"var {result} = new {entryType}[{count}];");
+                var index = Temp("i");
+                var entryContext = context.Element();
+                w.Open($"for (var {index} = 0; {index} < {result}.Length; {index}++)");
+                var key = Temp("key");
+                w.Line($"var {key} = {Read(map.Key, w, entryContext)};");
+                w.Line($"{result}[{index}] = new {entryType}({key}, {Read(map.Value, w, entryContext)});");
+                w.Close();
+                return result;
+            }
+            case OptionalRef optional:
+            {
+                var result = Temp("optional");
+                w.Line($"{Nullable(Type(optional.Inner, true))} {result} = null;");
+                w.Open($"if ({reader}.ReadBool())");
+                w.Line($"{result} = {Read(optional.Inner, w, context.Element())};");
+                w.Close();
+                return result;
+            }
+            case SizedRef sized:
+            {
+                var count = ReadCount(sized.Length, w, context, 1, null);
+                var sub = Temp("reader");
+                w.Line($"var {sub} = {reader}.Slice({count});");
+                return Read(sized.Inner, w, context.WithReader(sub));
+            }
+            case FixedPointRef fixedPoint:
+                return $"({reader}.Read{Method(fixedPoint.Base)}() / {Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d)";
+            case NbtRef nbt:
+                return $"{reader}.ReadNbt{Project.Defaults.NbtFlavorOf(nbt)}()";
+            case NamedRef named:
+                switch (Definition(named.Name))
+                {
+                    case AliasDef alias when !IsExcluded(named.Name):
+                        return Read(alias.Target, w, context);
+                    case EnumDef enumDef:
+                        var enumValue = $"({Global(enumDef.Name)}){reader}.Read{Method(named.As ?? enumDef.Type)}()";
+                        if (!options.ValidateEnums || enumDef.AllowUnknown || enumDef.Flags) return enumValue;
+                        var checkedValue = Temp("enum");
+                        w.Line($"var {checkedValue} = {enumValue};");
+                        w.Line($"if (!global::System.Enum.IsDefined({checkedValue})) throw new {options.ExceptionType}($\"Unknown {enumDef.Name} value {{{checkedValue}}}\");");
+                        return checkedValue;
+                    case VariantDef variant when named.Tag != null && Project.TagKind(variant) == VariantTagKind.String:
+                        return $"{Global(named.Name)}.Read({Pass(reader)}, {Global(named.Name)}.CaseOf({Expression(named.Tag, context, out _)}))";
+                    case VariantDef variant when named.Tag != null:
+                        return $"{Global(named.Name)}.Read({Pass(reader)}, ({VariantTagType(variant, true)}){Expression(named.Tag, context, out _)})";
+                    default:
+                        return $"{Global(named.Name)}.Read({Pass(reader)})";
+                }
+            default:
+                throw new CodegenException($"Unsupported type {type}");
+        }
+    }
+
+    private static string NewArray(string elementType, string count)
+    {
+        var suffix = "";
+        while (elementType.EndsWith("[]", StringComparison.Ordinal))
+        {
+            suffix += "[]";
+            elementType = elementType[..^2];
+        }
+
+        return $"new {elementType}[{count}]{suffix}";
+    }
+
+    // ------------------------------------------------------------------ writing values
+
+    private void WriteCount(LengthSpec length, string count, CodeWriter w, Context context, string what)
+    {
+        switch (length.Kind)
+        {
+            case LengthKind.Default or LengthKind.Prefix:
+                var prefix = length.Prefix ?? Project.Defaults.Length;
+                w.Line($"{context.Writer}.Write{Method(prefix)}(({PrimitiveType(prefix.Kind)}){count});");
+                break;
+            case LengthKind.Fixed:
+                w.Line($"if ({count} != {length.Fixed}) throw new {options.ExceptionType}(\"{what} must have exactly {length.Fixed} elements\");");
+                break;
+        }
+    }
+
+    private void Write(TypeRef type, string value, CodeWriter w, Context context)
+    {
+        var writer = context.Writer;
+        var what = context.Field?.Name ?? "value";
+        switch (type)
+        {
+            case PrimitiveRef primitive:
+                w.Line($"{writer}.Write{Method(primitive)}({value});");
+                break;
+            case StringRef str:
+                if ((str.Encoding ?? Project.Defaults.String) != StringEncoding.Utf8)
+                    throw new CodegenException($"String encoding {str.Encoding} is not supported by the C# generator");
+                if (str.Length.Kind == LengthKind.Zero)
+                {
+                    w.Line($"{writer}.WriteUtf8Zero({value});");
+                    break;
+                }
+
+                if (str.Length.Kind is LengthKind.Default or LengthKind.Prefix or LengthKind.Fixed)
+                    WriteCount(str.Length, $"{options.WriterType}.Utf8Length({value})", w, context, what);
+                w.Line($"{writer}.WriteUtf8({value});");
+                break;
+            case BytesRef bytes:
+                WriteCount(bytes.Length, $"{value}.Length", w, context, what);
+                w.Line($"{writer}.WriteBytes({value});");
+                break;
+            case ArrayRef array:
+            {
+                var items = Temp("items");
+                w.Line($"var {items} = {value};");
+                WriteCount(array.Length, $"{items}.Length", w, context, what);
+                var item = Temp("item");
+                w.Open($"foreach (var {item} in {items})");
+                Write(array.Element, item, w, context.Element());
+                w.Close();
+                break;
+            }
+            case MapRef map:
+            {
+                var entries = Temp("entries");
+                w.Line($"var {entries} = {value};");
+                WriteCount(map.Length, $"{entries}.Length", w, context, what);
+                var entry = Temp("entry");
+                var entryContext = context.Element();
+                w.Open($"foreach (var {entry} in {entries})");
+                Write(map.Key, $"{entry}.Key", w, entryContext);
+                Write(map.Value, $"{entry}.Value", w, entryContext);
+                w.Close();
+                break;
+            }
+            case OptionalRef optional:
+            {
+                var temp = Temp("optional");
+                w.Line($"var {temp} = {value};");
+                w.Line($"{writer}.WriteBool({temp} != null);");
+                w.Open($"if ({temp} != null)");
+                Write(optional.Inner, IsValueType(optional.Inner) ? $"{temp}.Value" : temp, w, context.Element());
+                w.Close();
+                break;
+            }
+            case SizedRef sized:
+            {
+                var buffer = Temp("buffer");
+                var sub = Temp("writer");
+                if (Streams)
+                {
+                    w.Line($"var {buffer} = new global::System.IO.MemoryStream();");
+                    w.Line($"var {sub} = new {options.WriterType}({buffer});");
+                    Write(sized.Inner, value, w, context.WithWriter(sub));
+                    WriteCount(sized.Length, $"{buffer}.Length", w, context, what);
+                    w.Line($"{writer}.WriteBytes(new global::System.ReadOnlySpan<byte>({buffer}.GetBuffer(), 0, (int){buffer}.Length));");
+                }
+                else
+                {
+                    w.Line($"var {buffer} = new global::System.Buffers.ArrayBufferWriter<byte>();");
+                    w.Line($"var {sub} = new {options.WriterType}({buffer});");
+                    Write(sized.Inner, value, w, context.WithWriter(sub));
+                    WriteCount(sized.Length, $"{buffer}.WrittenCount", w, context, what);
+                    w.Line($"{writer}.WriteBytes({buffer}.WrittenSpan);");
+                }
+
+                break;
+            }
+            case FixedPointRef fixedPoint:
+                w.Line($"{writer}.Write{Method(fixedPoint.Base)}(({PrimitiveType(fixedPoint.Base.Kind)})global::System.Math.Round({value} * " +
+                       $"{Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d));");
+                break;
+            case NbtRef nbt:
+                w.Line($"{writer}.WriteNbt{Project.Defaults.NbtFlavorOf(nbt)}({value});");
+                break;
+            case NamedRef named:
+                switch (Definition(named.Name))
+                {
+                    case AliasDef alias when !IsExcluded(named.Name):
+                        Write(alias.Target, value, w, context);
+                        break;
+                    case EnumDef enumDef:
+                        var wire = named.As ?? enumDef.Type;
+                        w.Line($"{writer}.Write{Method(wire)}(({PrimitiveType(wire.Kind)}){value});");
+                        break;
+                    case VariantDef when named.Tag != null:
+                        w.Line($"{value}.WriteContent({Pass(writer)});");
+                        break;
+                    default:
+                        w.Line($"{value}.Write({Pass(writer)});");
+                        break;
+                }
+
+                break;
+            default:
+                throw new CodegenException($"Unsupported type {type}");
+        }
+    }
+
+    // ------------------------------------------------------------------ variants
+
+    private string VariantTagType(VariantDef variant, bool qualified) =>
+        TagEnum(variant) is { } tagEnum
+            ? qualified ? Global(tagEnum.Name) : tagEnum.Name
+            : qualified ? $"{Global(variant.Name)}.Case" : "Case";
+
+    private string CaseValue(VariantDef variant, VariantCase variantCase)
+    {
+        if (TagEnum(variant) is { } enumDef)
+        {
+            return variantCase.TagMember != null
+                ? $"{Global(enumDef.Name)}.{Id(variantCase.TagMember)}"
+                : $"({Global(enumDef.Name)}){variantCase.TagValue}";
+        }
+
+        return $"{Global(variant.Name)}.Case.{Id(variantCase.Name)}";
+    }
+
+    protected override string Variant(VariantDef variant)
+    {
+        var name = variant.Name;
+        var isClass = IsClass(name);
+        var w = new CodeWriter();
+        var tagType = VariantTagType(variant, false);
+        Doc(w, variant.Doc, variant.Tag != null ? $"Tag: {Describe(variant.Tag)}." : "The tag is stored outside (see the fields using it).",
+            isClass ? "A class because it contains itself." : null);
+        w.Open($"public {(isClass ? "sealed partial class" : "partial struct")} {name} : {options.SerializableInterface}<{name}>");
+
+        var stringTags = Project.TagKind(variant) == VariantTagKind.String;
+        var resolvedTag = variant.Tag != null ? Project.Unalias(variant.Tag) : null;
+        if (tagType == "Case")
+        {
+            // String tags are mapped to the case index; CaseOf and TagOf convert.
+            var underlying = stringTags ? "int" : resolvedTag is PrimitiveRef primitive ? PrimitiveType(primitive.Kind) : "long";
+            w.Open($"public enum Case : {underlying}");
+            for (var i = 0; i < variant.Cases.Count; i++)
+                w.Line($"{Id(variant.Cases[i].Name)} = {(stringTags ? i : variant.Cases[i].TagValue)},");
+            w.Close();
+            w.Line();
+        }
+
+        if (stringTags)
+        {
+            w.Line("/// <summary>The case of a tag.</summary>");
+            w.Open("public static Case CaseOf(string tag) => tag switch");
+            foreach (var variantCase in variant.Cases) w.Line($"{Literal(variantCase.TagMember!)} => Case.{Id(variantCase.Name)},");
+            w.Line($"_ => throw new {options.ExceptionType}($\"Unknown {name} tag '{{tag}}'\"),");
+            w.Close(";");
+            w.Line();
+            w.Line("/// <summary>The tag of a case.</summary>");
+            w.Open("public static string TagOf(Case kind) => kind switch");
+            foreach (var variantCase in variant.Cases) w.Line($"Case.{Id(variantCase.Name)} => {Literal(variantCase.TagMember!)},");
+            w.Line($"_ => throw new {options.ExceptionType}($\"Unknown {name} case {{kind}}\"),");
+            w.Close(";");
+            w.Line();
+        }
+
+        w.Line("/// <summary>The active case.</summary>");
+        w.Line($"public {tagType} Kind;");
+        w.Line();
+        foreach (var variantCase in variant.Cases.Where(c => c.Type != null))
+        {
+            Doc(w, variantCase.Doc ?? $"The value of case {variantCase.Name}; only meaningful when Kind is {variantCase.Name}.",
+                $"Wire: {Describe(variantCase.Type!)}.");
+            w.Line($"public {Type(variantCase.Type!)} {Member(variantCase.Name, name)};");
+            w.Line();
+        }
+
+        foreach (var variantCase in variant.Cases)
+        {
+            var member = Member(variantCase.Name, name);
+            w.Line(variantCase.Type == null
+                ? $"public static {name} From{variantCase.Name}() => new() {{ Kind = {CaseValue(variant, variantCase)} }};"
+                : $"public static {name} From{variantCase.Name}({Type(variantCase.Type)} value) => new() {{ Kind = {CaseValue(variant, variantCase)}, {member} = value }};");
+        }
+
+        w.Line();
+        w.Open($"public static {name} Read({ReaderParameter})");
+        if (variant.Tag is NamedRef tagRef && TagEnum(variant) is { } tagEnum)
+            w.Line($"return Read({Pass("reader")}, ({Global(tagEnum.Name)})reader.Read{Method(tagRef.As ?? tagEnum.Type)}());");
+        else if (variant.Tag != null && stringTags)
+            w.Line($"return Read({Pass("reader")}, CaseOf({Read(variant.Tag, w, Context.Empty)}));");
+        else if (resolvedTag is PrimitiveRef primitive)
+            w.Line($"return Read({Pass("reader")}, ({Global(name)}.Case)reader.Read{Method(primitive)}());");
+        else
+            w.Line($"throw new {options.ExceptionType}(\"{name} needs its tag from the enclosing type\");");
+
+        w.Close();
+        w.Line();
+
+        w.Open($"public static {name} Read({ReaderParameter}, {tagType} kind)");
+        w.Line($"var result = new {Global(name)} {{ Kind = kind }};");
+        w.Open("switch (kind)");
+        foreach (var variantCase in variant.Cases)
+        {
+            w.Line($"case {CaseValue(variant, variantCase)}:");
+            w.Indent();
+            if (variantCase.Type != null)
+                w.Line($"result.{Member(variantCase.Name, name)} = {Read(variantCase.Type, w, Context.Empty)};");
+            w.Line("break;");
+            w.Outdent();
+        }
+
+        w.Line("default:");
+        w.Line($"    throw new {options.ExceptionType}($\"Unknown {name} tag {{kind}}\");");
+        w.Close();
+        w.Line("return result;");
+        w.Close();
+        w.Line();
+
+        var readOnly = isClass ? "" : "readonly ";
+        w.Open($"public {readOnly}void Write({WriterParameter()})");
+        if (TagEnum(variant) != null || resolvedTag is PrimitiveRef)
+        {
+            var wire = TagWire(variant)!;
+            w.Line($"writer.Write{Method(wire)}(({PrimitiveType(wire.Kind)})Kind);");
+        }
+        else if (variant.Tag != null && stringTags)
+        {
+            Write(variant.Tag, "TagOf(Kind)", w, Context.Empty);
+        }
+
+        w.Line($"WriteContent({Pass("writer")});");
+        w.Close();
+        w.Line();
+
+        w.Open($"public {readOnly}void WriteContent({WriterParameter()})");
+        w.Open("switch (Kind)");
+        foreach (var variantCase in variant.Cases)
+        {
+            w.Line($"case {CaseValue(variant, variantCase)}:");
+            w.Indent();
+            if (variantCase.Type != null) Write(variantCase.Type, Member(variantCase.Name, name), w, Context.Empty);
+            w.Line("break;");
+            w.Outdent();
+        }
+
+        w.Line("default:");
+        w.Line($"    throw new {options.ExceptionType}($\"Unknown {name} tag {{Kind}}\");");
+        w.Close();
+        w.Close();
+        w.Close();
+        return Header() + w;
+    }
+
+    // ------------------------------------------------------------------ registry
+
+    private string Registry()
+    {
+        var w = new CodeWriter();
+        var packets = RegistryPackets();
+        w.Line($"/// <summary>Packet id dispatch for the {packets.Count} packets of '{Escape(Project.Settings.Name)}'.</summary>");
+        w.Open($"public static partial class {options.Registry}");
+        w.Line("/// <summary>Reads the packet with the given id and passes it to the visitor. Returns false for unknown ids.</summary>");
+        w.Open($"public static bool Dispatch<TVisitor>(uint id, {ReaderParameter}, ref TVisitor visitor) where TVisitor : {options.VisitorInterface}");
+        w.Open("switch (id)");
+        foreach (var packet in packets)
+        {
+            w.Open($"case {packet.Id}:");
+            w.Line($"var packet = {Global(packet.Name)}.Read({Pass("reader")});");
+            w.Line("visitor.Visit(ref packet);");
+            w.Line("return true;");
+            w.Close();
+        }
+
+        w.Line("default:");
+        w.Line("    return false;");
+        w.Close();
+        w.Close();
+        w.Line();
+
+        w.Line("/// <summary>The packet name for an id, or null.</summary>");
+        w.Open("public static string? NameOf(uint id) => id switch");
+        foreach (var packet in packets) w.Line($"{packet.Id} => \"{packet.Name}\",");
+        w.Line("_ => null,");
+        w.Close(";");
+        w.Line();
+        w.Line("/// <summary>All packet ids.</summary>");
+        w.Line($"public static global::System.ReadOnlySpan<uint> Ids => [{string.Join(", ", packets.Select(p => p.Id))}];");
+        w.Close();
+        return Header() + w;
+    }
+}

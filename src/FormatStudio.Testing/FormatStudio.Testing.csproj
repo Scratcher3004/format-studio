@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-    <!-- Helpers for tests of projects that use Format Studio, e.g. checking generated C# against the simulator. -->
+    <!-- Helpers for tests of projects that use Format Studio, e.g. checking generated C# and Java against the simulator. -->
     <PropertyGroup>
         <RootNamespace>FormatStudio.Testing</RootNamespace>
     </PropertyGroup>

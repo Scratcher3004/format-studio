@@ -1,5 +1,7 @@
 @page "/p/{ProjectId}"
 @inherits ProjectComponent
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
 
 <PageTitle>Format Studio</PageTitle>
 
@@ -37,17 +39,30 @@
             <MudSwitch T="bool" @bind-Value="_showInfo" Label="Show overrides and other infos" Color="Color.Primary" />
         </MudExpansionPanel>
         <MudExpansionPanel Text="@($"Samples ({project.Samples.Count})")" Expanded="@(project.Samples.Count > 0)">
-            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => RunSamples(project)" Class="mb-2">Run samples</MudButton>
+            <MudStack Row="@true" Spacing="@(2)" Class="mb-2">
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => RunSamples(project)">Run samples</MudButton>
+                <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" Href="@Link("sample/new")">New sample</MudButton>
+            </MudStack>
             <MudSimpleTable Dense="true">
-                <thead><tr><th>Sample</th><th>Type</th><th>Expected hex</th><th>Result</th></tr></thead>
+                <thead><tr><th>Sample</th><th>Type</th><th>Expected hex</th><th>Result</th><th></th></tr></thead>
                 <tbody>
-                    @foreach (var sample in project.Samples)
+                    @for (var i = 0; i < project.Samples.Count; i++)
                     {
+                        var sample = project.Samples[i];
+                        var index = i;
                         <tr>
-                            <td>@sample.Name</td>
+                            <td><MudLink Href="@Link($"sample/{index}")">@sample.Name</MudLink></td>
                             <td><MudLink Href="@Link($"type/{sample.Type}")">@sample.Type</MudLink></td>
-                            <td class="mono">@sample.Hex</td>
-                            <td>@(_sampleResults.TryGetValue(sample, out var result) ? result : "")</td>
+                            <td class="mono" title="@sample.Hex">@Truncate(sample.Hex)</td>
+                            <td title="@_sampleResults.GetValueOrDefault(sample)">@Truncate(_sampleResults.GetValueOrDefault(sample))</td>
+                            <td class="row-buttons">
+                                <MudTooltip Text="View and debug">
+                                    <MudIconButton Icon="@Icons.Material.Filled.BugReport" Size="@Size.Small" Href="@Link($"sample/{index}")" />
+                                </MudTooltip>
+                                <MudTooltip Text="Delete">
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="@Size.Small" OnClick="() => Delete(sample)" />
+                                </MudTooltip>
+                            </td>
                         </tr>
                     }
                 </tbody>
@@ -70,35 +85,29 @@
         ("bitfields", project.Types.Values.Count(t => t is BitfieldDef)),
     ];
 
+    /// <summary>Hex and results longer than this are cut in the table; the full text is in the tooltip.</summary>
+    private const int MaxShown = 48;
+
+    private static string? Truncate(string? text) => text is { Length: > MaxShown } ? text[..MaxShown] + "\u2026" : text;
+
     private void RunSamples(FormatProject project)
     {
-        var codec = new Codec(project);
         _sampleResults.Clear();
-        foreach (var sample in project.Samples)
+        foreach (var sample in project.Samples) _sampleResults[sample] = Projects.CheckSample(sample);
+    }
+
+    private async Task Delete(SampleDef sample)
+    {
+        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete sample", $"Delete '{sample.Name}' from {sample.Source?.File}?", yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        try
         {
-            var type = Codec.ParseType(sample.Type);
-            if (sample.Value != null)
-            {
-                var encoded = codec.Encode(type, sample.Value);
-                if (!encoded.Success)
-                {
-                    _sampleResults[sample] = "encode failed: " + encoded.Diagnostics.First(d => d.Severity == Severity.Error).Message;
-                    continue;
-                }
-
-                if (sample.Hex != null && !Hex.Parse(sample.Hex).AsSpan().SequenceEqual(encoded.Bytes))
-                {
-                    _sampleResults[sample] = $"differs: {Hex.Format(encoded.Bytes)}";
-                    continue;
-                }
-
-                var roundTrip = Simulator.RoundTripBytes(codec, type, encoded.Bytes);
-                _sampleResults[sample] = roundTrip.Success ? "ok" : "round trip failed";
-            }
-            else if (sample.Hex != null)
-            {
-                _sampleResults[sample] = Simulator.RoundTripBytes(codec, type, Hex.Parse(sample.Hex)).Success ? "ok" : "round trip failed";
-            }
+            Projects.DeleteSample(sample);
+            Snackbar.Add($"Deleted '{sample.Name}'.", MudBlazor.Severity.Success);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
+        {
+            Snackbar.Add($"Not deleted: {e.Message}", MudBlazor.Severity.Error);
         }
     }
 }
