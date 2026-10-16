@@ -78,7 +78,7 @@ public sealed partial class DeclaredNative : INativeType
             if (map["codegen"] is JsonObject codegenMap)
             {
                 foreach (var (generator, node) in codegenMap)
-                    codegen[generator] = Codegen(name, generator, node, file, files, used, generators, diagnostics, where);
+                    codegen[generator] = ReadCodegen(name, generator, node, file, files, used, generators, diagnostics, where);
             }
             else if (map["codegen"] != null) throw new FormatDefinitionException("codegen must map generator names to their code");
 
@@ -172,7 +172,8 @@ public sealed partial class DeclaredNative : INativeType
         return result;
     }
 
-    private static NativeCodegen Codegen(string name, string generator, JsonNode? node, string file, NativeFiles files, List<string> used,
+    /// <summary>Reads the code of a native type for one generator; also used by <see cref="NativeCodegenExtension"/>.</summary>
+    internal static NativeCodegen ReadCodegen(string name, string generator, JsonNode? node, string file, NativeFiles files, List<string> used,
         CodeGenerators? generators, DiagnosticBag diagnostics, SourceLocation where)
     {
         if (node is not JsonObject map) throw new FormatDefinitionException($"codegen.{generator} must be a mapping");

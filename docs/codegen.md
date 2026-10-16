@@ -87,7 +87,9 @@ Definitions that use these are reported as errors and not generated; the other d
 Each [native type](dsl.md#native-types) says how generated code reads and writes its values: a type in the target
 language and read/write templates, plus source files the code needs. Those files are written into the output once per
 native type used, in `Natives/` (C#, namespace `<namespace>.Natives`) or in the package `<package>.natives` (Java), with
-the generator's marker like every generated file. NBT needs none: the runtime reads and writes it.
+the generator's marker like every generated file. NBT needs none: the runtime reads and writes it. A type without
+code for a generator can get it from a [`native-codegen` file](natives.md#code-for-other-generators); otherwise its
+uses are errors of the definitions.
 
 ## Checking generated code
 

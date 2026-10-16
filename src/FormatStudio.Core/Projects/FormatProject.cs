@@ -379,6 +379,8 @@ public sealed class FormatProject
     public NativeTypes Natives { get; set; } = NativeTypes.BuiltIn;
     /// <summary>The native types the project declares itself (<c>native:</c> files among its sources).</summary>
     public List<DeclaredNative> DeclaredNatives { get; } = [];
+    /// <summary>The code for native types the project adds itself (<c>native-codegen:</c> files among its sources).</summary>
+    public List<NativeCodegenExtension> CodegenExtensions { get; } = [];
     /// <summary>The code generators the project's targets can use: built-in, its own and its libraries'.</summary>
     public CodeGenerators Generators { get; set; } = CodeGenerators.BuiltIn;
     /// <summary>The code generators the project declares itself (<c>generator:</c> files among its sources).</summary>
@@ -506,6 +508,7 @@ public sealed class FormatProject
         var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox, Natives = Natives, Generators = Generators, Plugins = Plugins };
         copy.DeclaredNatives.AddRange(DeclaredNatives);
         copy.DeclaredGenerators.AddRange(DeclaredGenerators);
+        copy.CodegenExtensions.AddRange(CodegenExtensions);
         foreach (var type in _types.Values) copy.Add(type);
         foreach (var module in _modules.Values) copy.AddModule(module);
         foreach (var (alias, module) in _dependencies) copy.AddModule(module, alias);
@@ -525,6 +528,10 @@ public sealed class FormatProject
         _ when NativeTypes.IsBuiltIn(type.Name) => "built-in",
         _ => type.GetType().FullName ?? type.Name,
     };
+
+    /// <summary>Adds code of native types for other generators; problems (unknown type, two sources of code) are errors.</summary>
+    public void AddCodegen(IEnumerable<NativeCodegenExtension> extensions) =>
+        Natives = Natives.WithCodegen(extensions, (extension, message) => Diagnostics.Error(message, extension.Source));
 
     /// <summary>Adds code generators; one named like a generator the project already has is an error.</summary>
     public void AddGenerators(IEnumerable<ICodeGenerator> generators, SourceLocation? where = null) =>
@@ -680,6 +687,15 @@ public sealed class FormatProject
         }
 
         AddNatives(DeclaredNatives);
+
+        // Code for native types, of the project's and its libraries' types.
+        foreach (var source in sources.Where(s => NativeCodegenExtension.IsDeclaration(s.Text)))
+        {
+            if (NativeCodegenExtension.Read(source.Text, Relative(source.File), files, Diagnostics, generators: Generators) is { } extension)
+                CodegenExtensions.Add(extension);
+        }
+
+        AddCodegen(CodegenExtensions);
         foreach (var (file, patternIndex, text) in sources.Where(s => !IsDeclaration(s.Text)))
         {
             var definition = DslReader.Read(text, Relative(file), Diagnostics);
@@ -701,8 +717,9 @@ public sealed class FormatProject
         }
     }
 
-    /// <summary>Whether a source file declares a native type or a code generator rather than a definition.</summary>
-    public static bool IsDeclaration(string text) => DeclaredNative.IsDeclaration(text) || DeclaredGenerator.IsDeclaration(text);
+    /// <summary>Whether a source file declares a native type, code for one or a code generator rather than a definition.</summary>
+    public static bool IsDeclaration(string text) =>
+        DeclaredNative.IsDeclaration(text) || DeclaredGenerator.IsDeclaration(text) || NativeCodegenExtension.IsDeclaration(text);
 
     private void LoadSamples()
     {

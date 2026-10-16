@@ -126,6 +126,8 @@ internal static class Commands
                 _ => "built-in",
             };
             Console.WriteLine($"{native.Name + (parameters.Length > 0 ? $"({parameters})" : ""),-40} {origin}");
+            foreach (var extension in project.Natives.Extensions.Where(e => e.Type == native.Name))
+                Console.WriteLine($"{"",-40} + {string.Join(", ", extension.Codegen.Keys)} code from {extension.Source.File}");
         }
 
         return project.Diagnostics.HasErrors ? 1 : 0;

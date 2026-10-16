@@ -169,7 +169,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             throw new CodegenException(e.Message);
         }
 
-        var codegen = bound.Type.Codegen(Generator) ?? throw new CodegenException($"The native type {native.Name} has no code for {Generator}");
+        var codegen = project.Natives.Codegen(bound.Type, Generator) ?? throw new CodegenException($"The native type {native.Name} has no code for {Generator}");
         _natives.TryAdd(bound.Type.Name, (bound.Type, codegen));
         return (codegen, bound.Args);
     }

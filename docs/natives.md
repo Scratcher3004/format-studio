@@ -86,12 +86,34 @@ public sealed class RgbType : INativeType
 `GeneratedCodeVerifier` checks the generated code of a project that uses the type against the plugin, like any other
 type (see [code generation](codegen.md#checking-generated-code)).
 
+## Code for other generators
+
+A native type's code comes from its declaration (or class) for the generators it was written for. Any project or
+library can add code for other generators, e.g. Java for a type that ships only C#, or code for a
+[plugin generator](generators.md#using-a-generator-in-a-project), with a `native-codegen` file among its sources:
+
+```yaml
+native-codegen: rgb               # the native type: built-in, the project's or a library's
+doc: Java for rgb
+codegen:                          # as in a declaration
+  java-stream:
+    type: String
+    read: '{{namespace}}.Rgb.fromBytes({{reader}}.readU8(), {{reader}}.readU8(), {{reader}}.readU8(), "{{order}}")'
+    write: '{{writer}}.writeBytes({{namespace}}.Rgb.toBytes({{value}}, "{{order}}"))'
+    files: [java/Rgb.java]
+```
+
+The code only adds generators: a type has one source of code per generator. Code for a generator the type has itself,
+or that another file already adds, is an error, and the file is left out as a whole. `format-studio natives` lists
+the added code under each type.
+
 ## In libraries
 
 A library's native types are declared the same way. `format-studio pack` puts each declaration into the package with
 the plugin, the dependencies it references from its folder (and their `.pdb` files) and the runtime files of the
 generated code. A project that uses the library can use its native types, those of the library's own dependencies
-included, by name.
+included, by name. A library's `native-codegen` files are packed with their runtime files too and apply wherever the
+library is loaded.
 
 ## Which plugins are loaded
 

@@ -10,8 +10,13 @@ namespace FormatStudio.Natives;
 public sealed partial class NativeTypes
 {
     private readonly Dictionary<string, INativeType> _types;
+    private readonly Dictionary<(string Type, string Generator), NativeCodegenExtension> _extensions;
 
-    private NativeTypes(Dictionary<string, INativeType> types) => _types = types;
+    private NativeTypes(Dictionary<string, INativeType> types, Dictionary<(string Type, string Generator), NativeCodegenExtension>? extensions = null)
+    {
+        _types = types;
+        _extensions = extensions ?? [];
+    }
 
     /// <summary>The types that come with Format Studio.</summary>
     public static NativeTypes BuiltIn { get; } = new(new Dictionary<string, INativeType>(StringComparer.Ordinal)
@@ -26,8 +31,66 @@ public sealed partial class NativeTypes
 
     public INativeType? Find(string name) => _types.GetValueOrDefault(name);
 
+    /// <summary>The code for other generators that <c>native-codegen</c> files add to the types.</summary>
+    public IEnumerable<NativeCodegenExtension> Extensions => _extensions.Values.Distinct();
+
+    /// <summary>The code of a type for a generator: from a <c>native-codegen</c> file, else the type's own.</summary>
+    public NativeCodegen? Codegen(INativeType type, string generator) =>
+        _extensions.TryGetValue((type.Name, generator), out var extension) ? extension.Codegen[generator] : type.Codegen(generator);
+
     /// <summary>A copy with <paramref name="type"/> added, or replacing the one with its name.</summary>
-    public NativeTypes With(INativeType type) => new(new Dictionary<string, INativeType>(_types, StringComparer.Ordinal) { [type.Name] = type });
+    public NativeTypes With(INativeType type) =>
+        new(new Dictionary<string, INativeType>(_types, StringComparer.Ordinal) { [type.Name] = type }, _extensions);
+
+    /// <summary>
+    /// A copy with the code of <paramref name="extensions"/> added. An extension is left out, and reported to
+    /// <paramref name="error"/>, when its type is unknown, has code of its own for one of its generators or another
+    /// extension has code for the type and generator; adding the same extension again changes nothing.
+    /// </summary>
+    public NativeTypes WithCodegen(IEnumerable<NativeCodegenExtension> extensions, Action<NativeCodegenExtension, string> error)
+    {
+        var result = new Dictionary<(string Type, string Generator), NativeCodegenExtension>(_extensions);
+        foreach (var extension in extensions)
+        {
+            if (result.ContainsValue(extension)) continue;
+            if (Find(extension.Type) is not { } type)
+            {
+                error(extension, $"native-codegen for unknown native type '{extension.Type}'");
+                continue;
+            }
+
+            var problems = new List<string>();
+            foreach (var generator in extension.Codegen.Keys)
+            {
+                if (result.TryGetValue((type.Name, generator), out var other))
+                    problems.Add($"{type.Name} has {generator} code from both {other.Source.File} and {extension.Source.File}");
+                else if (OwnCodegen(type, generator))
+                    problems.Add($"{type.Name} has {generator} code of its own; native-codegen only adds generators a type has no code for");
+            }
+
+            if (problems.Count > 0)
+            {
+                foreach (var problem in problems) error(extension, problem);
+                continue;
+            }
+
+            foreach (var generator in extension.Codegen.Keys) result[(type.Name, generator)] = extension;
+        }
+
+        return new NativeTypes(_types, result);
+    }
+
+    private static bool OwnCodegen(INativeType type, string generator)
+    {
+        try
+        {
+            return type.Codegen(generator) != null;
+        }
+        catch (FormatDefinitionException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// A copy with <paramref name="types"/> added. A type named like another one (except the same type again) is left
@@ -47,7 +110,7 @@ public sealed partial class NativeTypes
             result[type.Name] = type;
         }
 
-        return new NativeTypes(result);
+        return new NativeTypes(result, _extensions);
     }
 
     /// <summary>

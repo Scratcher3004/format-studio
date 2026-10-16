@@ -85,7 +85,8 @@ rebuilt. The same [plugin policy](natives.md#which-plugins-are-loaded) decides w
 
 Each project has its own generators: the built-in ones, those it declares and those of its libraries. A name can't be
 used twice, also not a built-in one. The command line (`generate`, `show --target`, `generators`) and the web UI use
-the project's generators, and `skipCodegen` and the `codegen` of native types can name them.
+the project's generators, and `skipCodegen` and the `codegen` of native types can name them. Native types that have no code for a plugin
+generator can get it from a [`native-codegen` file](natives.md#code-for-other-generators), without changing the type.
 
 Without its plugin (not allowed, failed to load) the generator still exists: targets naming it stay valid, but
 generating reports why it can't, and nothing is written. Exceptions of `Generate` other than

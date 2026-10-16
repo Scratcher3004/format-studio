@@ -36,6 +36,8 @@ public sealed class FormatModule
     public IReadOnlyList<Natives.INativeType> Natives { get; init; } = [];
     /// <summary>The code generators the library declares (not those of its dependencies, which are modules of their own).</summary>
     public IReadOnlyList<Codegen.DeclaredGenerator> Generators { get; init; } = [];
+    /// <summary>The code for native types the library adds (<c>native-codegen</c>); it applies wherever the library is loaded.</summary>
+    public IReadOnlyList<Natives.NativeCodegenExtension> CodegenExtensions { get; init; } = [];
 
     public TypeDef? Find(string name) => _types.GetValueOrDefault(name);
 

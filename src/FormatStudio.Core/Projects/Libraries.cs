@@ -115,6 +115,12 @@ public sealed class LibraryPackage
             foreach (var file in generator.Files) Add(file, generator.Name);
         }
 
+        foreach (var extension in library.CodegenExtensions.OrderBy(e => e.Source.File, StringComparer.Ordinal))
+        {
+            Add(extension.Source.File, $"native-codegen for {extension.Type}");
+            foreach (var file in extension.Files) Add(file, $"native-codegen for {extension.Type}");
+        }
+
         return path;
     }
 
@@ -231,6 +237,7 @@ public sealed class LibraryLoader
 
         project.AddNatives(project.Modules.Values.SelectMany(m => m.Natives), where);
         project.AddGenerators(project.Modules.Values.SelectMany(m => m.Generators), where);
+        project.AddCodegen(project.Modules.Values.SelectMany(m => m.CodegenExtensions));
     }
 
     private FormatModule Load(string name, string? version, IReadOnlyList<string> chain)
@@ -272,6 +279,13 @@ public sealed class LibraryLoader
             .ToList();
         var used = dependencies.SelectMany(d => d.Natives).Concat(declared).Distinct().ToList();
         library.AddNatives(used, new SourceLocation($"{package.Origin}"));
+        var extensions = package.Files.Where(f => NativeCodegenExtension.IsDeclaration(f.Text))
+            .Select(f => NativeCodegenExtension.Read(f.Text, f.Path, files, natives, $"{package.Origin}!/{f.Path}"))
+            .OfType<NativeCodegenExtension>()
+            .ToList();
+        library.AddCodegen(extensions);
+        // Only those without problems, which are reported once, here.
+        extensions = extensions.Where(library.Natives.Extensions.Contains).ToList();
         foreach (var (path, text) in package.Files.Where(f => !FormatProject.IsDeclaration(f.Text)))
             if (DslReader.Read(text, $"{package.Origin}!/{path}", library.Diagnostics) is { } definition) library.Add(definition);
         Validation.Validator.Validate(library);
@@ -280,7 +294,8 @@ public sealed class LibraryLoader
 
         var definitions = library.Types.Values.ToList();
         new Baker(library, name).Bake(definitions);
-        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin, Natives = used, Generators = generators };
+        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin, Natives = used, Generators = generators,
+            CodegenExtensions = extensions };
         _project.AddModule(result);
         return result;
     }

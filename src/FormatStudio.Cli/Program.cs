@@ -25,7 +25,8 @@ const string usage = """
       format-studio libraries
           Lists the libraries the project loads (dependencies of libraries included), their versions and packages.
       format-studio natives
-          Lists the native types the project can use: built-in, declared by the project and by its libraries.
+          Lists the native types the project can use: built-in, declared by the project and by its libraries, and
+          the code for other generators that native-codegen files add to them.
       format-studio list [--kind packet|struct|enum|variant|alias|bitfield] [--filter <text>] [--libraries]
           Lists the definitions; --libraries adds those of the libraries (as Library.Name).
       format-studio show <type> [--target <target|generator>] [--csharp]

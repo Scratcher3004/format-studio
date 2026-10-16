@@ -305,4 +305,81 @@ public class PluginTests
         AssertNoErrors(disabled);
         Assert.Contains(disabled.Diagnostics, d => d.Message.StartsWith("Library colors 1.0: rgb can't decode or encode", StringComparison.Ordinal));
     }
+
+    /// <summary>The declaration of <c>rgb</c> without its Java code.</summary>
+    private static string CSharpOnly => Declaration[..Declaration.IndexOf("  java-stream:", StringComparison.Ordinal)];
+
+    /// <summary>The Java code of <c>rgb</c> as a native-codegen file in <c>natives/</c>.</summary>
+    private static string JavaExtension => "native-codegen: rgb\ndoc: Java for rgb\ncodegen:\n" + Declaration[Declaration.IndexOf("  java-stream:", StringComparison.Ordinal)..];
+
+    [Fact]
+    public void ExtensionsAddCodeForOtherGenerators()
+    {
+        var folder = Folder(Settings, declaration: CSharpOnly);
+        var java = new CodegenTarget { Name = "java", Generator = "java-stream", Output = "out" };
+        var without = FormatProject.Load(folder);
+        AssertNoErrors(without);
+        Assert.Contains(CodeGeneration.Generate(without, java).Diagnostics, d => d.Message.Contains("The native type rgb has no code for java-stream"));
+
+        File.WriteAllText(Path.Combine(folder, "natives", "rgb-java.yaml"), JavaExtension);
+        var project = FormatProject.Load(folder);
+        AssertNoErrors(project);
+        var extension = Assert.Single(project.CodegenExtensions);
+        Assert.Equal("rgb", extension.Type);
+        Assert.Equal(["java-stream"], extension.Codegen.Keys);
+        Assert.Equal(["natives/java/Rgb.java"], extension.Files);
+        Assert.Same(extension, Assert.Single(project.Natives.Extensions));
+        CodegenTests.AssertMatchesSimulator(project, "java-stream", 30);
+        // The type's own code stays as it is.
+        Assert.Equal("string", project.Natives.Codegen(project.Natives.Find("rgb")!, "csharp")!.Type);
+    }
+
+    [Fact]
+    public void ExtensionsDontReplaceCode()
+    {
+        var folder = Folder(Settings);
+        void Extend(string file, string text) => File.WriteAllText(Path.Combine(folder, "natives", file), text);
+        const string Rust = "codegen:\n  rust: {type: Rgb, read: 'Rgb::read({{reader}})', write: '{{value}}.write({{writer}})'}\n";
+        Extend("a.yaml", "native-codegen: nbt\ncodegen:\n  csharp: {type: a, read: b, write: c}\n");
+        Extend("b.yaml", "native-codegen: rgb\n" + Rust);
+        Extend("c.yaml", "native-codegen: rgb\n" + Rust);
+        Extend("d.yaml", "native-codegen: nope\n" + Rust);
+        Extend("e.yaml", "native-codegen: rgb\n");
+        Extend("f.yaml", "native-codegen: nbt\n" + Rust.Replace("rust", "sketch") + "  java-stream: {type: a, read: b, write: c}\n");
+        var project = FormatProject.Load(folder);
+        var errors = project.Diagnostics.Where(d => d.Severity == Severity.Error).Select(d => d.ToString()).ToList();
+        void Has(string text) => Assert.True(errors.Any(e => e.Contains(text)), $"No error with '{text}' in:\n{string.Join("\n", errors)}");
+        Has("natives/a.yaml: error: nbt has csharp code of its own");
+        Has("natives/c.yaml: error: rgb has rust code from both natives/b.yaml and natives/c.yaml");
+        Has("native-codegen for unknown native type 'nope'");
+        Has("native-codegen for rgb needs 'codegen'");
+        // An extension with a problem is left out as a whole.
+        Has("natives/f.yaml: error: nbt has java-stream code of its own");
+        Assert.Null(project.Natives.Codegen(project.Natives.Find("nbt")!, "sketch"));
+        Assert.Contains(project.Diagnostics, d => d.Severity == Severity.Warning && d.Message.StartsWith("Unknown generator 'rust' in the codegen of rgb", StringComparison.Ordinal));
+        Assert.Equal("Rgb", project.Natives.Codegen(project.Natives.Find("rgb")!, "rust")!.Type);
+    }
+
+    [Fact]
+    public void LibrariesShipTheirExtensions()
+    {
+        var library = Folder("name: colors\nkind: library\nversion: \"1.0\"\nsources: [types/*.yaml, natives/*.yaml]\n", declaration: CSharpOnly);
+        File.WriteAllText(Path.Combine(library, "natives", "rgb-java.yaml"), JavaExtension);
+        var package = LibraryPackage.Pack(FormatProject.Load(library), Path.Combine(library, "out"));
+        using (var zip = ZipFile.OpenRead(package))
+            Assert.Contains("natives/rgb-java.yaml", zip.Entries.Select(e => e.FullName));
+
+        var consumer = TestPaths.NewTempDirectory();
+        Directory.CreateDirectory(Path.Combine(consumer, "libraries"));
+        File.Copy(package, Path.Combine(consumer, "libraries", Path.GetFileName(package)));
+        File.WriteAllText(Path.Combine(consumer, "c.fstudio.yaml"), "name: c\ndependencies: [{library: colors}]\n");
+        File.WriteAllText(Path.Combine(consumer, "Scene.yaml"), "struct: Scene\nfields:\n  - sky: rgb(bgr)\n  - palette: colors.Palette\n");
+        // The project adds code of its own to the library's type, for a generator neither has.
+        File.WriteAllText(Path.Combine(consumer, "rgb-sketch.yaml"), "native-codegen: rgb\ncodegen:\n  sketch: {type: color, read: 'rgb({{reader}})', write: 'rgb({{writer}}, {{value}})'}\n");
+        var project = FormatProject.Load(consumer);
+        AssertNoErrors(project);
+        Assert.Equal(["rgb-sketch.yaml"], project.CodegenExtensions.Select(e => e.Source.File));
+        Assert.Equal(2, project.Natives.Extensions.Count());
+        CodegenTests.AssertMatchesSimulator(project, "java-stream", 20);
+    }
 }
