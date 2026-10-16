@@ -374,8 +374,12 @@ public sealed class FormatProject
     public FileSandbox Sandbox { get; init; } = FileSandbox.Unrestricted;
     public DiagnosticBag Diagnostics { get; } = [];
     public List<SampleDef> Samples { get; } = [];
-    /// <summary>The native types the project's definitions can use.</summary>
-    public NativeTypes Natives { get; init; } = NativeTypes.BuiltIn;
+    /// <summary>The native types the project's definitions can use: built-in, its own and its libraries'.</summary>
+    public NativeTypes Natives { get; set; } = NativeTypes.BuiltIn;
+    /// <summary>The native types the project declares itself (<c>native:</c> files among its sources).</summary>
+    public List<DeclaredNative> DeclaredNatives { get; } = [];
+    /// <summary>Which plugins of native types may be loaded, the project's and its libraries'.</summary>
+    public PluginPolicy Plugins { get; init; } = PluginPolicy.All;
 
     public FormatProject(ProjectSettings settings, string directory, string? filePath = null)
     {
@@ -494,13 +498,27 @@ public sealed class FormatProject
     /// </summary>
     public FormatProject With(TypeDef definition)
     {
-        var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox, Natives = Natives };
+        var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox, Natives = Natives, Plugins = Plugins };
+        copy.DeclaredNatives.AddRange(DeclaredNatives);
         foreach (var type in _types.Values) copy.Add(type);
         foreach (var module in _modules.Values) copy.AddModule(module);
         foreach (var (alias, module) in _dependencies) copy.AddModule(module, alias);
         copy.Add(definition);
         return copy;
     }
+
+    /// <summary>Adds native types; one named like a type the project already has is an error.</summary>
+    public void AddNatives(IEnumerable<INativeType> types, SourceLocation? where = null) =>
+        Natives = Natives.With(types, (existing, added) =>
+            Diagnostics.Error($"Two native types are named '{added.Name}': {NativeOrigin(existing)} and {NativeOrigin(added)}",
+                (added as DeclaredNative)?.Source ?? where));
+
+    private static string NativeOrigin(INativeType type) => type switch
+    {
+        DeclaredNative declared => declared.Source.File,
+        _ when NativeTypes.IsBuiltIn(type.Name) => "built-in",
+        _ => type.GetType().FullName ?? type.Name,
+    };
 
     /// <summary>The native type of a reference, with its arguments completed from the project's defaults.</summary>
     public BoundNative Bind(NativeRef native) => Natives.Bind(native, Defaults);
@@ -552,15 +570,22 @@ public sealed class FormatProject
     }
 
     /// <summary>Loads a project file, or the single <c>*.fstudio.yaml</c> in a directory.</summary>
-    /// <param name="natives">The native types; null for the built-in ones.</param>
-    public static FormatProject Load(string path, FileSandbox? sandbox = null, NativeTypes? natives = null)
+    /// <param name="natives">The native types every project has; null for the built-in ones.</param>
+    /// <param name="plugins">Which plugins of native types may be loaded; null for all.</param>
+    public static FormatProject Load(string path, FileSandbox? sandbox = null, NativeTypes? natives = null, PluginPolicy? plugins = null)
     {
         sandbox ??= FileSandbox.Unrestricted;
         path = ResolveFile(path, sandbox);
         var settings = ProjectSettings.Parse(File.ReadAllText(path), path);
-        var project = new FormatProject(settings, Path.GetDirectoryName(path)!, path) { Sandbox = sandbox, Natives = natives ?? NativeTypes.BuiltIn };
-        project.LoadSources();
+        var project = new FormatProject(settings, Path.GetDirectoryName(path)!, path)
+        {
+            Sandbox = sandbox,
+            Natives = natives ?? NativeTypes.BuiltIn,
+            Plugins = plugins ?? PluginPolicy.All,
+        };
+        // Libraries and native types first: they decide which names in the sources are native types.
         LibraryLoader.LoadDependencies(project);
+        project.LoadSources();
         project.LoadSamples();
         Validation.Validator.Validate(project);
         return project;
@@ -599,31 +624,46 @@ public sealed class FormatProject
         var excludes = Settings.Sources.Where(s => s.StartsWith('!')).Select(s => s[1..]).ToList();
         excludes.Add("**/*" + ProjectSettings.Extension);
         var origin = new Dictionary<string, int>(StringComparer.Ordinal);
-        var patternIndex = 0;
         var seenFiles = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var pattern in Settings.Sources.Where(s => !s.StartsWith('!')))
+        var sources = Settings.Sources.Where(s => !s.StartsWith('!'))
+            .SelectMany((pattern, index) => Glob(Directory, [pattern], excludes, Sandbox).Select(file => (File: file, Pattern: index + 1)))
+            .Where(source => seenFiles.Add(source.File))
+            .Select(source => (source.File, source.Pattern, Text: File.ReadAllText(source.File)))
+            .ToList();
+
+        // Native type declarations first: references to them are told apart from type names by their names.
+        var files = NativeFiles.Folder(Directory, Sandbox);
+        foreach (var source in sources.Where(s => DeclaredNative.IsDeclaration(s.Text)))
         {
-            patternIndex++;
-            foreach (var file in Glob(Directory, [pattern], excludes, Sandbox))
+            if (DeclaredNative.Read(source.Text, Relative(source.File), files, Plugins, Diagnostics) is not { } native) continue;
+            if (DeclaredNatives.FirstOrDefault(n => n.Name == native.Name) is { } twice)
             {
-                if (!seenFiles.Add(file)) continue;
-                var definition = DslReader.Read(File.ReadAllText(file), Relative(file), Diagnostics);
-                if (definition == null) continue;
+                Diagnostics.Error($"Native type '{native.Name}' is also declared in {twice.Source.File}", native.Source);
+                continue;
+            }
 
-                if (_types.TryGetValue(definition.Name, out var existing))
+            DeclaredNatives.Add(native);
+        }
+
+        AddNatives(DeclaredNatives);
+        foreach (var (file, patternIndex, text) in sources.Where(s => !DeclaredNative.IsDeclaration(s.Text)))
+        {
+            var definition = DslReader.Read(text, Relative(file), Diagnostics);
+            if (definition == null) continue;
+
+            if (_types.TryGetValue(definition.Name, out var existing))
+            {
+                if (origin[definition.Name] == patternIndex)
                 {
-                    if (origin[definition.Name] == patternIndex)
-                    {
-                        Diagnostics.Error($"'{definition.Name}' is also defined in {existing.Source?.File}", definition.Source);
-                        continue;
-                    }
-
-                    Diagnostics.Info($"Overrides '{definition.Name}' from {existing.Source?.File}", definition.Source);
+                    Diagnostics.Error($"'{definition.Name}' is also defined in {existing.Source?.File}", definition.Source);
+                    continue;
                 }
 
-                origin[definition.Name] = patternIndex;
-                Add(definition);
+                Diagnostics.Info($"Overrides '{definition.Name}' from {existing.Source?.File}", definition.Source);
             }
+
+            origin[definition.Name] = patternIndex;
+            Add(definition);
         }
     }
 

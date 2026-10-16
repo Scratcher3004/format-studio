@@ -38,7 +38,7 @@ public sealed class DiagnosticBag : List<Diagnostic>
 }
 
 /// <summary>An error in a format definition or project file.</summary>
-public sealed class FormatDefinitionException(string message, SourceLocation? source = null) : Exception(message)
+public class FormatDefinitionException(string message, SourceLocation? source = null) : Exception(message)
 {
     public SourceLocation? Location { get; } = source;
 }

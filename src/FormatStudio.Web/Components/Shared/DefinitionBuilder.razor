@@ -29,7 +29,7 @@
         {
             var index = i;
             var field = structDef.Fields[i];
-            <FieldEditor @key="field" Field="field" Index="index" Count="structDef.Fields.Count" TypeNames="TypeNames" Find="Find"
+            <FieldEditor @key="field" Field="field" Index="index" Count="structDef.Fields.Count" TypeNames="TypeNames" Find="Find" Natives="@Natives"
                          InitiallyOpen="ReferenceEquals(field, _added)" Changed="Notify"
                          Moved="d => Set(() => Move(structDef.Fields, index, d))"
                          Duplicated="() => Set(() => structDef.Fields.Insert(index + 1, Copy(field, structDef)))"
@@ -78,7 +78,7 @@
         @if (variant.Tag != null)
         {
             <div class="mb-2">
-                <TypeBuilder Value="variant.Tag" ValueChanged="t => Set(() => variant.Tag = t)" Label="Tag type" TypeNames="TypeNames" Find="Find" />
+                <TypeBuilder Value="variant.Tag" ValueChanged="t => Set(() => variant.Tag = t)" Label="Tag type" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
             </div>
         }
         else
@@ -109,7 +109,7 @@
                 @if (variantCase.Type != null)
                 {
                     <div class="type-nested">
-                        <TypeBuilder Value="variantCase.Type" ValueChanged="t => Set(() => variantCase.Type = t)" Label="Data" TypeNames="TypeNames" Find="Find" />
+                        <TypeBuilder Value="variantCase.Type" ValueChanged="t => Set(() => variantCase.Type = t)" Label="Data" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
                     </div>
                 }
             </div>
@@ -120,7 +120,7 @@
         break;
 
     case AliasDef alias:
-        <TypeBuilder Value="alias.Target" ValueChanged="t => Set(() => alias.Target = t)" Label="Type" TypeNames="TypeNames" Find="Find" ShowText="true" />
+        <TypeBuilder Value="alias.Target" ValueChanged="t => Set(() => alias.Target = t)" Label="Type" TypeNames="TypeNames" Find="Find" Natives="@Natives" ShowText="true" />
         break;
 
     case BitfieldDef bitfield:
@@ -163,6 +163,7 @@
     [Parameter, EditorRequired] public TypeDef Definition { get; set; } = null!;
     [Parameter] public IReadOnlyList<string> TypeNames { get; set; } = [];
     [Parameter] public Func<string, TypeDef?>? Find { get; set; }
+    [Parameter] public FormatStudio.Natives.NativeTypes Natives { get; set; } = FormatStudio.Natives.NativeTypes.BuiltIn;
     /// <summary>Raised after every change of the definition (which is edited in place).</summary>
     [Parameter] public EventCallback Changed { get; set; }
 

@@ -45,7 +45,7 @@
                     The YAML has comments. Changes in the builder rewrite it without them; edit as YAML to keep them.
                 </MudAlert>
             }
-            <DefinitionBuilder Definition="_draft" TypeNames="TypeNames" Find="Find" Changed="BuilderChanged" />
+            <DefinitionBuilder Definition="_draft" TypeNames="TypeNames" Find="Find" Natives="@(Projects.Project?.Natives ?? FormatStudio.Natives.NativeTypes.BuiltIn)" Changed="BuilderChanged" />
         }
         else
         {

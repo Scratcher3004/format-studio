@@ -10,12 +10,14 @@ ImporterRegistry.Register(new MojangImport());
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });
 
 // All optional: --project <file|folder> (or FORMATSTUDIO_PROJECT) opens a project at "/", --workspace <folder> lists the
-// projects in a folder on the start page, --state-dir <folder> moves the list of recent projects.
+// projects in a folder on the start page, --state-dir <folder> moves the list of recent projects, --plugins
+// all|none|<sha256>,... (or FORMATSTUDIO_PLUGINS) limits the plugins of native types that are loaded.
 var options = new StudioOptions
 {
     Project = builder.Configuration["project"] ?? Environment.GetEnvironmentVariable("FORMATSTUDIO_PROJECT"),
     Workspace = builder.Configuration["workspace"] is { } workspace ? Path.GetFullPath(workspace) : null,
     StateDirectory = builder.Configuration["state-dir"] ?? StudioOptions.DefaultStateDirectory,
+    Plugins = FormatStudio.Natives.PluginPolicy.Parse(builder.Configuration["plugins"] ?? Environment.GetEnvironmentVariable("FORMATSTUDIO_PLUGINS")),
 };
 
 // A local tool started with "dotnet run": serve MudBlazor's assets from the build output in every environment.

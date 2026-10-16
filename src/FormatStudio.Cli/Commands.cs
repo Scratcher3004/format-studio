@@ -3,6 +3,7 @@ using FormatStudio.Codegen;
 using FormatStudio.Dsl;
 using FormatStudio.Importers;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 using FormatStudio.Projects;
 using FormatStudio.Simulation;
 
@@ -16,7 +17,7 @@ internal static class Commands
     {
         var path = line.Single("project") ?? FindProject(Directory.GetCurrentDirectory())
             ?? throw new UsageException($"No *{ProjectSettings.Extension} found; pass --project.");
-        var project = FormatProject.Load(path);
+        var project = FormatProject.Load(path, plugins: PluginPolicy.Parse(Environment.GetEnvironmentVariable("FORMATSTUDIO_PLUGINS")));
         foreach (var diagnostic in project.Diagnostics.Where(d => d.Severity == Severity.Error).Take(20))
             Console.Error.WriteLine(diagnostic);
         return project;
@@ -108,6 +109,25 @@ internal static class Commands
         }
 
         if (project.Modules.Count == 0) Console.WriteLine("No libraries.");
+        return project.Diagnostics.HasErrors ? 1 : 0;
+    }
+
+    public static int Natives(string[] args)
+    {
+        var line = CommandLine.Parse(args, ["project"], NoFlags);
+        line.MaxPositional(0, "format-studio natives");
+        var project = LoadProject(line);
+        foreach (var native in project.Natives.All.OrderBy(n => n.Name, StringComparer.Ordinal))
+        {
+            var parameters = string.Join(", ", native.Parameters.Select(p => p.Choices == null ? p.Name : $"{p.Name}: {string.Join("|", p.Choices)}"));
+            var origin = native switch
+            {
+                DeclaredNative declared => declared.Source.File + (declared.Unavailable != null ? $" (can't decode or encode: {declared.Unavailable})" : ""),
+                _ => "built-in",
+            };
+            Console.WriteLine($"{native.Name + (parameters.Length > 0 ? $"({parameters})" : ""),-40} {origin}");
+        }
+
         return project.Diagnostics.HasErrors ? 1 : 0;
     }
 

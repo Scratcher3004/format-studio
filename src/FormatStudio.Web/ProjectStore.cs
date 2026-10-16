@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using FormatStudio.Natives;
 using FormatStudio.Projects;
 
 namespace FormatStudio.Web;
@@ -17,6 +18,8 @@ public sealed record StudioOptions
     public string? Workspace { get; init; }
     /// <summary>Where the list of recent projects is kept (<c>--state-dir</c>).</summary>
     public string StateDirectory { get; init; } = DefaultStateDirectory;
+    /// <summary>Which plugins of native types are loaded (<c>--plugins all|none|&lt;sha256&gt;,...</c>).</summary>
+    public PluginPolicy Plugins { get; init; } = PluginPolicy.All;
 
     /// <summary><c>~/.config/format-studio</c> on Linux, <c>%APPDATA%\format-studio</c> on Windows.</summary>
     public static string DefaultStateDirectory =>
@@ -94,7 +97,7 @@ public sealed class ProjectStore
         if (entry == null) return null;
         lock (_lock)
         {
-            if (!_loaded.TryGetValue(id, out var service)) _loaded[id] = service = new ProjectService(entry.File, Sandbox);
+            if (!_loaded.TryGetValue(id, out var service)) _loaded[id] = service = new ProjectService(entry.File, Sandbox, Options.Plugins);
             return service;
         }
     }

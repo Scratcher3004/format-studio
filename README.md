@@ -53,6 +53,7 @@ dotnet run --project src/FormatStudio.Web -- --workspace samples --urls http://l
 - [Command line and web UI](docs/usage.md)
 - [Projects in the web UI](docs/web-projects.md): start page, project URLs, planned hosted mode
 - [Libraries](docs/libraries.md): library projects, `.fslib` packages, dependencies
+- [Native types of your own](docs/natives.md): declarations, .NET plugins, which plugins are loaded
 - [Importers](docs/importers.md)
 - [Code generation](docs/codegen.md): targets, generators, checking generated code against the simulator
 - [C# generators](docs/csharp.md) and [Java generator](docs/java.md): generated code and runtimes

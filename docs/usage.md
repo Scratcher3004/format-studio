@@ -13,6 +13,7 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 | `list [--kind packet] [--filter text] [--libraries]` | List definitions (`--libraries`: also those of the libraries) |
 | `pack [--output <folder>]` | Pack a library project into `<name>-<version>.fslib` (see [libraries](libraries.md)) |
 | `libraries` | List the libraries the project loads |
+| `natives` | List the native types the project can use: built-in, its own and its libraries' (see [native types](natives.md)) |
 | `show <type> [--target <target\|generator>]` | Print the definition, or its generated code (`--csharp` is `--target csharp`) |
 | `decode <type> --hex ... [--tree]` | Decode bytes; `--tree` prints every value with its byte range |
 | `decode-packet --hex ... --header varuint32 --id-mask 0x3ff [--protocol <name>]` | Read a packet id, then the packet (of that protocol) |
@@ -38,6 +39,7 @@ folder browser) or create a new one from the same template as `format-studio new
 | `--project <file\|folder>` | Opens the project at startup; `/` goes straight to it. Also `FORMATSTUDIO_PROJECT`. |
 | `--workspace <folder>` | Lists every `*.fstudio.yaml` below the folder on the start page (skips hidden folders, `bin`, `obj`, `node_modules`, `generated`). The web UI then reads, writes and lists nothing outside the folder, also not through symbolic links or junctions or through project settings like `sources: [../**/*.yaml]`; `--project` must be inside it. |
 | `--state-dir <folder>` | Where the recent projects are kept; default `~/.config/format-studio` (`%APPDATA%\format-studio` on Windows). |
+| `--plugins all\|none\|<sha256>,...` | Which plugins of [native types](natives.md#which-plugins-are-loaded) are loaded; default `all`. Also `FORMATSTUDIO_PLUGINS`. |
 
 Relative paths are relative to the folder `dotnet run` is started from.
 

@@ -8,6 +8,7 @@ const string usage = """
 
     Projects are folders with a <name>.fstudio.yaml file and one YAML file per type. Commands that need a project
     take --project <file|folder> (default: the nearest *.fstudio.yaml in the current folder or above).
+    FORMATSTUDIO_PLUGINS=all|none|<sha256>,... limits the plugins of native types that are loaded (default: all).
 
     Usage:
       format-studio new <folder> [--name <name>] [--endian little|big] [--length <prefix>]
@@ -23,6 +24,8 @@ const string usage = """
           Packs a library project (kind: library) into <name>-<version>.fslib, for other projects' library folders.
       format-studio libraries
           Lists the libraries the project loads (dependencies of libraries included), their versions and packages.
+      format-studio natives
+          Lists the native types the project can use: built-in, declared by the project and by its libraries.
       format-studio list [--kind packet|struct|enum|variant|alias|bitfield] [--filter <text>] [--libraries]
           Lists the definitions; --libraries adds those of the libraries (as Library.Name).
       format-studio show <type> [--target <target|generator>] [--csharp]
@@ -66,6 +69,7 @@ try
         "validate" => Commands.Validate(args[1..]),
         "pack" => Commands.Pack(args[1..]),
         "libraries" => Commands.Libraries(args[1..]),
+        "natives" => Commands.Natives(args[1..]),
         "list" => Commands.List(args[1..]),
         "show" => Commands.Show(args[1..]),
         "decode" => Commands.Decode(args[1..]),

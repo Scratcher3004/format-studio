@@ -2,6 +2,7 @@ using FormatStudio.Codegen;
 using FormatStudio.Dsl;
 using FormatStudio.Importers;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 using FormatStudio.Projects;
 using FormatStudio.Simulation;
 using FormatStudio.Validation;
@@ -14,16 +15,19 @@ public sealed class ProjectService
     private readonly Lock _lock = new();
     private readonly Dictionary<string, GeneratedOutput> _generated = new(StringComparer.Ordinal);
 
-    public ProjectService(string path, FileSandbox? sandbox = null)
+    public ProjectService(string path, FileSandbox? sandbox = null, PluginPolicy? plugins = null)
     {
         Path = path;
         Sandbox = sandbox ?? FileSandbox.Unrestricted;
+        Plugins = plugins ?? PluginPolicy.All;
         Reload();
     }
 
     public string Path { get; }
     /// <summary>The workspace; the project's files are only read and written inside it.</summary>
     public FileSandbox Sandbox { get; }
+    /// <summary>Which plugins of native types are loaded; a rebuilt plugin is picked up by the next reload.</summary>
+    public PluginPolicy Plugins { get; }
     public FormatProject? Project { get; private set; }
     public string? LoadError { get; private set; }
     /// <summary>Increased on every reload, so that pages can drop cached results.</summary>
@@ -37,7 +41,7 @@ public sealed class ProjectService
         {
             try
             {
-                Project = FormatProject.Load(Path, Sandbox);
+                Project = FormatProject.Load(Path, Sandbox, plugins: Plugins);
                 LoadError = null;
             }
             catch (Exception e) when (e is FormatDefinitionException or IOException or System.FormatException or YamlDotNet.Core.YamlException)

@@ -174,8 +174,8 @@ is still missing is an error. The name of a native type always means the native 
 |---|---|---|
 | `nbt` | `flavor`: `java` (big endian, named root), `java-network` (unnamed root, since 1.20.2), `bedrock` (little endian), `bedrock-network` (varints); no default | SNBT text, or `{"name": ..., "snbt": ...}` for a named root |
 
-Generated code reads and writes NBT as its raw bytes. Libraries of native types of your own are planned
-(see [libraries](libraries.md)).
+Generated code reads and writes NBT as its raw bytes. Projects and libraries can declare native types of their own,
+implemented in .NET plugins: see [native types of your own](natives.md).
 
 ### Expressions
 

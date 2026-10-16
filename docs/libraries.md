@@ -21,7 +21,8 @@ dependencies:         # libraries may use other libraries
 ```
 
 `format-studio pack --output <folder>` checks the library and writes `<name>-<version>.fslib`: a zip with the project
-file and the files of its definitions (samples and codegen settings stay out). Packages are meant to be committed or
+file, the files of its definitions and its [native types](natives.md) with their plugins and runtime files (samples and
+codegen settings stay out). Packages are meant to be committed or
 copied into the library folders of the projects that use them.
 
 ## Using libraries

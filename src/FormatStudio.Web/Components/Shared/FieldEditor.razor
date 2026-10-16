@@ -29,7 +29,7 @@
     @if (_open)
     {
         <div class="field-details">
-            <TypeBuilder Value="Field.Type" ValueChanged="t => Set(() => Field.Type = t)" TypeNames="TypeNames" Find="Find" ShowText="true" />
+            <TypeBuilder Value="Field.Type" ValueChanged="t => Set(() => Field.Type = t)" TypeNames="TypeNames" Find="Find" Natives="@Natives" ShowText="true" />
 
             <div class="builder-row mt-3">
                 <MudSelect T="ValueKind" Value="KindOfValue" ValueChanged="SetValueKind" Label="Value" Variant="Variant.Outlined" Margin="Margin.Dense"
@@ -116,6 +116,7 @@
     [Parameter] public int Count { get; set; }
     [Parameter] public IReadOnlyList<string> TypeNames { get; set; } = [];
     [Parameter] public Func<string, TypeDef?>? Find { get; set; }
+    [Parameter] public FormatStudio.Natives.NativeTypes Natives { get; set; } = FormatStudio.Natives.NativeTypes.BuiltIn;
     [Parameter] public bool InitiallyOpen { get; set; }
     /// <summary>Raised after the field was changed in place.</summary>
     [Parameter] public EventCallback Changed { get; set; }

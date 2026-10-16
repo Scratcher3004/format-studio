@@ -30,6 +30,27 @@ public sealed partial class NativeTypes
     public NativeTypes With(INativeType type) => new(new Dictionary<string, INativeType>(_types, StringComparer.Ordinal) { [type.Name] = type });
 
     /// <summary>
+    /// A copy with <paramref name="types"/> added. A type named like another one (except the same type again) is left
+    /// out and reported to <paramref name="conflict"/>.
+    /// </summary>
+    public NativeTypes With(IEnumerable<INativeType> types, Action<INativeType, INativeType> conflict)
+    {
+        var result = new Dictionary<string, INativeType>(_types, StringComparer.Ordinal);
+        foreach (var type in types)
+        {
+            if (result.TryGetValue(type.Name, out var existing))
+            {
+                if (existing != type) conflict(existing, type);
+                continue;
+            }
+
+            result[type.Name] = type;
+        }
+
+        return new NativeTypes(result);
+    }
+
+    /// <summary>
     /// The type of a reference with its arguments completed: an argument left out (or written as <c>default</c>) comes
     /// from the project's defaults for the type, then from the parameter's default. Throws when a required argument is
     /// missing or an argument doesn't fit its parameter.

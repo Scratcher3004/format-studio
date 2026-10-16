@@ -34,5 +34,7 @@ A `--hosted` switch on top of the same model:
 - New projects are created as folders in the workspace; projects can be uploaded and downloaded as zip files.
 - Importer options that are server paths (the Mojang schema zip) need an upload field; until then only import
   sources inside the project folder are allowed.
+- Plugins of native types default to `--plugins none`; a server lists the plugins it trusts by hash (see
+  [native types](natives.md#which-plugins-are-loaded)).
 - Authentication and access control are left to a reverse proxy. Concurrent edits of the same file are last write
   wins, as in the local mode.

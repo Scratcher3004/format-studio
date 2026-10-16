@@ -3,20 +3,24 @@ using System.Reflection;
 using FormatStudio.Dsl;
 using FormatStudio.Expressions;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 
 namespace FormatStudio.Projects;
 
 /// <summary>
-/// A packed library (<c>&lt;name&gt;-&lt;version&gt;.fslib</c>): a zip with the library's project file and its definition
-/// files, at the paths they have in the library project.
+/// A packed library (<c>&lt;name&gt;-&lt;version&gt;.fslib</c>): a zip with the library's project file, its definition
+/// files and native type declarations with the files they use (plugins, runtime files), at the paths they have in the
+/// library project.
 /// </summary>
 public sealed class LibraryPackage
 {
     public const string Extension = ".fslib";
 
     public required ProjectSettings Settings { get; init; }
-    /// <summary>The definition files: path inside the package, text.</summary>
+    /// <summary>The definition and native declaration files: path inside the package, text.</summary>
     public required IReadOnlyList<(string Path, string Text)> Files { get; init; }
+    /// <summary>Every file but the project file, by path inside the package.</summary>
+    public IReadOnlyDictionary<string, byte[]> Resources { get; init; } = new Dictionary<string, byte[]>();
     /// <summary>Where the package comes from, e.g. its file or <c>built-in</c>; shown in messages.</summary>
     public required string Origin { get; init; }
 
@@ -45,7 +49,16 @@ public sealed class LibraryPackage
                 .OrderBy(e => e.FullName, StringComparer.Ordinal)
                 .Select(e => (e.FullName, Text(e)))
                 .ToList();
-            return new LibraryPackage { Settings = settings, Files = files, Origin = origin };
+            var resources = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (var entry in zip.Entries.Where(e => e != projectFiles[0] && !e.FullName.EndsWith('/')))
+            {
+                using var content = entry.Open();
+                using var buffer = new MemoryStream();
+                content.CopyTo(buffer);
+                resources[entry.FullName] = buffer.ToArray();
+            }
+
+            return new LibraryPackage { Settings = settings, Files = files, Resources = resources, Origin = origin };
         }
         catch (InvalidDataException e)
         {
@@ -59,7 +72,7 @@ public sealed class LibraryPackage
     /// <summary>
     /// Packs a library project into <paramref name="outputDirectory"/> and returns the package's path. The project must be
     /// a valid library with a version; only the definitions it ends up with are packed (not those overridden by later
-    /// sources), samples and code generation settings stay out.
+    /// sources), with its native type declarations and their files; samples and code generation settings stay out.
     /// </summary>
     public static string Pack(FormatProject library, string outputDirectory)
     {
@@ -75,19 +88,24 @@ public sealed class LibraryPackage
         var path = Path.Combine(outputDirectory, FileName(settings.Name, version));
         using var stream = File.Create(path);
         using var zip = new ZipArchive(stream, ZipArchiveMode.Create);
-        void Add(string entryName, string text)
+        var added = new HashSet<string>(StringComparer.Ordinal);
+        void Add(string entryName, string what)
         {
-            using var writer = new StreamWriter(zip.CreateEntry(entryName).Open());
-            writer.Write(text);
+            if (entryName.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(entryName))
+                throw new FormatDefinitionException($"{what} is outside the library folder ({entryName})");
+            if (!added.Add(entryName)) return;
+            using var output = zip.CreateEntry(entryName).Open();
+            using var input = File.OpenRead(library.Sandbox.Check(Path.Combine(library.Directory, entryName)));
+            input.CopyTo(output);
         }
 
-        Add(Path.GetFileName(library.FilePath), File.ReadAllText(library.FilePath));
+        Add(Path.GetFileName(library.FilePath), "The project file");
         foreach (var definition in library.Types.Values.OrderBy(d => d.Name, StringComparer.Ordinal))
+            Add(definition.Source?.File ?? throw new FormatDefinitionException($"{definition.Name} has no file"), definition.Name);
+        foreach (var native in library.DeclaredNatives.OrderBy(n => n.Name, StringComparer.Ordinal))
         {
-            var file = definition.Source?.File ?? throw new FormatDefinitionException($"{definition.Name} has no file");
-            if (file.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(file))
-                throw new FormatDefinitionException($"{definition.Name} is outside the library folder ({file})");
-            Add(file, File.ReadAllText(Path.Combine(library.Directory, file)));
+            Add(native.Source.File, native.Name);
+            foreach (var file in native.Files) Add(file, native.Name);
         }
 
         return path;
@@ -174,14 +192,20 @@ public sealed class LibraryLoader
 {
     private readonly FormatProject _project;
     private readonly LibraryCatalog _catalog;
+    // The native types every project has (built-in, given by the host); a library adds its own and its dependencies'.
+    private readonly NativeTypes _natives;
 
     private LibraryLoader(FormatProject project, LibraryCatalog catalog)
     {
         _project = project;
         _catalog = catalog;
+        _natives = project.Natives;
     }
 
-    /// <summary>Loads the project's dependencies; problems are reported as diagnostics of the project file.</summary>
+    /// <summary>
+    /// Loads the project's dependencies and adds their native types to the project; problems are reported as
+    /// diagnostics of the project file.
+    /// </summary>
     public static void LoadDependencies(FormatProject project, LibraryCatalog? catalog = null)
     {
         var loader = new LibraryLoader(project, catalog ?? LibraryCatalog.For(project));
@@ -197,6 +221,8 @@ public sealed class LibraryLoader
                 project.Diagnostics.Error(e.Message, e.Location ?? where);
             }
         }
+
+        project.AddNatives(project.Modules.Values.SelectMany(m => m.Natives), where);
     }
 
     private FormatModule Load(string name, string? version, IReadOnlyList<string> chain)
@@ -214,19 +240,35 @@ public sealed class LibraryLoader
         if (package.Settings.Kind != ProjectKind.Library) throw new FormatDefinitionException($"{package.Origin} is not a library (kind: library)");
 
         // The library as a project of its own, to check it and resolve its names as it sees them.
-        var library = new FormatProject(package.Settings, _project.Directory) { Natives = _project.Natives };
-        foreach (var (path, text) in package.Files)
-            if (DslReader.Read(text, $"{package.Origin}!/{path}", library.Diagnostics) is { } definition) library.Add(definition);
+        var library = new FormatProject(package.Settings, _project.Directory) { Natives = _natives, Plugins = _project.Plugins };
+        var dependencies = new List<FormatModule>();
         foreach (var dependency in package.Settings.Dependencies)
-            library.AddModule(Load(dependency.Library, dependency.Version, [.. chain, name]), dependency.AliasOrName);
+        {
+            var module = Load(dependency.Library, dependency.Version, [.. chain, name]);
+            dependencies.Add(module);
+            library.AddModule(module, dependency.AliasOrName);
+        }
+
         foreach (var module in _project.Modules.Values) library.AddModule(module);
+
+        // Native types first: the definitions' references to them are told apart from type names by their names.
+        var files = NativeFiles.Package(package);
+        var natives = new DiagnosticBag();
+        var declared = package.Files.Where(f => DeclaredNative.IsDeclaration(f.Text))
+            .Select(f => DeclaredNative.Read(f.Text, f.Path, files, _project.Plugins, natives, $"{package.Origin}!/{f.Path}"))
+            .OfType<DeclaredNative>()
+            .ToList();
+        var used = dependencies.SelectMany(d => d.Natives).Concat(declared).Distinct().ToList();
+        library.AddNatives(used, new SourceLocation($"{package.Origin}"));
+        foreach (var (path, text) in package.Files.Where(f => !DeclaredNative.IsDeclaration(f.Text)))
+            if (DslReader.Read(text, $"{package.Origin}!/{path}", library.Diagnostics) is { } definition) library.Add(definition);
         Validation.Validator.Validate(library);
-        foreach (var diagnostic in library.Diagnostics.Where(d => d.Severity == Severity.Error))
+        foreach (var diagnostic in natives.Concat(library.Diagnostics.Where(d => d.Severity == Severity.Error)))
             _project.Diagnostics.Add(diagnostic with { Message = $"Library {package}: {diagnostic.Message}" });
 
         var definitions = library.Types.Values.ToList();
         new Baker(library, name).Bake(definitions);
-        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin };
+        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin, Natives = used };
         _project.AddModule(result);
         return result;
     }

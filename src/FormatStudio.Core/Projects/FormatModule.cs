@@ -32,6 +32,8 @@ public sealed class FormatModule
     /// <summary>Where the library was loaded from, e.g. its package file; shown in the UI and in messages.</summary>
     public string? Origin { get; init; }
     public IReadOnlyDictionary<string, TypeDef> Types => _types;
+    /// <summary>The native types the library's definitions use: its own and those of its dependencies.</summary>
+    public IReadOnlyList<Natives.INativeType> Natives { get; init; } = [];
 
     public TypeDef? Find(string name) => _types.GetValueOrDefault(name);
 
