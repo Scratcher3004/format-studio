@@ -57,6 +57,7 @@ dotnet run --project src/FormatStudio.Web -- --workspace samples --urls http://l
 - [Importers](docs/importers.md)
 - [Code generation](docs/codegen.md): targets, generators, checking generated code against the simulator
 - [C# generators](docs/csharp.md) and [Java generator](docs/java.md): generated code and runtimes
+- [Writing a code generator](docs/generators.md): the generator SDK (`CodeEmitter`) for other languages
 
 ## Tests
 

@@ -7,13 +7,13 @@ using FormatStudio.Projects;
 namespace FormatStudio.Codegen.Java;
 
 /// <summary>
-/// Java syntax for the <see cref="Emitter"/>. Every type is a class, so types that contain themselves need no special
+/// Java syntax for the <see cref="CodeEmitter"/>. Every type is a class, so types that contain themselves need no special
 /// handling. Unsigned values are widened (u8/u16 to int, u32 to long, 64-bit values keep their bits in a long) or use the
 /// signed type of the same size (<see cref="JavaUnsigned"/>); the runtime always reads and writes the widened types.
 /// Arrays are <c>java.util.List</c>s or Java arrays, maps are lists of entries; conditional and optional values use the
 /// boxed types and null.
 /// </summary>
-internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : Emitter(project, options.Exclude)
+internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : CodeEmitter(project, options.Exclude)
 {
     private static readonly HashSet<string> Keywords =
     [
@@ -528,54 +528,46 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         var name = structDef.Name;
         w.OpenInline($"public static {name} read(FormatReader reader) throws {IOException}");
         w.Line($"{name} result = new {name}();");
-        var known = new Dictionary<string, FieldDef>(StringComparer.Ordinal);
-        var resolve = ReadScope(known, f => Access(f, "result."));
-        foreach (var field in structDef.Fields)
-        {
-            var context = new Context { Field = field, Resolve = resolve };
-            if (!field.IsInput)
-            {
-                var type = FieldType(field);
-                w.Line($"{type} __{field.Name} = {DefaultValue(type)};");
-            }
-
-            if (field.If != null) w.OpenInline($"if ({Condition(field.If, context)})");
-            var value = Read(field.Type, w, context);
-            var access = Access(field, "result.");
-            w.Line($"{access} = {value};");
-            if (field.Const != null)
-            {
-                var constant = Constant(field);
-                w.Line($"if ({NotEqual(field, access, constant)}) {Throw(Literal($"{name}.{field.Name} must be {constant}"))}");
-            }
-
-            if (options.ValidateRanges && (field.Min != null || field.Max != null) && Project.Unalias(field.Type) is PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool })
-            {
-                var kind = ((PrimitiveRef)Project.Unalias(field.Type)).Kind;
-                var checks = new List<string>();
-                if (kind is PrimitiveKind.U64 or PrimitiveKind.VarUInt64)
-                {
-                    if (field.Min is { } min) checks.Add($"Long.compareUnsigned({access}, {LongLiteral(min)}) < 0");
-                    if (field.Max is { } max) checks.Add($"Long.compareUnsigned({access}, {LongLiteral(max)}) > 0");
-                }
-                else
-                {
-                    var number = kind is PrimitiveKind.F32 or PrimitiveKind.F64 ? access : AsLong(access, kind);
-                    if (field.Min is { } min) checks.Add($"{number} < {min.ToString(CultureInfo.InvariantCulture)}");
-                    if (field.Max is { } max) checks.Add($"{number} > {max.ToString(CultureInfo.InvariantCulture)}");
-                }
-                w.Line($"if ({string.Join(" || ", checks)}) {Throw(Literal($"{name}.{field.Name} is out of range"))}");
-            }
-
-            if (field.If != null) w.Close();
-            known[field.Name] = field;
-        }
-
+        ReadFields(structDef, w, f => Access(f, "result."));
         w.Line("return result;");
         w.Close();
     }
 
-    private string Constant(FieldDef field)
+    protected override void DeclareLocal(FieldDef field, string name, CodeWriter w)
+    {
+        var type = FieldType(field);
+        w.Line($"{type} {name} = {DefaultValue(type)};");
+    }
+
+    protected override void OpenIf(string condition, CodeWriter w) => w.OpenInline($"if ({condition})");
+
+    protected override void CheckConstant(StructDef structDef, FieldDef field, string value, CodeWriter w)
+    {
+        var constant = Constant(field);
+        w.Line($"if ({NotEqual(field, value, constant)}) {Throw(Literal($"{structDef.Name}.{field.Name} must be {constant}"))}");
+    }
+
+    protected override void CheckRange(StructDef structDef, FieldDef field, string value, CodeWriter w)
+    {
+        if (!options.ValidateRanges || Project.Unalias(field.Type) is not PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool } primitive) return;
+        var kind = primitive.Kind;
+        var checks = new List<string>();
+        if (kind is PrimitiveKind.U64 or PrimitiveKind.VarUInt64)
+        {
+            if (field.Min is { } min) checks.Add($"Long.compareUnsigned({value}, {LongLiteral(min)}) < 0");
+            if (field.Max is { } max) checks.Add($"Long.compareUnsigned({value}, {LongLiteral(max)}) > 0");
+        }
+        else
+        {
+            var number = kind is PrimitiveKind.F32 or PrimitiveKind.F64 ? value : AsLong(value, kind);
+            if (field.Min is { } min) checks.Add($"{number} < {min.ToString(CultureInfo.InvariantCulture)}");
+            if (field.Max is { } max) checks.Add($"{number} > {max.ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        w.Line($"if ({string.Join(" || ", checks)}) {Throw(Literal($"{structDef.Name}.{field.Name} is out of range"))}");
+    }
+
+    protected override string Constant(FieldDef field)
     {
         var resolved = Project.Unalias(field.Type);
         var constant = field.Const!;
@@ -603,65 +595,36 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     private void WriteMethod(StructDef structDef, CodeWriter w)
     {
-        var name = structDef.Name;
         w.Line("@Override");
         w.OpenInline($"public void write(FormatWriter writer) throws {IOException}");
-        var computedDone = new HashSet<string>(StringComparer.Ordinal);
-        var resolve = WriteScope(structDef, computedDone, f => Access(f, "this."), Constant);
-        var context = new Context { Resolve = resolve };
-
-        // Computed fields are calculated first, so that they can describe later fields (e.g. a count before a list).
-        foreach (var field in structDef.Fields.Where(f => f.Computed != null))
-        {
-            var code = Expression(field.Computed!, context, out var kind);
-            var type = Type(field.Type);
-            if (type == "boolean") code = kind == ValueKind.Bool ? code : $"({code} != 0)";
-            else if (kind == ValueKind.Bool) code = $"({type}) ({code} ? 1 : 0)";
-            else if (ClosedEnum(field.Type) is { } enumDef) code = $"{TypeName(enumDef)}.fromValue(({EnumType(enumDef)}) ({code}))";
-            else code = $"({type}) ({code})";
-            w.Line($"{type} __{field.Name} = {code};");
-            computedDone.Add(field.Name);
-        }
-
-        foreach (var field in structDef.Fields)
-        {
-            var fieldContext = new Context { Resolve = resolve, Field = field };
-            if (field.If != null) w.OpenInline($"if ({Condition(field.If, fieldContext)})");
-            var value = field.Const != null ? Constant(field) : Access(field, "this.");
-            if (field.If != null && field.Const == null)
-            {
-                var present = Temp("value");
-                w.Line($"{FieldType(field)} {present} = {value};");
-                w.Line($"if ({present} == null) {Throw(Literal($"{name}.{field.Name} is required when {field.If}"))}");
-                value = present;
-            }
-
-            Write(field.Type, value, w, fieldContext);
-            if (field.If != null) w.Close();
-        }
-
+        WriteFields(structDef, w, f => Access(f, "this."));
         w.Close();
+    }
+
+    protected override void DeclareComputed(FieldDef field, string name, string code, ValueKind kind, CodeWriter w)
+    {
+        var type = Type(field.Type);
+        if (type == "boolean") code = kind == ValueKind.Bool ? code : $"({code} != 0)";
+        else if (kind == ValueKind.Bool) code = $"({type}) ({code} ? 1 : 0)";
+        else if (ClosedEnum(field.Type) is { } enumDef) code = $"{TypeName(enumDef)}.fromValue(({EnumType(enumDef)}) ({code}))";
+        else code = $"({type}) ({code})";
+        w.Line($"{type} {name} = {code};");
+    }
+
+    protected override string RequirePresent(StructDef structDef, FieldDef field, string value, CodeWriter w)
+    {
+        var present = Temp("value");
+        w.Line($"{FieldType(field)} {present} = {value};");
+        w.Line($"if ({present} == null) {Throw(Literal($"{structDef.Name}.{field.Name} is required when {field.If}"))}");
+        return present;
     }
 
     // ------------------------------------------------------------------ reading values
 
-    private string ReadCount(LengthSpec length, CodeWriter w, Context context, int minSize, int? max)
-    {
-        string raw;
-        switch (length.Kind)
-        {
-            case LengthKind.Fixed:
-                return length.Fixed.ToString(CultureInfo.InvariantCulture);
-            case LengthKind.Default or LengthKind.Prefix:
-                raw = $"{context.Reader}.read{Method(length.Prefix ?? Project.Defaults.Length)}()";
-                break;
-            case LengthKind.Expression:
-                raw = Expression(length.Expression!, context, out _);
-                break;
-            default:
-                throw new CodegenException($"Length {length} is not supported here");
-        }
+    protected override string ReadLengthPrefix(PrimitiveRef prefix, Context context) => $"{context.Reader}.read{Method(prefix)}()";
 
+    protected override string CheckCount(string raw, int minSize, int? max, CodeWriter w, Context context)
+    {
         var count = Temp("count");
         w.Line($"int {count} = {context.Reader}.checkCount({raw}, {minSize}{(max != null ? $", {max}" : "")});");
         return count;
@@ -702,258 +665,231 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         return nested < 0 ? $"new {elementType}[{count}]" : $"new {elementType[..nested]}[{count}]{elementType[nested..]}";
     }
 
-    private string Read(TypeRef type, CodeWriter w, Context context)
+    protected override string ReadPrimitive(PrimitiveRef primitive, CodeWriter w, Context context) =>
+        Narrow($"{context.Reader}.read{Method(primitive)}()", primitive.Kind, primitive.Kind, w, context);
+
+    protected override string ReadString(StringRef str, CodeWriter w, Context context)
     {
         var reader = context.Reader;
-        switch (type)
+        CheckEncoding(str);
+        return str.Length.Kind switch
         {
-            case PrimitiveRef primitive:
-                return Narrow($"{reader}.read{Method(primitive)}()", primitive.Kind, primitive.Kind, w, context);
-            case StringRef str:
-                if ((str.Encoding ?? Project.Defaults.String) != StringEncoding.Utf8)
-                    throw new CodegenException($"String encoding {str.Encoding} is not supported by the Java generator");
-                return str.Length.Kind switch
-                {
-                    LengthKind.Zero => $"{reader}.readUtf8Zero()",
-                    LengthKind.Eof => $"{reader}.readUtf8ToEnd()",
-                    _ => $"{reader}.readUtf8({ReadCount(str.Length, w, context, 1, null)})",
-                };
-            case BytesRef bytes:
-                if (bytes.Length.Kind == LengthKind.Eof) return $"{reader}.readToEnd()";
-                return $"{reader}.readBytes({ReadCount(bytes.Length, w, context, 1, context.Field?.MaxItems)})";
-            case ArrayRef array:
-            {
-                var elementType = Type(array.Element, !Arrays);
-                var boxed = Box(elementType);
-                var result = Temp("array");
-                var elementContext = context.Element();
-                if (array.Length.Kind is LengthKind.Until or LengthKind.Eof)
-                {
-                    var list = Arrays ? Temp("list") : result;
-                    w.Line($"java.util.List<{boxed}> {list} = new java.util.ArrayList<>();");
-                    if (array.Length.Kind == LengthKind.Until)
-                    {
-                        var item = Temp("item");
-                        w.OpenInline("while (true)");
-                        w.Line($"{elementType} {item} = {Read(array.Element, w, elementContext)};");
-                        w.Line($"{list}.add({item});");
-                        w.Line($"if ({Condition(array.Length.Expression!, ElementContext(array, item))}) break;");
-                    }
-                    else
-                    {
-                        w.OpenInline($"while (!{reader}.atEnd())");
-                        w.Line($"{list}.add({Read(array.Element, w, elementContext)});");
-                    }
-
-                    w.Close();
-                    if (!Arrays) return result;
-                    w.Line($"{elementType}[] {result} = {NewArray(elementType, $"{list}.size()")};");
-                    var copy = Temp("i");
-                    w.Line($"for (int {copy} = 0; {copy} < {result}.length; {copy}++) {result}[{copy}] = {list}.get({copy});");
-                    return result;
-                }
-
-                var count = ReadCount(array.Length, w, context, MinSize(array.Element), context.Field?.MaxItems);
-                w.Line(Arrays
-                    ? $"{elementType}[] {result} = {NewArray(elementType, count)};"
-                    : $"java.util.List<{elementType}> {result} = new java.util.ArrayList<>(Math.min({count}, 4096));");
-                var index = Temp("i");
-                w.OpenInline($"for (int {index} = 0; {index} < {count}; {index}++)");
-                var element = Read(array.Element, w, elementContext);
-                w.Line(Arrays ? $"{result}[{index}] = {element};" : $"{result}.add({element});");
-                w.Close();
-                return result;
-            }
-            case MapRef map:
-            {
-                var keyType = Type(map.Key, true);
-                var valueType = Type(map.Value, true);
-                var count = ReadCount(map.Length, w, context, MinSize(map.Key), context.Field?.MaxItems);
-                var result = Temp("map");
-                w.Line($"java.util.List<java.util.Map.Entry<{keyType}, {valueType}>> {result} = new java.util.ArrayList<>(Math.min({count}, 4096));");
-                var index = Temp("i");
-                var entryContext = context.Element();
-                w.OpenInline($"for (int {index} = 0; {index} < {count}; {index}++)");
-                var key = Temp("key");
-                var value = Temp("value");
-                w.Line($"{keyType} {key} = {Read(map.Key, w, entryContext)};");
-                w.Line($"{valueType} {value} = {Read(map.Value, w, entryContext)};");
-                w.Line($"{result}.add(new java.util.AbstractMap.SimpleEntry<>({key}, {value}));");
-                w.Close();
-                return result;
-            }
-            case OptionalRef optional:
-            {
-                var result = Temp("optional");
-                w.Line($"{Type(optional.Inner, true)} {result} = null;");
-                w.OpenInline($"if ({reader}.readBool())");
-                w.Line($"{result} = {Read(optional.Inner, w, context.Element())};");
-                w.Close();
-                return result;
-            }
-            case SizedRef sized:
-            {
-                var count = ReadCount(sized.Length, w, context, 1, null);
-                var sub = Temp("reader");
-                w.Line($"FormatReader {sub} = {reader}.slice({count});");
-                return Read(sized.Inner, w, context.WithReader(sub));
-            }
-            case FixedPointRef fixedPoint:
-                return $"({reader}.read{Method(fixedPoint.Base)}() / {Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d)";
-            case NativeRef native:
-            {
-                var (codegen, args) = Native(native);
-                return NativeTemplate(codegen.Read, args, new Dictionary<string, string> { ["reader"] = reader, ["pass-reader"] = reader });
-            }
-            case NamedRef named:
-                switch (Definition(named.Name))
-                {
-                    case AliasDef alias when !IsExcluded(named.Name):
-                        return Read(alias.Target, w, context);
-                    case EnumDef enumDef:
-                        var wire = named.As ?? enumDef.Type;
-                        var raw = $"{reader}.read{Method(wire)}()";
-                        if (IsOpen(enumDef)) return Narrow(raw, wire.Kind, enumDef.Type.Kind, w, context);
-                        var enumType = EnumType(enumDef);
-                        return $"{TypeName(enumDef)}.fromValue({(RuntimeType(wire.Kind) == enumType ? raw : $"({enumType}) {raw}")})";
-                    case VariantDef variant when named.Tag != null && Project.TagKind(variant) == VariantTagKind.String:
-                        return $"{TypeName(variant)}.read({reader}, {TypeName(variant)}.Case.fromTag({Expression(named.Tag, context, out _)}))";
-                    case VariantDef variant when named.Tag != null:
-                        var tag = Expression(named.Tag, context, out _);
-                        var kindValueType = KindValueType(variant);
-                        return $"{TypeName(variant)}.read({reader}, {VariantKindType(variant)}.fromValue({(kindValueType == "long" ? tag : $"({kindValueType}) ({tag})")}))";
-                    case var definition:
-                        return $"{TypeName(definition)}.read({reader})";
-                }
-            default:
-                throw new CodegenException($"Unsupported type {type}");
-        }
+            LengthKind.Zero => $"{reader}.readUtf8Zero()",
+            LengthKind.Eof => $"{reader}.readUtf8ToEnd()",
+            _ => $"{reader}.readUtf8({ReadCount(str.Length, w, context, 1, null)})",
+        };
     }
+
+    private void CheckEncoding(StringRef str)
+    {
+        if ((str.Encoding ?? Project.Defaults.String) != StringEncoding.Utf8)
+            throw new CodegenException($"String encoding {str.Encoding} is not supported by the Java generator");
+    }
+
+    protected override string ReadBytes(BytesRef bytes, CodeWriter w, Context context)
+    {
+        if (bytes.Length.Kind == LengthKind.Eof) return $"{context.Reader}.readToEnd()";
+        return $"{context.Reader}.readBytes({ReadCount(bytes.Length, w, context, 1, context.Field?.MaxItems)})";
+    }
+
+    protected override string ReadArray(ArrayRef array, CodeWriter w, Context context)
+    {
+        var elementType = Type(array.Element, !Arrays);
+        var boxed = Box(elementType);
+        var result = Temp("array");
+        var elementContext = context.Element();
+        if (array.Length.Kind is LengthKind.Until or LengthKind.Eof)
+        {
+            var list = Arrays ? Temp("list") : result;
+            w.Line($"java.util.List<{boxed}> {list} = new java.util.ArrayList<>();");
+            if (array.Length.Kind == LengthKind.Until)
+            {
+                var item = Temp("item");
+                w.OpenInline("while (true)");
+                w.Line($"{elementType} {item} = {Read(array.Element, w, elementContext)};");
+                w.Line($"{list}.add({item});");
+                w.Line($"if ({Condition(array.Length.Expression!, ElementContext(array, item))}) break;");
+            }
+            else
+            {
+                w.OpenInline($"while (!{context.Reader}.atEnd())");
+                w.Line($"{list}.add({Read(array.Element, w, elementContext)});");
+            }
+
+            w.Close();
+            if (!Arrays) return result;
+            w.Line($"{elementType}[] {result} = {NewArray(elementType, $"{list}.size()")};");
+            var copy = Temp("i");
+            w.Line($"for (int {copy} = 0; {copy} < {result}.length; {copy}++) {result}[{copy}] = {list}.get({copy});");
+            return result;
+        }
+
+        var count = ReadCount(array.Length, w, context, MinSize(array.Element), context.Field?.MaxItems);
+        w.Line(Arrays
+            ? $"{elementType}[] {result} = {NewArray(elementType, count)};"
+            : $"java.util.List<{elementType}> {result} = new java.util.ArrayList<>(Math.min({count}, 4096));");
+        var index = Temp("i");
+        w.OpenInline($"for (int {index} = 0; {index} < {count}; {index}++)");
+        var element = Read(array.Element, w, elementContext);
+        w.Line(Arrays ? $"{result}[{index}] = {element};" : $"{result}.add({element});");
+        w.Close();
+        return result;
+    }
+
+    protected override string ReadMap(MapRef map, CodeWriter w, Context context)
+    {
+        var keyType = Type(map.Key, true);
+        var valueType = Type(map.Value, true);
+        var count = ReadCount(map.Length, w, context, MinSize(map.Key), context.Field?.MaxItems);
+        var result = Temp("map");
+        w.Line($"java.util.List<java.util.Map.Entry<{keyType}, {valueType}>> {result} = new java.util.ArrayList<>(Math.min({count}, 4096));");
+        var index = Temp("i");
+        var entryContext = context.Element();
+        w.OpenInline($"for (int {index} = 0; {index} < {count}; {index}++)");
+        var key = Temp("key");
+        var value = Temp("value");
+        w.Line($"{keyType} {key} = {Read(map.Key, w, entryContext)};");
+        w.Line($"{valueType} {value} = {Read(map.Value, w, entryContext)};");
+        w.Line($"{result}.add(new java.util.AbstractMap.SimpleEntry<>({key}, {value}));");
+        w.Close();
+        return result;
+    }
+
+    protected override string ReadOptional(OptionalRef optional, CodeWriter w, Context context)
+    {
+        var result = Temp("optional");
+        w.Line($"{Type(optional.Inner, true)} {result} = null;");
+        w.OpenInline($"if ({context.Reader}.readBool())");
+        w.Line($"{result} = {Read(optional.Inner, w, context.Element())};");
+        w.Close();
+        return result;
+    }
+
+    protected override string ReadSized(SizedRef sized, CodeWriter w, Context context)
+    {
+        var count = ReadCount(sized.Length, w, context, 1, null);
+        var sub = Temp("reader");
+        w.Line($"FormatReader {sub} = {context.Reader}.slice({count});");
+        return Read(sized.Inner, w, context.WithReader(sub));
+    }
+
+    protected override string ReadFixedPoint(FixedPointRef fixedPoint, CodeWriter w, Context context) =>
+        $"({context.Reader}.read{Method(fixedPoint.Base)}() / {Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d)";
+
+    protected override string ReadEnum(NamedRef named, EnumDef enumDef, CodeWriter w, Context context)
+    {
+        var wire = named.As ?? enumDef.Type;
+        var raw = $"{context.Reader}.read{Method(wire)}()";
+        if (IsOpen(enumDef)) return Narrow(raw, wire.Kind, enumDef.Type.Kind, w, context);
+        var enumType = EnumType(enumDef);
+        return $"{TypeName(enumDef)}.fromValue({(RuntimeType(wire.Kind) == enumType ? raw : $"({enumType}) {raw}")})";
+    }
+
+    protected override string ReadTaggedVariant(NamedRef named, VariantDef variant, CodeWriter w, Context context)
+    {
+        if (Project.TagKind(variant) == VariantTagKind.String)
+            return $"{TypeName(variant)}.read({context.Reader}, {TypeName(variant)}.Case.fromTag({Expression(named.Tag!, context, out _)}))";
+        var tag = Expression(named.Tag!, context, out _);
+        var kindValueType = KindValueType(variant);
+        return $"{TypeName(variant)}.read({context.Reader}, {VariantKindType(variant)}.fromValue({(kindValueType == "long" ? tag : $"({kindValueType}) ({tag})")}))";
+    }
+
+    protected override string ReadDefinition(TypeDef definition, CodeWriter w, Context context) => $"{TypeName(definition)}.read({context.Reader})";
 
     // ------------------------------------------------------------------ writing values
 
-    private void WriteCount(LengthSpec length, string count, CodeWriter w, Context context, string what)
+    protected override void WriteLengthPrefix(PrimitiveRef prefix, string count, CodeWriter w, Context context) =>
+        w.Line($"{context.Writer}.write{Method(prefix)}(({RuntimeType(prefix.Kind)}) {count});");
+
+    protected override void CheckFixedCount(string count, int length, string what, CodeWriter w, Context context) =>
+        w.Line($"if ({count} != {length}) {Throw(Literal($"{what} must have exactly {length} elements"))}");
+
+    private static string What(Context context) => context.Field?.Name ?? "value";
+
+    protected override void WritePrimitive(PrimitiveRef primitive, string value, CodeWriter w, Context context) =>
+        w.Line($"{context.Writer}.write{Method(primitive)}({CheckFits(value, primitive.Kind, w, context)});");
+
+    protected override void WriteString(StringRef str, string value, CodeWriter w, Context context)
     {
-        switch (length.Kind)
+        CheckEncoding(str);
+        if (str.Length.Kind == LengthKind.Zero)
         {
-            case LengthKind.Default or LengthKind.Prefix:
-                var prefix = length.Prefix ?? Project.Defaults.Length;
-                w.Line($"{context.Writer}.write{Method(prefix)}(({RuntimeType(prefix.Kind)}) {count});");
-                break;
-            case LengthKind.Fixed:
-                w.Line($"if ({count} != {length.Fixed}) {Throw(Literal($"{what} must have exactly {length.Fixed} elements"))}");
-                break;
+            w.Line($"{context.Writer}.writeUtf8Zero({value});");
+            return;
         }
+
+        if (str.Length.Kind is LengthKind.Default or LengthKind.Prefix or LengthKind.Fixed)
+            WriteCount(str.Length, $"FormatWriter.utf8Length({value})", w, context, What(context));
+        w.Line($"{context.Writer}.writeUtf8({value});");
     }
 
-    private void Write(TypeRef type, string value, CodeWriter w, Context context)
+    protected override void WriteBytes(BytesRef bytes, string value, CodeWriter w, Context context)
     {
-        var writer = context.Writer;
-        var what = context.Field?.Name ?? "value";
-        switch (type)
-        {
-            case PrimitiveRef primitive:
-                w.Line($"{writer}.write{Method(primitive)}({CheckFits(value, primitive.Kind, w, context)});");
-                break;
-            case StringRef str:
-                if ((str.Encoding ?? Project.Defaults.String) != StringEncoding.Utf8)
-                    throw new CodegenException($"String encoding {str.Encoding} is not supported by the Java generator");
-                if (str.Length.Kind == LengthKind.Zero)
-                {
-                    w.Line($"{writer}.writeUtf8Zero({value});");
-                    break;
-                }
-
-                if (str.Length.Kind is LengthKind.Default or LengthKind.Prefix or LengthKind.Fixed)
-                    WriteCount(str.Length, $"FormatWriter.utf8Length({value})", w, context, what);
-                w.Line($"{writer}.writeUtf8({value});");
-                break;
-            case BytesRef bytes:
-                WriteCount(bytes.Length, $"{value}.length", w, context, what);
-                w.Line($"{writer}.writeBytes({value});");
-                break;
-            case ArrayRef array:
-            {
-                var items = Temp("items");
-                w.Line($"{Type(array)} {items} = {value};");
-                WriteCount(array.Length, Arrays ? $"{items}.length" : $"{items}.size()", w, context, what);
-                var item = Temp("item");
-                w.OpenInline($"for ({Type(array.Element, !Arrays)} {item} : {items})");
-                Write(array.Element, item, w, context.Element());
-                w.Close();
-                break;
-            }
-            case MapRef map:
-            {
-                var entries = Temp("entries");
-                w.Line($"{Type(map)} {entries} = {value};");
-                WriteCount(map.Length, $"{entries}.size()", w, context, what);
-                var entry = Temp("entry");
-                var entryContext = context.Element();
-                w.OpenInline($"for (java.util.Map.Entry<{Type(map.Key, true)}, {Type(map.Value, true)}> {entry} : {entries})");
-                Write(map.Key, $"{entry}.getKey()", w, entryContext);
-                Write(map.Value, $"{entry}.getValue()", w, entryContext);
-                w.Close();
-                break;
-            }
-            case OptionalRef optional:
-            {
-                var temp = Temp("optional");
-                w.Line($"{Type(optional.Inner, true)} {temp} = {value};");
-                w.Line($"{writer}.writeBool({temp} != null);");
-                w.OpenInline($"if ({temp} != null)");
-                Write(optional.Inner, temp, w, context.Element());
-                w.Close();
-                break;
-            }
-            case SizedRef sized:
-            {
-                var buffer = Temp("buffer");
-                var sub = Temp("writer");
-                w.Line($"java.io.ByteArrayOutputStream {buffer} = new java.io.ByteArrayOutputStream();");
-                w.Line($"FormatWriter {sub} = new FormatWriter({buffer});");
-                Write(sized.Inner, value, w, context.WithWriter(sub));
-                WriteCount(sized.Length, $"{buffer}.size()", w, context, what);
-                w.Line($"{writer}.writeBytes({buffer}.toByteArray());");
-                break;
-            }
-            case FixedPointRef fixedPoint:
-                w.Line($"{writer}.write{Method(fixedPoint.Base)}(({RuntimeType(fixedPoint.Base.Kind)}) Math.round({value} * " +
-                       $"{Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d));");
-                break;
-            case NativeRef native:
-            {
-                var (codegen, args) = Native(native);
-                w.Line(NativeTemplate(codegen.Write, args, new Dictionary<string, string>
-                {
-                    ["writer"] = writer, ["pass-writer"] = writer, ["value"] = value,
-                }) + ";");
-                break;
-            }
-            case NamedRef named:
-                switch (Definition(named.Name))
-                {
-                    case AliasDef alias when !IsExcluded(named.Name):
-                        Write(alias.Target, value, w, context);
-                        break;
-                    case EnumDef enumDef:
-                        var wire = named.As ?? enumDef.Type;
-                        var number = IsOpen(enumDef) ? CheckFits(value, enumDef.Type.Kind, w, context) : value + ".value";
-                        w.Line($"{writer}.write{Method(wire)}({WireValue(number, enumDef.Type.Kind, wire.Kind)});");
-                        break;
-                    case VariantDef when named.Tag != null:
-                        w.Line($"{value}.writeContent({writer});");
-                        break;
-                    default:
-                        w.Line($"{value}.write({writer});");
-                        break;
-                }
-
-                break;
-            default:
-                throw new CodegenException($"Unsupported type {type}");
-        }
+        WriteCount(bytes.Length, $"{value}.length", w, context, What(context));
+        w.Line($"{context.Writer}.writeBytes({value});");
     }
+
+    protected override void WriteArray(ArrayRef array, string value, CodeWriter w, Context context)
+    {
+        var items = Temp("items");
+        w.Line($"{Type(array)} {items} = {value};");
+        WriteCount(array.Length, Arrays ? $"{items}.length" : $"{items}.size()", w, context, What(context));
+        var item = Temp("item");
+        w.OpenInline($"for ({Type(array.Element, !Arrays)} {item} : {items})");
+        Write(array.Element, item, w, context.Element());
+        w.Close();
+    }
+
+    protected override void WriteMap(MapRef map, string value, CodeWriter w, Context context)
+    {
+        var entries = Temp("entries");
+        w.Line($"{Type(map)} {entries} = {value};");
+        WriteCount(map.Length, $"{entries}.size()", w, context, What(context));
+        var entry = Temp("entry");
+        var entryContext = context.Element();
+        w.OpenInline($"for (java.util.Map.Entry<{Type(map.Key, true)}, {Type(map.Value, true)}> {entry} : {entries})");
+        Write(map.Key, $"{entry}.getKey()", w, entryContext);
+        Write(map.Value, $"{entry}.getValue()", w, entryContext);
+        w.Close();
+    }
+
+    protected override void WriteOptional(OptionalRef optional, string value, CodeWriter w, Context context)
+    {
+        var temp = Temp("optional");
+        w.Line($"{Type(optional.Inner, true)} {temp} = {value};");
+        w.Line($"{context.Writer}.writeBool({temp} != null);");
+        w.OpenInline($"if ({temp} != null)");
+        Write(optional.Inner, temp, w, context.Element());
+        w.Close();
+    }
+
+    protected override void WriteSized(SizedRef sized, string value, CodeWriter w, Context context)
+    {
+        var buffer = Temp("buffer");
+        var sub = Temp("writer");
+        w.Line($"java.io.ByteArrayOutputStream {buffer} = new java.io.ByteArrayOutputStream();");
+        w.Line($"FormatWriter {sub} = new FormatWriter({buffer});");
+        Write(sized.Inner, value, w, context.WithWriter(sub));
+        WriteCount(sized.Length, $"{buffer}.size()", w, context, What(context));
+        w.Line($"{context.Writer}.writeBytes({buffer}.toByteArray());");
+    }
+
+    protected override void WriteFixedPoint(FixedPointRef fixedPoint, string value, CodeWriter w, Context context) =>
+        w.Line($"{context.Writer}.write{Method(fixedPoint.Base)}(({RuntimeType(fixedPoint.Base.Kind)}) Math.round({value} * " +
+               $"{Math.Pow(2, fixedPoint.FractionBits).ToString("R", CultureInfo.InvariantCulture)}d));");
+
+    protected override void WriteEnum(NamedRef named, EnumDef enumDef, string value, CodeWriter w, Context context)
+    {
+        var wire = named.As ?? enumDef.Type;
+        var number = IsOpen(enumDef) ? CheckFits(value, enumDef.Type.Kind, w, context) : value + ".value";
+        w.Line($"{context.Writer}.write{Method(wire)}({WireValue(number, enumDef.Type.Kind, wire.Kind)});");
+    }
+
+    protected override void WriteTaggedVariant(NamedRef named, VariantDef variant, string value, CodeWriter w, Context context) =>
+        w.Line($"{value}.writeContent({context.Writer});");
+
+    protected override void WriteDefinition(TypeDef definition, string value, CodeWriter w, Context context) =>
+        w.Line($"{value}.write({context.Writer});");
 
     // ------------------------------------------------------------------ variants
 

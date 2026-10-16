@@ -2,7 +2,7 @@ using System.Text;
 
 namespace FormatStudio.Codegen;
 
-/// <summary>Builds indented source text for languages with braces.</summary>
+/// <summary>Builds indented source text: blocks with braces (<see cref="Open"/>, <see cref="Close"/>) or by indentation alone.</summary>
 public sealed class CodeWriter
 {
     private readonly StringBuilder _builder = new();

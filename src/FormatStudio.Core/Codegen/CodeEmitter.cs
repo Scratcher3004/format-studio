@@ -7,15 +7,29 @@ using FormatStudio.Projects;
 namespace FormatStudio.Codegen;
 
 /// <summary>A definition can't be generated; reported as an error of that definition.</summary>
-internal sealed class CodegenException(string message) : Exception(message);
+public sealed class CodegenException(string message) : Exception(message);
 
 /// <summary>
-/// The language-independent part of the generators: walks the definitions, reports errors per definition, and
-/// translates DSL expressions into the target language through a few syntax hooks. Each language derives from it and
-/// emits the declarations, the reading and the writing code.
+/// The base of code generators (the generator SDK): the language-independent part of generating code for a project.
+/// It walks the definitions and reports errors per definition, dispatches on the kinds of types, walks the fields of
+/// structs in wire order, completes native types and translates DSL expressions. A language derives from it and
+/// implements the hooks: the declarations of the definitions, the reading and writing of each kind of type, and the
+/// syntax of expressions and statements. The C# and Java generators are built on it.
 /// </summary>
-internal abstract class Emitter(FormatProject project, IReadOnlySet<string> exclude)
+/// <remarks>
+/// Hooks get a <see cref="CodeWriter"/> to add statements to and return expressions as text; names of temporaries come
+/// from <see cref="Temp"/>. Throw <see cref="CodegenException"/> for what a language can't express: the definition is
+/// reported and skipped. The protected members are a public API, versioned by <see cref="ApiVersion"/>.
+/// </remarks>
+/// <param name="exclude">Definitions that are referenced but not generated, by qualified name (see <see cref="CodeGeneration.Excluded"/>).</param>
+public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> exclude)
 {
+    /// <summary>
+    /// The version of this API. It is raised when a hook is added or a protected member changes incompatibly; a generator
+    /// built against another version may not load.
+    /// </summary>
+    public const int ApiVersion = 1;
+
     private int _temp;
     private readonly Dictionary<string, (INativeType Type, NativeCodegen Codegen)> _natives = new(StringComparer.Ordinal);
 
@@ -80,9 +94,16 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
     /// <summary>The path of a definition's file inside the output folder.</summary>
     protected abstract string PathOf(TypeDef definition);
 
+    /// <summary>The file of a struct or packet (usually with <see cref="ReadFields"/> and <see cref="WriteFields"/>).</summary>
     protected abstract string Struct(StructDef structDef);
+
+    /// <summary>The file of an enum.</summary>
     protected abstract string Enum(EnumDef enumDef);
+
+    /// <summary>The file of a variant.</summary>
     protected abstract string Variant(VariantDef variant);
+
+    /// <summary>The file of a bit field.</summary>
     protected abstract string Bitfield(BitfieldDef bitfield);
 
     /// <summary>Adds the files that don't belong to a definition (registry, runtime).</summary>
@@ -276,6 +297,316 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
     protected EnumDef? TagEnum(VariantDef variant) =>
         variant.Tag is NamedRef named && Definition(named.Name) is EnumDef enumDef ? enumDef : null;
 
+    // ------------------------------------------------------------------ structs
+
+    /// <summary>
+    /// The fields of a struct read in wire order: fields that aren't stored (<see cref="FieldDef.IsInput"/>) get a local,
+    /// conditional fields are read inside <see cref="OpenIf"/>, constants and ranges are checked after reading.
+    /// </summary>
+    /// <param name="access">Where a field's value goes: a member of the result, or a local.</param>
+    protected void ReadFields(StructDef structDef, CodeWriter w, Func<FieldDef, string> access)
+    {
+        var known = new Dictionary<string, FieldDef>(StringComparer.Ordinal);
+        var resolve = ReadScope(known, access);
+        foreach (var field in structDef.Fields)
+        {
+            var context = new Context { Field = field, Resolve = resolve };
+            if (!field.IsInput) DeclareLocal(field, access(field), w);
+            if (field.If != null) OpenIf(Condition(field.If, context), w);
+            var target = access(field);
+            Assign(target, Read(field.Type, w, context), w);
+            if (field.Const != null) CheckConstant(structDef, field, target, w);
+            if (field.Min != null || field.Max != null) CheckRange(structDef, field, target, w);
+            if (field.If != null) CloseIf(w);
+            known[field.Name] = field;
+        }
+    }
+
+    /// <summary>
+    /// The fields of a struct written in wire order. Computed fields are calculated first (<see cref="DeclareComputed"/>),
+    /// so that they can describe later fields, e.g. a count before a list; constants are written as such, and conditional
+    /// fields are checked to be present (<see cref="RequirePresent"/>).
+    /// </summary>
+    /// <param name="access">Where a field's value is: a member of the value being written, or the local of a computed field.</param>
+    protected void WriteFields(StructDef structDef, CodeWriter w, Func<FieldDef, string> access)
+    {
+        var computedDone = new HashSet<string>(StringComparer.Ordinal);
+        var resolve = WriteScope(structDef, computedDone, access);
+        var context = new Context { Resolve = resolve };
+        foreach (var field in structDef.Fields.Where(f => f.Computed != null))
+        {
+            var code = Expression(field.Computed!, context, out var kind);
+            DeclareComputed(field, access(field), code, kind, w);
+            computedDone.Add(field.Name);
+        }
+
+        foreach (var field in structDef.Fields)
+        {
+            var fieldContext = new Context { Resolve = resolve, Field = field };
+            if (field.If != null) OpenIf(Condition(field.If, fieldContext), w);
+            var value = field.Const != null ? Constant(field) : access(field);
+            if (field.If != null && field.Const == null) value = RequirePresent(structDef, field, value, w);
+            Write(field.Type, value, w, fieldContext);
+            if (field.If != null) CloseIf(w);
+        }
+    }
+
+    /// <summary>Declares the local of a field that is read but not stored (a computed field, a constant that isn't an input).</summary>
+    protected abstract void DeclareLocal(FieldDef field, string name, CodeWriter w);
+
+    /// <summary>Starts a block that runs if <paramref name="condition"/> (a bool expression) holds.</summary>
+    protected abstract void OpenIf(string condition, CodeWriter w);
+
+    /// <summary>Ends the block of <see cref="OpenIf"/>.</summary>
+    protected virtual void CloseIf(CodeWriter w) => w.Close();
+
+    /// <summary>Stores a value in a field or local.</summary>
+    protected virtual void Assign(string target, string value, CodeWriter w) => w.Line($"{target} = {value};");
+
+    /// <summary>Checks a field with a <c>const</c> after reading it (<paramref name="value"/>); see <see cref="Constant"/>.</summary>
+    protected abstract void CheckConstant(StructDef structDef, FieldDef field, string value, CodeWriter w);
+
+    /// <summary>Checks a field with a <c>min</c> or <c>max</c> after reading it, if the generator validates ranges.</summary>
+    protected abstract void CheckRange(StructDef structDef, FieldDef field, string value, CodeWriter w);
+
+    /// <summary>
+    /// Declares the local <paramref name="name"/> of a computed field with the value of <paramref name="code"/>, an
+    /// expression of <paramref name="kind"/> (a bool, or a 64-bit integer or double) converted to the field's type.
+    /// </summary>
+    protected abstract void DeclareComputed(FieldDef field, string name, string code, ValueKind kind, CodeWriter w);
+
+    /// <summary>
+    /// A conditional field's value inside its condition: fails when it is missing, else returns the value as the field's
+    /// type (e.g. in a new local).
+    /// </summary>
+    protected abstract string RequirePresent(StructDef structDef, FieldDef field, string value, CodeWriter w);
+
+    /// <summary>The value of a field's <c>const</c> as an expression of the field's type.</summary>
+    protected abstract string Constant(FieldDef field);
+
+    // ------------------------------------------------------------------ reading values
+
+    /// <summary>
+    /// Reads a value: returns an expression of its value, after adding the statements it needs to <paramref name="w"/>.
+    /// Aliases are inlined (unless excluded) and native types filled in from their templates; everything else goes to the
+    /// hook of its kind.
+    /// </summary>
+    protected string Read(TypeRef type, CodeWriter w, Context context)
+    {
+        switch (type)
+        {
+            case PrimitiveRef primitive:
+                return ReadPrimitive(primitive, w, context);
+            case StringRef str:
+                return ReadString(str, w, context);
+            case BytesRef bytes:
+                return ReadBytes(bytes, w, context);
+            case ArrayRef array:
+                return ReadArray(array, w, context);
+            case MapRef map:
+                return ReadMap(map, w, context);
+            case OptionalRef optional:
+                return ReadOptional(optional, w, context);
+            case SizedRef sized:
+                return ReadSized(sized, w, context);
+            case FixedPointRef fixedPoint:
+                return ReadFixedPoint(fixedPoint, w, context);
+            case NativeRef native:
+            {
+                var (codegen, args) = Native(native);
+                return NativeTemplate(codegen.Read, args, new Dictionary<string, string>
+                {
+                    ["reader"] = context.Reader, ["pass-reader"] = PassReader(context.Reader),
+                });
+            }
+            case NamedRef named:
+                return Definition(named.Name) switch
+                {
+                    AliasDef alias when !IsExcluded(named.Name) => Read(alias.Target, w, context),
+                    EnumDef enumDef => ReadEnum(named, enumDef, w, context),
+                    VariantDef variant when named.Tag != null => ReadTaggedVariant(named, variant, w, context),
+                    var definition => ReadDefinition(definition, w, context),
+                };
+            default:
+                throw new CodegenException($"Unsupported type {type}");
+        }
+    }
+
+    protected abstract string ReadPrimitive(PrimitiveRef primitive, CodeWriter w, Context context);
+    protected abstract string ReadString(StringRef str, CodeWriter w, Context context);
+    protected abstract string ReadBytes(BytesRef bytes, CodeWriter w, Context context);
+    protected abstract string ReadArray(ArrayRef array, CodeWriter w, Context context);
+    protected abstract string ReadMap(MapRef map, CodeWriter w, Context context);
+    protected abstract string ReadOptional(OptionalRef optional, CodeWriter w, Context context);
+
+    /// <summary>A value in a sized block: usually a reader over the block, then <c>Read(sized.Inner, ...)</c> with it.</summary>
+    protected abstract string ReadSized(SizedRef sized, CodeWriter w, Context context);
+
+    protected abstract string ReadFixedPoint(FixedPointRef fixedPoint, CodeWriter w, Context context);
+
+    /// <summary>An enum value, read as <c>named.As</c> or the enum's own type.</summary>
+    protected abstract string ReadEnum(NamedRef named, EnumDef enumDef, CodeWriter w, Context context);
+
+    /// <summary>A variant whose tag is outside it: <c>named.Tag</c> is the expression of the tag.</summary>
+    protected abstract string ReadTaggedVariant(NamedRef named, VariantDef variant, CodeWriter w, Context context);
+
+    /// <summary>A struct, bit field, variant with its own tag, or an excluded alias: usually a call of the type's read method.</summary>
+    protected abstract string ReadDefinition(TypeDef definition, CodeWriter w, Context context);
+
+    /// <summary>A reader as an argument of a call (<c>{{pass-reader}}</c> in native templates), e.g. by reference.</summary>
+    protected virtual string PassReader(string reader) => reader;
+
+    /// <summary>
+    /// The number of elements or bytes of a length: a literal for fixed lengths, else a checked count from a prefix or
+    /// expression (<see cref="ReadLengthPrefix"/>, <see cref="CheckCount"/>).
+    /// </summary>
+    /// <param name="minSize">The least bytes an element takes, so that a count can be checked against the remaining bytes.</param>
+    /// <param name="max">The largest count allowed (<c>maxItems</c>), or null.</param>
+    protected string ReadCount(LengthSpec length, CodeWriter w, Context context, int minSize, int? max)
+    {
+        string raw;
+        switch (length.Kind)
+        {
+            case LengthKind.Fixed:
+                return length.Fixed.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            case LengthKind.Default or LengthKind.Prefix:
+                raw = ReadLengthPrefix(length.Prefix ?? project.Defaults.Length, context);
+                break;
+            case LengthKind.Expression:
+                raw = Expression(length.Expression!, context, out _);
+                break;
+            default:
+                throw new CodegenException($"Length {length} is not supported here");
+        }
+
+        return CheckCount(raw, minSize, max, w, context);
+    }
+
+    /// <summary>An expression that reads a length prefix.</summary>
+    protected abstract string ReadLengthPrefix(PrimitiveRef prefix, Context context);
+
+    /// <summary>
+    /// Checks a count read from the wire (not negative, not more than <paramref name="max"/>, not more elements of
+    /// <paramref name="minSize"/> than bytes remain) into a new local, and returns its name.
+    /// </summary>
+    protected abstract string CheckCount(string raw, int minSize, int? max, CodeWriter w, Context context);
+
+    // ------------------------------------------------------------------ writing values
+
+    /// <summary>
+    /// Writes a value (an expression of its type): aliases are inlined (unless excluded) and native types filled in from
+    /// their templates; everything else goes to the hook of its kind.
+    /// </summary>
+    protected void Write(TypeRef type, string value, CodeWriter w, Context context)
+    {
+        switch (type)
+        {
+            case PrimitiveRef primitive:
+                WritePrimitive(primitive, value, w, context);
+                break;
+            case StringRef str:
+                WriteString(str, value, w, context);
+                break;
+            case BytesRef bytes:
+                WriteBytes(bytes, value, w, context);
+                break;
+            case ArrayRef array:
+                WriteArray(array, value, w, context);
+                break;
+            case MapRef map:
+                WriteMap(map, value, w, context);
+                break;
+            case OptionalRef optional:
+                WriteOptional(optional, value, w, context);
+                break;
+            case SizedRef sized:
+                WriteSized(sized, value, w, context);
+                break;
+            case FixedPointRef fixedPoint:
+                WriteFixedPoint(fixedPoint, value, w, context);
+                break;
+            case NativeRef native:
+            {
+                var (codegen, args) = Native(native);
+                w.Line(Statement(NativeTemplate(codegen.Write, args, new Dictionary<string, string>
+                {
+                    ["writer"] = context.Writer, ["pass-writer"] = PassWriter(context.Writer), ["value"] = value,
+                })));
+                break;
+            }
+            case NamedRef named:
+                switch (Definition(named.Name))
+                {
+                    case AliasDef alias when !IsExcluded(named.Name):
+                        Write(alias.Target, value, w, context);
+                        break;
+                    case EnumDef enumDef:
+                        WriteEnum(named, enumDef, value, w, context);
+                        break;
+                    case VariantDef variant when named.Tag != null:
+                        WriteTaggedVariant(named, variant, value, w, context);
+                        break;
+                    case var definition:
+                        WriteDefinition(definition, value, w, context);
+                        break;
+                }
+
+                break;
+            default:
+                throw new CodegenException($"Unsupported type {type}");
+        }
+    }
+
+    protected abstract void WritePrimitive(PrimitiveRef primitive, string value, CodeWriter w, Context context);
+    protected abstract void WriteString(StringRef str, string value, CodeWriter w, Context context);
+    protected abstract void WriteBytes(BytesRef bytes, string value, CodeWriter w, Context context);
+    protected abstract void WriteArray(ArrayRef array, string value, CodeWriter w, Context context);
+    protected abstract void WriteMap(MapRef map, string value, CodeWriter w, Context context);
+    protected abstract void WriteOptional(OptionalRef optional, string value, CodeWriter w, Context context);
+
+    /// <summary>A value in a sized block: usually written to a buffer, then the length and the buffer.</summary>
+    protected abstract void WriteSized(SizedRef sized, string value, CodeWriter w, Context context);
+
+    protected abstract void WriteFixedPoint(FixedPointRef fixedPoint, string value, CodeWriter w, Context context);
+    protected abstract void WriteEnum(NamedRef named, EnumDef enumDef, string value, CodeWriter w, Context context);
+
+    /// <summary>A variant whose tag is outside it: only its content, the tag is written as a field of its own.</summary>
+    protected abstract void WriteTaggedVariant(NamedRef named, VariantDef variant, string value, CodeWriter w, Context context);
+
+    /// <summary>A struct, bit field, variant with its own tag, or an excluded alias: usually a call of the value's write method.</summary>
+    protected abstract void WriteDefinition(TypeDef definition, string value, CodeWriter w, Context context);
+
+    /// <summary>A writer as an argument of a call (<c>{{pass-writer}}</c> in native templates), e.g. by reference.</summary>
+    protected virtual string PassWriter(string writer) => writer;
+
+    /// <summary>An expression as a statement.</summary>
+    protected virtual string Statement(string expression) => expression + ";";
+
+    /// <summary>
+    /// Writes the length of a value whose number of elements or bytes is <paramref name="count"/>: the prefix
+    /// (<see cref="WriteLengthPrefix"/>), or a check of a fixed length (<see cref="CheckFixedCount"/>). Lengths given by
+    /// an expression or the end of the data aren't written.
+    /// </summary>
+    /// <param name="what">The field, for messages.</param>
+    protected void WriteCount(LengthSpec length, string count, CodeWriter w, Context context, string what)
+    {
+        switch (length.Kind)
+        {
+            case LengthKind.Default or LengthKind.Prefix:
+                WriteLengthPrefix(length.Prefix ?? project.Defaults.Length, count, w, context);
+                break;
+            case LengthKind.Fixed:
+                CheckFixedCount(count, length.Fixed, what, w, context);
+                break;
+        }
+    }
+
+    /// <summary>Writes a length prefix; <paramref name="count"/> is an int expression.</summary>
+    protected abstract void WriteLengthPrefix(PrimitiveRef prefix, string count, CodeWriter w, Context context);
+
+    /// <summary>Fails when <paramref name="count"/> isn't the fixed length.</summary>
+    protected abstract void CheckFixedCount(string count, int length, string what, CodeWriter w, Context context);
+
     // ------------------------------------------------------------------ cycles
 
     /// <summary>Types that contain themselves by value (directly or through other types), by qualified name.</summary>
@@ -362,7 +693,8 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
 
     // ------------------------------------------------------------------ expressions
 
-    protected sealed class Context
+    /// <summary>Where code is generated: the names of the reader and writer, and the names expressions can use.</summary>
+    public sealed class Context
     {
         public string Reader { get; init; } = "reader";
         public string Writer { get; init; } = "writer";
@@ -379,7 +711,8 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
         public static Context Empty => new() { Resolve = _ => null };
     }
 
-    protected enum ValueKind
+    /// <summary>What an expression evaluates to.</summary>
+    public enum ValueKind
     {
         Bool,
         Number,
@@ -392,7 +725,7 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
     /// <param name="Code">The value converted for arithmetic (a 64-bit integer, a double or a bool).</param>
     /// <param name="Raw">The plain access, for null checks, members and len().</param>
     /// <param name="MayBeNull">Optional or conditional: len() and member access must check for null.</param>
-    protected sealed record Value(string Code, string Raw, ValueKind Kind, TypeRef? Type, bool MayBeNull = false);
+    public sealed record Value(string Code, string Raw, ValueKind Kind, TypeRef? Type, bool MayBeNull = false);
 
     /// <summary>The name of a field or case in the generated type.</summary>
     protected abstract string MemberName(string name, string owner);
@@ -599,14 +932,13 @@ internal abstract class Emitter(FormatProject project, IReadOnlySet<string> excl
     /// <summary>
     /// Names while writing a struct: stored fields, constants and the computed fields that are calculated already.
     /// </summary>
-    protected Func<string, Value?> WriteScope(StructDef structDef, IReadOnlySet<string> computedDone, Func<FieldDef, string> access,
-        Func<FieldDef, string> constant)
+    protected Func<string, Value?> WriteScope(StructDef structDef, IReadOnlySet<string> computedDone, Func<FieldDef, string> access)
     {
         var fields = structDef.Fields.ToDictionary(f => f.Name, StringComparer.Ordinal);
         return name =>
         {
             if (!fields.TryGetValue(name, out var field)) return null;
-            if (field.Const != null) return FieldValue($"({constant(field)})", field.Type, false);
+            if (field.Const != null) return FieldValue($"({Constant(field)})", field.Type, false);
             if (field.Computed != null && !computedDone.Contains(name))
                 throw new CodegenException($"Computed field '{name}' is used before it is calculated");
             return FieldValue(access(field), field.Type, field.If != null);

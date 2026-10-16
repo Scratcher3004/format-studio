@@ -29,8 +29,9 @@ writes the targets.
 All generators share the same model: one file per definition (aliases are inlined), a registry with the packet id
 dispatch (with [protocols](dsl.md#protocols), a nested class per protocol in the registry class, e.g.
 `Packets.LoginServerbound`), and the same treatment of computed, const and conditional fields, `until` arrays, external and string tags,
-and length checks before allocating. Expressions are translated once by a language-independent layer
-(`Codegen/Emitter.cs`); each language adds its syntax and I/O.
+and length checks before allocating. A language-independent layer (`CodeEmitter`) walks the definitions and fields and
+translates expressions; each language adds its syntax and I/O. Other languages can be built on it the same way, see
+[writing a code generator](generators.md).
 
 The output only goes to the target's folder inside the project, and only files starting with the generated-file
 marker are replaced or deleted (others are reported and left alone). Copying the reviewed output into a source tree is
