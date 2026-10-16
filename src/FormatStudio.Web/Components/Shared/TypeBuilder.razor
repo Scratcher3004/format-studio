@@ -74,7 +74,7 @@
                                  Label="Fraction bits" Min="0" Max="63" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 120px" />
                 break;
             case NativeRef native:
-                <MudSelect T="string" Value="@native.Name" ValueChanged="@(n => Changed(new NativeRef(n)))" Label="@("Type")" Variant="@Variant.Outlined"
+                <MudSelect T="string" Value="@native.Name" ValueChanged="@(n => Changed(NewNative(n)))" Label="@("Type")" Variant="@Variant.Outlined"
                            Margin="@Margin.Dense" Dense="@true" Style="@("min-width: 120px; max-width: 160px")">
                     @foreach (var type in Natives.All.OrderBy(t => t.Name, StringComparer.Ordinal))
                     {
@@ -100,7 +100,7 @@
                                 }
                             </MudSelect>
                         }
-                        else
+                        else if (parameter.Kind != NativeParameterKind.Type || TypeArgument(native, index) == null)
                         {
                             <MudTextField T="string" Value="@arg" ValueChanged="@(a => Changed(WithArgument(native, index, a)))" Label="@Title(parameter.Name)"
                                           Placeholder="@("default")" HelperText="@parameter.Description" Variant="@Variant.Outlined" Margin="@Margin.Dense"
@@ -132,6 +132,19 @@
             <div class="type-nested">
                 <TypeBuilder Value="map.Key" ValueChanged="t => Changed(map with { Key = t })" Label="Key" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
                 <TypeBuilder Value="map.Value" ValueChanged="t => Changed(map with { Value = t })" Label="Value" TypeNames="TypeNames" Find="Find" Natives="@Natives" />
+            </div>
+            break;
+        case NativeRef native when Natives.Find(native.Name) is { } nativeType && nativeType.Parameters.Any(p => p.Kind == NativeParameterKind.Type):
+            <div class="type-nested">
+                @for (var i = 0; i < nativeType.Parameters.Count; i++)
+                {
+                    var index = i;
+                    if (nativeType.Parameters[i].Kind == NativeParameterKind.Type && TypeArgument(native, index) is { } typeArgument)
+                    {
+                        <TypeBuilder Value="@typeArgument" ValueChanged="@(t => Changed(WithArgument(native, index, Format(t))))" Label="@Title(nativeType.Parameters[i].Name)"
+                                     TypeNames="@TypeNames" Find="@Find" Natives="@Natives" />
+                    }
+                }
             </div>
             break;
     }
@@ -176,6 +189,30 @@
         FixedPointRef => Kind.FixedPoint,
         _ => Kind.Native,
     };
+
+    /// <summary>A reference to a native type; type parameters without a default start out as bytes, so that they can be edited.</summary>
+    private NativeRef NewNative(string name)
+    {
+        if (Natives.Find(name) is not { } type) return new NativeRef(name);
+        static bool Required(NativeParameter p) => p.Kind == NativeParameterKind.Type && p.Default == null;
+        var last = type.Parameters.ToList().FindLastIndex(Required);
+        return new NativeRef(name, type.Parameters.Take(last + 1).Select(p => Required(p) ? "bytes" : "default").ToList());
+    }
+
+    /// <summary>The type given for a type parameter, or null when it is left to the defaults or doesn't parse.</summary>
+    private static TypeRef? TypeArgument(NativeRef native, int index)
+    {
+        var arg = Argument(native, index);
+        if (arg.Length == 0) return null;
+        try
+        {
+            return DslReader.ReadType(arg);
+        }
+        catch (Exception e) when (e is System.FormatException or FormatDefinitionException or YamlDotNet.Core.YamlException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>An argument as written, or "" when it is left to the defaults.</summary>
     private static string Argument(NativeRef native, int index) =>
@@ -224,7 +261,7 @@
             Kind.Map => new MapRef(new StringRef(null, LengthSpec.Default), Value, LengthSpec.Default),
             Kind.Sized => new SizedRef(Value, LengthSpec.Default),
             Kind.FixedPoint => new FixedPointRef(new PrimitiveRef(PrimitiveKind.I32), 5),
-            _ => new NativeRef(Natives.All.FirstOrDefault()?.Name ?? "nbt"),
+            _ => NewNative(Natives.All.FirstOrDefault()?.Name ?? "nbt"),
         });
     }
 

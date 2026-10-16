@@ -16,10 +16,14 @@ public sealed class RandomValues
     private readonly Random _random;
     private readonly ValueContext _context;
 
-    public RandomValues(FormatProject project, int seed)
+    public RandomValues(FormatProject project, int seed) : this(project, new Random(seed))
+    {
+    }
+
+    private RandomValues(FormatProject project, Random random)
     {
         _project = project;
-        _random = new Random(seed);
+        _random = random;
         _context = new ValueContext(project, evaluateComputed: true);
     }
 
@@ -29,6 +33,10 @@ public sealed class RandomValues
     public int MaxDepth { get; init; } = 6;
 
     public JsonNode? Generate(TypeRef type) => Generate(type, null, null, 0);
+
+    /// <summary>A value inside the value of a native type (see <see cref="Natives.NativeArguments.RandomValue"/>).</summary>
+    internal static JsonNode? Nested(FormatProject project, TypeRef type, Random random, int depth) =>
+        new RandomValues(project, random).Generate(type, null, null, depth);
 
     private JsonNode? Generate(TypeRef type, FieldDef? field, StructScope? scope, int depth)
     {

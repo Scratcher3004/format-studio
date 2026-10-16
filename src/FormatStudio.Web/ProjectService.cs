@@ -197,6 +197,7 @@ public sealed class ProjectService
         MapRef map => UsesType(map.Key, isTarget) || UsesType(map.Value, isTarget),
         OptionalRef optional => UsesType(optional.Inner, isTarget),
         SizedRef sized => UsesType(sized.Inner, isTarget),
+        NativeRef native => native.Types.Any(t => t != null && UsesType(t, isTarget)),
         _ => false,
     };
 

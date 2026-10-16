@@ -119,7 +119,12 @@ internal static class Commands
         var project = LoadProject(line);
         foreach (var native in project.Natives.All.OrderBy(n => n.Name, StringComparer.Ordinal))
         {
-            var parameters = string.Join(", ", native.Parameters.Select(p => p.Choices == null ? p.Name : $"{p.Name}: {string.Join("|", p.Choices)}"));
+            var parameters = string.Join(", ", native.Parameters.Select(p => p.Kind switch
+            {
+                NativeParameterKind.Type => $"{p.Name}: type",
+                _ when p.Choices != null => $"{p.Name}: {string.Join("|", p.Choices)}",
+                _ => p.Name,
+            }));
             var origin = native switch
             {
                 DeclaredNative declared => declared.Source.File + (declared.Unavailable != null ? $" (can't decode or encode: {declared.Unavailable})" : ""),

@@ -12,6 +12,7 @@ A generator for another language is a class that implements `ICodeGenerator` and
 | Dispatches on the kind of type (`Read`, `Write`), fills in native types from their templates | `ReadPrimitive` ... `ReadDefinition`, `WritePrimitive` ... `WriteDefinition`, one per kind of type |
 | Lengths: fixed, prefix or expression (`ReadCount`, `WriteCount`) | `ReadLengthPrefix`, `CheckCount`, `WriteLengthPrefix`, `CheckFixedCount` |
 | Translates DSL expressions, typed (`Translate`, `Expression`, `Condition`), with the names in scope while reading and writing | Their syntax: `NumberLiteral`, `StringLiteral`, `EnumConstant`, `Convert`, `IndexAccess`, `Length`, `ByteLength`, `TagNumber`, `TagText`, `TextCompare`, `MemberName` |
+| Fills in the type arguments of native types (`{{T:type}}`, `{{T:read}}`, `{{T:write}}`) | Optional: `TypeArgument`, `ReadFunction`, `WriteFunction` (a local function or lambda that reads or writes one value); without them, native types with type parameters are errors |
 
 Hooks that read return an expression and add the statements it needs to the `CodeWriter`; hooks that write add
 statements. `Temp("name")` gives fresh local names, numbered per file. The `Context` passed along names the reader and
@@ -97,5 +98,7 @@ dependencies it references from its folder, and projects that use the library ca
 
 ## Compatibility
 
-The protected members of `CodeEmitter` are a public API, versioned by `CodeEmitter.ApiVersion` (now 1). The version is
-raised when a hook is added or a member changes incompatibly.
+The protected members of `CodeEmitter` are a public API, versioned by `CodeEmitter.ApiVersion` (now 2). The version is
+raised when a hook is added or a member changes incompatibly. Version 2 added the optional hooks for type arguments
+(`TypeArgument`, `ReadFunction`, `WriteFunction`) and an overload of `NativeTemplate` with the `CodeWriter` and context;
+generators built against version 1 keep working.

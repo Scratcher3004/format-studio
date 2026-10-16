@@ -166,7 +166,8 @@ compares strings, e.g. a recipe type name stored before the recipe id.
 
 A native type is one the DSL can't describe; code that comes with Format Studio reads, writes, shows and generates
 it. It is written as its name with arguments, `name(a, b)`, or as `{native: name, args: [a, b]}` (needed when an
-argument contains `,`, brackets or `:`). Arguments left out, or written as `default`, come from the project's
+argument contains `,` outside brackets, `{` or `:`). Some take a type as an argument, e.g. `zlib(Chunk[u8])`; such an
+argument can also be a type mapping in the long form (`args: [{type: Shade, as: u16}]`). Arguments left out, or written as `default`, come from the project's
 `defaults` under the type's name (one value, or a list), then from the parameter's own default; a required one that
 is still missing is an error. The name of a native type always means the native type: a definition can't use it.
 

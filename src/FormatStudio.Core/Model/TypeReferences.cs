@@ -23,6 +23,7 @@ public static class TypeReferences
         MapRef map => Of(map.Key).Concat(Of(map.Value)).Concat(Of(map.Length)),
         OptionalRef optional => Of(optional.Inner),
         SizedRef sized => Of(sized.Inner).Concat(Of(sized.Length)),
+        NativeRef native => native.Types.OfType<TypeRef>().SelectMany(Of),
         _ => [],
     };
 

@@ -19,7 +19,7 @@ minSize: 3                       # optional: the least bytes a value takes (othe
 nullable: false                  # optional: whether null can be written (otherwise the class says)
 parameters:
   - name: order
-    kind: choice                 # choice | text | integer (choice when choices are given, else text)
+    kind: choice                 # choice | text | integer | type (choice when choices are given, else text)
     choices: [rgb, bgr]
     default: rgb                 # optional; without, the argument is required
     doc: Byte order
@@ -85,6 +85,71 @@ public sealed class RgbType : INativeType
 
 `GeneratedCodeVerifier` checks the generated code of a project that uses the type against the plugin, like any other
 type (see [code generation](codegen.md#checking-generated-code)).
+
+## Type parameters
+
+A parameter of kind `type` takes a type: the native type's values contain values of that type, e.g. a compressed
+block of a struct. Type arguments are written like other arguments, `zlib(Chunk)`, `zlib(Chunk[u8], 6)` (commas
+inside brackets don't separate arguments), or in the mapping form for types that need it:
+`{native: zlib, args: [{type: Shade, as: u16}]}`. They can't use fields of the struct they are in (no length
+expressions), since the native type's code reads them on its own.
+
+```yaml
+native: zlib
+plugin: ../plugins/Compression.dll
+class: Compression.ZlibType
+parameters:
+  - name: T
+    kind: type
+    doc: The compressed value
+  - name: level
+    kind: integer
+    default: 6
+codegen:
+  csharp:
+    type: '{{T:type}}'           # the values are T's
+    read: 'global::{{namespace}}.Zlib.Read({{pass-reader}}, {{T:read}})'
+    write: 'global::{{namespace}}.Zlib.Write({{pass-writer}}, {{level}}, {{value}}, {{T:write}})'
+    files: [csharp/Zlib.cs]
+  java-stream:
+    type: '{{T:type}}'
+    read: '{{namespace}}.Zlib.read({{reader}}, {{T:read}})'
+    write: '{{namespace}}.Zlib.write({{writer}}, {{level}}, {{value}}, {{T:write}})'
+    files: [java/Zlib.java]
+```
+
+The plugin gets the type with `args.Type("T")` and reads and writes its values through the reader and writer, so
+that every type works, those of libraries included:
+
+```csharp
+public JsonNode? Read(INativeReader reader, NativeArguments args)
+{
+    var bytes = Inflate(reader.Wire.Take(...));
+    return reader.Decode(args.Type("T"), bytes, "content");   // a value from other bytes; reader.Read(type, name) reads in place
+}
+
+public void Write(INativeWriter writer, NativeArguments args, JsonNode? value)
+{
+    var bytes = writer.Encode(args.Type("T"), value, "content");   // writer.Write(type, value, name) writes in place
+    ...
+}
+
+public JsonNode? DefaultValue(NativeArguments args) => args.DefaultValue("T");
+public JsonNode? RandomValue(NativeArguments args, Random random, int depth) => args.RandomValue("T", random, depth);
+```
+
+In the templates, `{{T:type}}` is the type of `T`'s values in the target language, and `{{T:read}}` and
+`{{T:write}}` are functions that read or write one value, for the runtime files to call:
+
+| Generator | `{{T:read}}` | `{{T:write}}` |
+|---|---|---|
+| `csharp` | a static local function `T f(ref FormatReader reader)` | `void f(ref FormatWriter writer, T value)` |
+| `csharp-stream` | `T f(FormatStreamReader reader)` | `void f(FormatStreamWriter writer, T value)` |
+| `java-stream` | a `FormatReader.ValueReader<T>` | a `FormatWriter.ValueWriter<T>` |
+
+In C# they convert to any delegate with that signature: the runtime file declares one (for spans, since
+`FormatReader` is a `ref struct`) or takes a `Func`/`Action` (streams). A type whose code is just `{{T:type}}` is a
+C# struct when `T` is.
 
 ## Code for other generators
 

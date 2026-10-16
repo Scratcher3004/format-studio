@@ -52,6 +52,12 @@ public enum NativeParameterKind
     Text,
     /// <summary>An integer.</summary>
     Integer,
+    /// <summary>
+    /// A type expression (<c>zlib(Chunk)</c>): the values of the native type contain values of that type, read and written
+    /// with <see cref="INativeReader.Read"/>/<see cref="INativeWriter.Write"/> (or <c>Decode</c>/<c>Encode</c> for other
+    /// bytes) and in generated code with the <c>{{T:read}}</c>/<c>{{T:write}}</c> functions.
+    /// </summary>
+    Type,
 }
 
 /// <param name="Default">The value when neither the reference nor the project's defaults give one; null makes it required.</param>
@@ -64,26 +70,49 @@ public sealed record NativeParameter(
     string? Default = null,
     string? Missing = null);
 
-/// <summary>The arguments of a native type reference, completed from the defaults: one value per parameter, in order.</summary>
-public sealed class NativeArguments(IReadOnlyList<NativeParameter> parameters, IReadOnlyList<string> values)
+/// <summary>
+/// The arguments of a native type reference, completed from the defaults: one value per parameter, in order (type
+/// arguments as written), and the types of the <see cref="NativeParameterKind.Type"/> parameters.
+/// </summary>
+/// <param name="types">Per parameter, the type of a type parameter, else null; null for a type without type parameters.</param>
+/// <param name="project">The project the reference is bound in, for the values of type arguments.</param>
+public sealed class NativeArguments(IReadOnlyList<NativeParameter> parameters, IReadOnlyList<string> values,
+    IReadOnlyList<TypeRef?>? types = null, FormatStudio.Projects.FormatProject? project = null)
 {
     public IReadOnlyList<NativeParameter> Parameters => parameters;
     public IReadOnlyList<string> Values => values;
 
-    public string this[string name]
-    {
-        get
-        {
-            for (var i = 0; i < parameters.Count; i++)
-            {
-                if (parameters[i].Name == name) return values[i];
-            }
+    public string this[string name] => values[IndexOf(name)];
 
-            throw new ArgumentException($"No parameter '{name}'", nameof(name));
+    private int IndexOf(string name)
+    {
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            if (parameters[i].Name == name) return i;
         }
+
+        throw new ArgumentException($"No parameter '{name}'", nameof(name));
     }
 
     public long Integer(string name) => long.Parse(this[name], System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>The type given for a <see cref="NativeParameterKind.Type"/> parameter.</summary>
+    public TypeRef Type(string name)
+    {
+        var index = IndexOf(name);
+        return types != null && index < types.Count && types[index] is { } type
+            ? type
+            : throw new ArgumentException($"'{name}' is not a type parameter", nameof(name));
+    }
+
+    private FormatStudio.Projects.FormatProject Project =>
+        project ?? throw new InvalidOperationException("The arguments aren't bound in a project");
+
+    /// <summary>The default value of the type given for a type parameter (see <see cref="INativeType.DefaultValue"/>).</summary>
+    public JsonNode? DefaultValue(string name) => new DefaultValues(Project).Generate(Type(name));
+
+    /// <summary>A random value of the type given for a type parameter; <paramref name="depth"/> is that of the native value.</summary>
+    public JsonNode? RandomValue(string name, Random random, int depth) => RandomValues.Nested(Project, Type(name), random, depth + 1);
 }
 
 /// <summary>A native type with the arguments of one reference.</summary>
@@ -97,13 +126,16 @@ public sealed record BoundNative(INativeType Type, NativeArguments Args);
 /// <item><c>{{pass-reader}}</c>, <c>{{pass-writer}}</c>: the variable as a method argument (<c>ref reader</c> for C# spans).</item>
 /// <item><c>{{namespace}}</c>: the namespace (C#) or package (Java) of the <see cref="Files"/>; <c>{{runtime}}</c>: the runtime's.</item>
 /// <item><c>{{parameter}}</c>: an argument as written; <c>{{parameter:pascal}}</c> in PascalCase (<c>java-network</c> → <c>JavaNetwork</c>).</item>
+/// <item>For a type parameter <c>T</c>: <c>{{T:type}}</c>, the type of its values in the target language; <c>{{T:read}}</c>
+/// and <c>{{T:write}}</c>, a function that reads a value from a reader, or writes one to a writer (see the generator's
+/// documentation for their signatures). The functions can't use fields of the struct.</item>
 /// </list>
 /// </summary>
 /// <param name="Type">The type of values in the target language.</param>
 /// <param name="Read">An expression that reads a value.</param>
 /// <param name="Write">A statement that writes <c>{{value}}</c>, without the semicolon.</param>
 /// <param name="Files">Source files the generated code needs, written into the output (with the same placeholders).</param>
-/// <param name="IsValueType">C#: the type is a struct (nullable as <c>T?</c> with <c>.Value</c>).</param>
+/// <param name="IsValueType">C#: the type is a struct (nullable as <c>T?</c> with <c>.Value</c>). A <see cref="Type"/> that is just <c>{{T:type}}</c> is a struct when <c>T</c>'s values are.</param>
 public sealed record NativeCodegen(string Type, string Read, string Write, IReadOnlyList<NativeFile>? Files = null, bool IsValueType = false);
 
 /// <param name="Name">The file name, e.g. <c>Color.cs</c>; it goes into the folder of <c>{{namespace}}</c>.</param>

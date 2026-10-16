@@ -116,9 +116,11 @@ public sealed partial class NativeTypes
     /// <summary>
     /// The type of a reference with its arguments completed: an argument left out (or written as <c>default</c>) comes
     /// from the project's defaults for the type, then from the parameter's default. Throws when a required argument is
-    /// missing or an argument doesn't fit its parameter.
+    /// missing or an argument doesn't fit its parameter. Type arguments are parsed (unless <paramref name="native"/> has
+    /// them already, see <see cref="NativeRef.Types"/>) and normalized in <paramref name="project"/>.
     /// </summary>
-    public BoundNative Bind(NativeRef native, FormatDefaults defaults)
+    /// <param name="project">The project the values of type arguments are made in (<see cref="NativeArguments.DefaultValue"/>).</param>
+    public BoundNative Bind(NativeRef native, FormatDefaults defaults, FormatProject? project = null)
     {
         var type = Find(native.Name) ?? throw new FormatDefinitionException($"Unknown native type '{native.Name}'");
         var parameters = type.Parameters;
@@ -128,17 +130,37 @@ public sealed partial class NativeTypes
         if (defaultArgs.Count > parameters.Count)
             throw new FormatDefinitionException($"defaults.{native.Name}: {native.Name} takes {Count(parameters.Count)}, not {defaultArgs.Count}");
         var values = new string[parameters.Count];
+        var types = parameters.Any(p => p.Kind == NativeParameterKind.Type) ? new TypeRef?[parameters.Count] : null;
         for (var i = 0; i < parameters.Count; i++)
         {
             var parameter = parameters[i];
-            var value = Given(native.Args, i) ?? Given(defaultArgs, i) ?? parameter.Default
+            var given = Given(native.Args, i);
+            var value = given ?? Given(defaultArgs, i) ?? parameter.Default
                 ?? throw new FormatDefinitionException(parameter.Missing
                     ?? $"{native.Name} needs a {parameter.Name}: write {native.Name}(<{parameter.Name}>) or set defaults.{native.Name} in the project");
             Check(native.Name, parameter, value);
             values[i] = value;
+            if (parameter.Kind == NativeParameterKind.Type)
+            {
+                var parsed = given != null && i < native.Types.Count ? native.Types[i] : null;
+                types![i] = parsed ?? (project != null ? project.Normalize(ParseType(native.Name, parameter, value)) : ParseType(native.Name, parameter, value));
+            }
         }
 
-        return new BoundNative(type, new NativeArguments(parameters, values));
+        return new BoundNative(type, new NativeArguments(parameters, values, types, project));
+    }
+
+    /// <summary>A type argument as a type: a type expression (<c>Chunk[u8]</c>) or a type mapping in flow style.</summary>
+    public static TypeRef ParseType(string name, NativeParameter parameter, string value)
+    {
+        try
+        {
+            return Dsl.DslReader.ReadType(value);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or YamlDotNet.Core.YamlException or System.FormatException)
+        {
+            throw new FormatDefinitionException($"The {parameter.Name} of {name} must be a type, not '{value}': {e.Message}");
+        }
     }
 
     private static string? Given(IReadOnlyList<string> args, int index) =>
@@ -157,17 +179,21 @@ public sealed partial class NativeTypes
         }
     }
 
-    [GeneratedRegex(@"\{\{([A-Za-z_][A-Za-z0-9_-]*)(:pascal)?\}\}")]
+    [GeneratedRegex(@"\{\{([A-Za-z_][A-Za-z0-9_-]*)(?::([a-z]+))?\}\}")]
     private static partial Regex PlaceholderRegex();
 
     /// <summary>
-    /// Fills the placeholders of a <see cref="NativeCodegen"/> template: <paramref name="values"/> by name, then the
-    /// arguments. Unknown placeholders stay as they are.
+    /// Fills the placeholders of a <see cref="NativeCodegen"/> template: <paramref name="values"/> by name (with the
+    /// modifier, e.g. <c>T:read</c>), then the arguments (<c>flavor</c>, <c>flavor:pascal</c>). Unknown placeholders stay
+    /// as they are.
     /// </summary>
     public static string Fill(string template, NativeArguments? args, IReadOnlyDictionary<string, string> values) =>
         PlaceholderRegex().Replace(template, match =>
         {
+            if (values.GetValueOrDefault(match.Value[2..^2]) is { } exact) return exact;
             var name = match.Groups[1].Value;
+            var modifier = match.Groups[2].Success ? match.Groups[2].Value : null;
+            if (modifier is not (null or "pascal")) return match.Value;
             string? value = values.GetValueOrDefault(name);
             if (value == null && args != null)
             {
@@ -178,8 +204,12 @@ public sealed partial class NativeTypes
             }
 
             if (value == null) return match.Value;
-            return match.Groups[2].Success ? Pascal(value) : value;
+            return modifier == "pascal" ? Pascal(value) : value;
         });
+
+    /// <summary>The names of the placeholders in a template, with their modifiers (<c>T:read</c>).</summary>
+    public static IEnumerable<string> Placeholders(string template) =>
+        PlaceholderRegex().Matches(template).Select(m => m.Value[2..^2]);
 
     /// <summary><c>java-network</c> → <c>JavaNetwork</c>.</summary>
     public static string Pascal(string text)

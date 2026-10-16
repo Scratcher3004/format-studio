@@ -24,6 +24,12 @@ public interface INativeReader
     /// <summary>Reads a value of a DSL type at the current position, as a child span called <paramref name="name"/>.</summary>
     JsonNode? Read(TypeRef type, string name);
 
+    /// <summary>
+    /// Reads a value of a DSL type from other bytes than the input, e.g. after decompressing them. All bytes must be
+    /// read; errors are reported at the current position.
+    /// </summary>
+    JsonNode? Decode(TypeRef type, byte[] data, string name);
+
     void Warning(string message);
 
     /// <summary>An error at the current position, for the caller to throw.</summary>
@@ -43,6 +49,9 @@ public interface INativeWriter
 
     /// <summary>Writes a value of a DSL type; <paramref name="name"/> extends the path in error messages.</summary>
     void Write(TypeRef type, JsonNode? value, string name);
+
+    /// <summary>Writes a value of a DSL type to new bytes instead of the output, e.g. to compress them.</summary>
+    byte[] Encode(TypeRef type, JsonNode? value, string name);
 
     void Warning(string message);
 

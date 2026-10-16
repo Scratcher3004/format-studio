@@ -135,7 +135,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     {
         PrimitiveRef or FixedPointRef => true,
         SizedRef sized => IsValueType(sized.Inner),
-        NativeRef native => Native(native).Codegen.IsValueType,
+        NativeRef native => ValueTypeArgument(native) is { } inner ? IsValueType(inner) : Native(native).Codegen.IsValueType,
         NamedRef named => Definition(named.Name) is EnumDef or BitfieldDef || Definition(named.Name) is StructDef or VariantDef && !IsClass(Definition(named.Name)),
         _ => false,
     };
@@ -420,6 +420,32 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     // ------------------------------------------------------------------ reading values
 
     protected override string PassReader(string reader) => Pass(reader);
+
+    protected override string TypeArgument(TypeRef type) => Type(type, true);
+
+    /// <summary>A static local function <c>T f(ref FormatReader reader)</c> (without <c>ref</c> for streams).</summary>
+    protected override string ReadFunction(TypeRef type, CodeWriter w, Context context)
+    {
+        var name = Temp("read");
+        var reader = Temp("reader");
+        w.Open($"static {Type(type, true)} {name}({(Streams ? "" : "ref ")}{options.ReaderType} {reader})");
+        var value = Read(type, w, context.WithReader(reader));
+        w.Line($"return {value};");
+        w.Close();
+        return name;
+    }
+
+    /// <summary>A static local function <c>void f(ref FormatWriter writer, T value)</c> (without <c>ref</c> for streams).</summary>
+    protected override string WriteFunction(TypeRef type, CodeWriter w, Context context)
+    {
+        var name = Temp("write");
+        var writer = Temp("writer");
+        var value = Temp("value");
+        w.Open($"static void {name}({WriterParameter(writer)}, {Type(type, true)} {value})");
+        Write(type, value, w, context.WithWriter(writer));
+        w.Close();
+        return name;
+    }
 
     protected override string ReadLengthPrefix(PrimitiveRef prefix, Context context) => $"{context.Reader}.Read{Method(prefix)}()";
 

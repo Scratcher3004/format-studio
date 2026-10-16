@@ -60,7 +60,7 @@ public static partial class TypeExpressions
             var name = open > 0 ? text[..open].Trim() : "";
             if (!IsTypeName(name)) throw new System.FormatException($"Invalid type expression '{text}'");
             var args = text[(open + 1)..^1];
-            return new NativeRef(name, args.Trim().Length == 0 ? [] : args.Split(',').Select(a => a.Trim()).ToList());
+            return new NativeRef(name, args.Trim().Length == 0 ? [] : SplitArguments(args).Select(a => a.Trim()).ToList());
         }
 
         if (Primitives.TryParse(text, out var primitive)) return primitive;
@@ -124,8 +124,58 @@ public static partial class TypeExpressions
         }
     }
 
-    /// <summary>Whether a native type argument can be written in the short form <c>name(a, b)</c>.</summary>
-    public static bool IsArgument(string text) => text.Length > 0 && text.Trim() == text && text.IndexOfAny([',', '(', ')', '[', ']', '{', '}', '?', '#', ':']) < 0;
+    /// <summary>
+    /// Whether a native type argument can be written in the short form <c>name(a, b)</c>: no commas outside brackets
+    /// and balanced brackets, so that type arguments such as <c>Chunk[u8]</c> or <c>zlib(Chunk)</c> fit.
+    /// </summary>
+    public static bool IsArgument(string text) =>
+        text.Length > 0 && text.Trim() == text && text.IndexOfAny(['{', '}', '#', ':']) < 0 && SplitArguments(text) is [_] && Balanced(text);
+
+    /// <summary>Splits arguments at the commas outside brackets.</summary>
+    private static List<string> SplitArguments(string text)
+    {
+        var result = new List<string>();
+        var depth = 0;
+        var start = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            switch (text[i])
+            {
+                case '(' or '[' or '{':
+                    depth++;
+                    break;
+                case ')' or ']' or '}':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    result.Add(text[start..i]);
+                    start = i + 1;
+                    break;
+            }
+        }
+
+        result.Add(text[start..]);
+        return result;
+    }
+
+    private static bool Balanced(string text)
+    {
+        var open = new Stack<char>();
+        foreach (var c in text)
+        {
+            switch (c)
+            {
+                case '(' or '[':
+                    open.Push(c);
+                    break;
+                case ')' or ']':
+                    if (open.Count == 0 || open.Pop() != (c == ')' ? '(' : '[')) return false;
+                    break;
+            }
+        }
+
+        return open.Count == 0;
+    }
 
     public static string EncodingName(StringEncoding encoding) => encoding switch
     {

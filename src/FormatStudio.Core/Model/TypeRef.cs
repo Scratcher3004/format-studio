@@ -263,6 +263,25 @@ public sealed record NativeRef(string Name, IReadOnlyList<string> Args) : TypeRe
     {
     }
 
+    private readonly IReadOnlyList<string> _args = Args;
+
+    public IReadOnlyList<string> Args
+    {
+        get => _args;
+        init
+        {
+            _args = value;
+            Types = [];
+        }
+    }
+
+    /// <summary>
+    /// The type arguments parsed: per argument, its type when it is given for a type parameter, else null. Filled in by
+    /// the project (<c>FormatProject.Normalize</c>), which knows the parameters; empty until then, and when
+    /// <see cref="Args"/> change. Not part of equality: it follows from the arguments.
+    /// </summary>
+    public IReadOnlyList<TypeRef?> Types { get; init; } = [];
+
     public bool Equals(NativeRef? other) => other != null && Name == other.Name && Args.SequenceEqual(other.Args);
 
     public override int GetHashCode() => Args.Aggregate(Name.GetHashCode(), HashCode.Combine);

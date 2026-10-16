@@ -112,6 +112,8 @@ public sealed class Codec(FormatProject project)
     private sealed class Decoder(Codec codec, WireReader reader, ValueContext context, DiagnosticBag diagnostics)
     {
         private FormatProject Project => codec.Project;
+        private Codec Codec => codec;
+        private ValueContext Context => context;
         private WireReader Reader => reader;
         private DiagnosticBag Diagnostics => diagnostics;
 
@@ -128,6 +130,27 @@ public sealed class Codec(FormatProject project)
             {
                 var childPath = ChildPath(path, name);
                 return decoder.Read(type, scope, decoder.Child(node, name, childPath, type), childPath);
+            }
+
+            public JsonNode? Decode(TypeRef type, byte[] data, string name)
+            {
+                var childPath = ChildPath(path, name);
+                // The spans of the other bytes don't fit the input: the child spans none of it and only shows the value.
+                var child = decoder.Child(node, name, childPath, type);
+                var detached = new SpanNode { Name = name, Path = childPath, Type = child.Type, Offset = 0 };
+                var inner = new WireReader(data);
+                try
+                {
+                    var value = new Decoder(decoder.Codec, inner, decoder.Context, decoder.Diagnostics).Read(type, scope, detached, childPath);
+                    if (inner.Remaining > 0) throw inner.Error($"{inner.Remaining} bytes left after {Describe(type)}");
+                    child.Display = detached.Display;
+                    return value;
+                }
+                catch (DecodeException e)
+                {
+                    child.Error = e.Message;
+                    throw new DecodeException($"{name}, at offset {e.Offset} of its {data.Length} bytes: {e.Message}", decoder.Reader.Position, e.Path ?? childPath);
+                }
             }
 
             public void Warning(string message) => decoder.Diagnostics.Warning(message, path: path);
@@ -504,6 +527,8 @@ public sealed class Codec(FormatProject project)
     private sealed class Encoder(Codec codec, WireWriter writer, ValueContext context, DiagnosticBag diagnostics)
     {
         private FormatProject Project => codec.Project;
+        private Codec Codec => codec;
+        private ValueContext Context => context;
         private WireWriter Writer => writer;
         private DiagnosticBag Diagnostics => diagnostics;
 
@@ -515,6 +540,13 @@ public sealed class Codec(FormatProject project)
             public string Path => path;
 
             public void Write(TypeRef type, JsonNode? value, string name) => encoder.Write(type, value, scope, ChildPath(path, name));
+
+            public byte[] Encode(TypeRef type, JsonNode? value, string name)
+            {
+                var inner = new WireWriter();
+                new Encoder(encoder.Codec, inner, encoder.Context, encoder.Diagnostics).Write(type, value, scope, ChildPath(path, name));
+                return inner.ToArray();
+            }
 
             public void Warning(string message) => encoder.Diagnostics.Warning(message, path: path);
 

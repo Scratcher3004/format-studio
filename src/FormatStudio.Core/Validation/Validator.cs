@@ -1,6 +1,7 @@
 using FormatStudio.Dsl;
 using FormatStudio.Expressions;
 using FormatStudio.Model;
+using FormatStudio.Natives;
 using FormatStudio.Projects;
 
 namespace FormatStudio.Validation;
@@ -200,13 +201,22 @@ public sealed class Validator
                 _diagnostics.Error($"Invalid number of fraction bits {fixedPoint.FractionBits}", source, path);
                 break;
             case NativeRef native:
+                BoundNative bound;
                 try
                 {
-                    _project.Bind(native);
+                    bound = _project.Bind(native);
                 }
                 catch (FormatDefinitionException e)
                 {
                     _diagnostics.Error(e.Message, source, path);
+                    break;
+                }
+
+                // Type arguments are read by the native type's code, outside the struct: they can't use its fields.
+                for (var i = 0; i < bound.Args.Parameters.Count; i++)
+                {
+                    var parameter = bound.Args.Parameters[i];
+                    if (parameter.Kind == NativeParameterKind.Type) CheckType(bound.Args.Type(parameter.Name), source, $"{path}<{parameter.Name}>", null);
                 }
 
                 break;

@@ -225,16 +225,30 @@ public static class DslWriter
                 map.Add("fraction", fixedPoint.FractionBits);
                 break;
             case NativeRef native when NativeTypes.IsBuiltIn(native.Name):
-                map.Add(native.Name, native.Args.Count == 1 ? native.Args[0] : native.Args.Cast<object?>().ToList());
+                map.Add(native.Name, native.Args.Count == 1 ? Argument(native.Args[0]) : native.Args.Select(Argument).ToList());
                 break;
             case NativeRef native:
                 map.Add("native", native.Name);
-                if (native.Args.Count > 0) map.Add("args", native.Args.Cast<object?>().ToList());
+                if (native.Args.Count > 0) map.Add("args", native.Args.Select(Argument).ToList());
                 break;
         }
 
         // The emitter falls back to block style when a value is not a scalar.
         return map;
+    }
+
+    /// <summary>A native type argument: a type argument in the mapping form (<c>{array: Chunk, length: u8}</c>) as a mapping, others as text.</summary>
+    private static object? Argument(string arg)
+    {
+        if (!arg.StartsWith('{')) return arg;
+        try
+        {
+            return Type(DslReader.ReadType(arg));
+        }
+        catch (Exception e) when (e is FormatDefinitionException or YamlDotNet.Core.YamlException)
+        {
+            return arg;
+        }
     }
 
     /// <summary>The type on one line: the short form, or the mapping form in flow style. <see cref="DslReader.ReadType"/> reads it back.</summary>

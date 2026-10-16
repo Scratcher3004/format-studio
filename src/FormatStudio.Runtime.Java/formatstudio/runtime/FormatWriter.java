@@ -10,6 +10,15 @@ import java.util.UUID;
  * the reader returns. Wrap unbuffered streams (sockets, files) in a {@link java.io.BufferedOutputStream}.
  */
 public final class FormatWriter {
+    /**
+     * Writes one value. Generated code passes such functions to the code of native types with type arguments
+     * ({@code {{T:write}}}).
+     */
+    @FunctionalInterface
+    public interface ValueWriter<T> {
+        void write(FormatWriter writer, T value) throws IOException;
+    }
+
     // Empty compound tags: type, empty root name (except Java network), end.
     private static final byte[] EMPTY_NBT_JAVA = {0x0A, 0x00, 0x00, 0x00};
     private static final byte[] EMPTY_NBT_JAVA_NETWORK = {0x0A, 0x00};

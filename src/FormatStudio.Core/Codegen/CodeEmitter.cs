@@ -28,7 +28,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
     /// The version of this API. It is raised when a hook is added or a protected member changes incompatibly; a generator
     /// built against another version may not load.
     /// </summary>
-    public const int ApiVersion = 1;
+    public const int ApiVersion = 2;
 
     private int _temp;
     private readonly Dictionary<string, (INativeType Type, NativeCodegen Codegen)> _natives = new(StringComparer.Ordinal);
@@ -174,15 +174,86 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
         return (codegen, bound.Args);
     }
 
-    /// <summary>Fills a <see cref="NativeCodegen"/> template; <paramref name="values"/> are the placeholders of the call site.</summary>
-    protected string NativeTemplate(string template, NativeArguments? args, IReadOnlyDictionary<string, string> values)
+    /// <summary>
+    /// Fills a <see cref="NativeCodegen"/> template outside reading and writing code (a type, a runtime file);
+    /// <paramref name="values"/> are the placeholders of the call site.
+    /// </summary>
+    protected string NativeTemplate(string template, NativeArguments? args, IReadOnlyDictionary<string, string> values) =>
+        NativeTemplate(template, args, values, null, null);
+
+    /// <summary>
+    /// Fills a <see cref="NativeCodegen"/> template; <paramref name="values"/> are the placeholders of the call site. The
+    /// placeholders of type arguments are filled from <see cref="TypeArgument"/>, and in reading and writing code
+    /// (<paramref name="w"/> given) from <see cref="ReadFunction"/> and <see cref="WriteFunction"/>.
+    /// </summary>
+    protected string NativeTemplate(string template, NativeArguments? args, IReadOnlyDictionary<string, string> values, CodeWriter? w, Context? context)
     {
         var all = new Dictionary<string, string>(values, StringComparer.Ordinal)
         {
             ["namespace"] = NativeNamespace,
             ["runtime"] = RuntimeNamespace,
         };
+        if (args != null) AddTypeArguments(template, args, all, w, context);
         return NativeTypes.Fill(template, args, all);
+    }
+
+    private void AddTypeArguments(string template, NativeArguments args, Dictionary<string, string> values, CodeWriter? w, Context? context)
+    {
+        foreach (var placeholder in NativeTypes.Placeholders(template).Distinct())
+        {
+            var colon = placeholder.IndexOf(':');
+            if (colon < 0 || values.ContainsKey(placeholder)) continue;
+            var (name, modifier) = (placeholder[..colon], placeholder[(colon + 1)..]);
+            if (modifier is not ("type" or "read" or "write")
+                || !args.Parameters.Any(p => p.Name == name && p.Kind == NativeParameterKind.Type)) continue;
+            var type = args.Type(name);
+            if (modifier == "type")
+            {
+                values[placeholder] = TypeArgument(type);
+                continue;
+            }
+
+            if (w == null || context == null) throw new CodegenException($"{{{{{placeholder}}}}} can only be used in the read and write code of a native type");
+            // The function runs outside the struct's code, so it can't use its fields.
+            var functionContext = new Context
+            {
+                Reader = context.Reader,
+                Writer = context.Writer,
+                Resolve = field => throw new CodegenException($"The type argument {Describe(type)} can't use fields ({field})"),
+            };
+            values[placeholder] = modifier == "read" ? ReadFunction(type, w, functionContext) : WriteFunction(type, w, functionContext);
+        }
+    }
+
+    /// <summary>The type of the values of a native type's type argument in the language (<c>{{T:type}}</c>).</summary>
+    protected virtual string TypeArgument(TypeRef type) =>
+        throw new CodegenException($"{Generator} doesn't support type arguments of native types");
+
+    /// <summary>
+    /// A function that reads a value of a native type's type argument (<c>{{T:read}}</c>), as an expression: e.g. the
+    /// name of a local function added to <paramref name="w"/>, or a lambda. Its code reads with
+    /// <see cref="Read(TypeRef, CodeWriter, Context)"/> from a reader of its own (<see cref="Context.WithReader"/>).
+    /// </summary>
+    /// <param name="context">The call site's context; expressions in it can't use fields.</param>
+    protected virtual string ReadFunction(TypeRef type, CodeWriter w, Context context) =>
+        throw new CodegenException($"{Generator} doesn't support type arguments of native types");
+
+    /// <summary>A function that writes a value of a native type's type argument (<c>{{T:write}}</c>); see <see cref="ReadFunction"/>.</summary>
+    protected virtual string WriteFunction(TypeRef type, CodeWriter w, Context context) =>
+        throw new CodegenException($"{Generator} doesn't support type arguments of native types");
+
+    /// <summary>
+    /// The type argument whose values a native type's values are in the language, when its type template is just
+    /// <c>{{T:type}}</c> (e.g. a compressed <c>T</c>); otherwise null.
+    /// </summary>
+    protected TypeRef? ValueTypeArgument(NativeRef native)
+    {
+        var (codegen, args) = Native(native);
+        var placeholders = NativeTypes.Placeholders(codegen.Type).ToList();
+        if (placeholders is not [var placeholder] || codegen.Type.Trim() != $"{{{{{placeholder}}}}}" || !placeholder.EndsWith(":type", StringComparison.Ordinal))
+            return null;
+        var name = placeholder[..^":type".Length];
+        return args.Parameters.Any(p => p.Name == name && p.Kind == NativeParameterKind.Type) ? args.Type(name) : null;
     }
 
     /// <summary>A fresh local name; numbered per file.</summary>
@@ -417,7 +488,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
                 return NativeTemplate(codegen.Read, args, new Dictionary<string, string>
                 {
                     ["reader"] = context.Reader, ["pass-reader"] = PassReader(context.Reader),
-                });
+                }, w, context);
             }
             case NamedRef named:
                 return Definition(named.Name) switch
@@ -531,7 +602,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
                 w.Line(Statement(NativeTemplate(codegen.Write, args, new Dictionary<string, string>
                 {
                     ["writer"] = context.Writer, ["pass-writer"] = PassWriter(context.Writer), ["value"] = value,
-                })));
+                }, w, context)));
                 break;
             }
             case NamedRef named:
@@ -682,6 +753,15 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
                 return ByValue(optional.Inner);
             case SizedRef sized:
                 return ByValue(sized.Inner);
+            case NativeRef native:
+                try
+                {
+                    return ValueTypeArgument(native) is { } inner ? ByValue(inner) : [];
+                }
+                catch (CodegenException)
+                {
+                    return [];
+                }
             case NamedRef named when project.Find(named.Name) is AliasDef alias:
                 return ByValue(alias.Target).Append(alias.QualifiedName);
             case NamedRef named:

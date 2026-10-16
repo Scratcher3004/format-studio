@@ -123,6 +123,7 @@
         MapRef map => Names(map.Key).Concat(Names(map.Value)),
         OptionalRef optional => Names(optional.Inner),
         SizedRef sized => Names(sized.Inner),
+        NativeRef native => native.Types.OfType<TypeRef>().SelectMany(Names),
         _ => [],
     };
 }

@@ -365,18 +365,36 @@ public sealed class LibraryLoader
             _ => length,
         };
 
-        /// <summary>The arguments the reference leaves out, from the library's defaults for the type.</summary>
+        /// <summary>
+        /// The arguments the reference leaves out, from the library's defaults for the type; type arguments baked like
+        /// any type (and written back as text).
+        /// </summary>
         private NativeRef Native(NativeRef native)
         {
-            if (Inherits(native.Name) || !_defaults.Natives.TryGetValue(native.Name, out var defaults)) return native;
-            var args = new List<string>();
-            for (var i = 0; i < Math.Max(native.Args.Count, defaults.Count); i++)
+            if (!Inherits(native.Name) && _defaults.Natives.TryGetValue(native.Name, out var defaults))
             {
-                var given = i < native.Args.Count ? native.Args[i].Trim() : null;
-                args.Add(given is null or "" or "default" && i < defaults.Count ? defaults[i] : given!);
+                var args = new List<string>();
+                for (var i = 0; i < Math.Max(native.Args.Count, defaults.Count); i++)
+                {
+                    var given = i < native.Args.Count ? native.Args[i].Trim() : null;
+                    args.Add(given is null or "" or "default" && i < defaults.Count ? defaults[i] : given!);
+                }
+
+                native = native with { Args = args };
             }
 
-            return native with { Args = args };
+            var parsed = (NativeRef)library.Normalize(native);
+            if (parsed.Types.All(t => t == null)) return native;
+            var bakedArgs = parsed.Args.ToList();
+            var bakedTypes = new TypeRef?[bakedArgs.Count];
+            for (var i = 0; i < bakedArgs.Count; i++)
+            {
+                if (parsed.Types[i] is not { } type) continue;
+                bakedTypes[i] = Type(type);
+                bakedArgs[i] = DslWriter.FormatType(bakedTypes[i]!);
+            }
+
+            return new NativeRef(native.Name, bakedArgs) { Types = bakedTypes };
         }
 
         private TypeRef Type(TypeRef type) => type switch

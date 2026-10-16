@@ -765,6 +765,40 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         return result;
     }
 
+    protected override string TypeArgument(TypeRef type) => Type(type);
+
+    /// <summary>A local <c>FormatReader.ValueReader&lt;T&gt;</c> lambda.</summary>
+    protected override string ReadFunction(TypeRef type, CodeWriter w, Context context)
+    {
+        var name = Temp("read");
+        var reader = Temp("reader");
+        w.OpenInline($"FormatReader.ValueReader<{Type(type, true)}> {name} = {reader} ->");
+        var value = Read(type, w, context.WithReader(reader));
+        w.Line($"return {value};");
+        w.Close(";");
+        return name;
+    }
+
+    /// <summary>A local <c>FormatWriter.ValueWriter&lt;T&gt;</c> lambda.</summary>
+    protected override string WriteFunction(TypeRef type, CodeWriter w, Context context)
+    {
+        var name = Temp("write");
+        var writer = Temp("writer");
+        var boxed = Temp("value");
+        w.OpenInline($"FormatWriter.ValueWriter<{Type(type, true)}> {name} = ({writer}, {boxed}) ->");
+        var value = boxed;
+        if (IsPrimitive(Type(type)))
+        {
+            // Unboxed, so that the writing code can cast it.
+            value = Temp("value");
+            w.Line($"{Type(type)} {value} = {boxed};");
+        }
+
+        Write(type, value, w, context.WithWriter(writer));
+        w.Close(";");
+        return name;
+    }
+
     protected override string ReadSized(SizedRef sized, CodeWriter w, Context context)
     {
         var count = ReadCount(sized.Length, w, context, 1, null);

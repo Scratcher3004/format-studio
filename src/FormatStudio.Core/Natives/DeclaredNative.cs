@@ -159,7 +159,8 @@ public sealed partial class DeclaredNative : INativeType
                 "choice" => NativeParameterKind.Choice,
                 "text" => NativeParameterKind.Text,
                 "integer" => NativeParameterKind.Integer,
-                var other => throw new FormatDefinitionException($"Unknown kind '{other}' of parameter {name} (choice, text, integer)"),
+                "type" => NativeParameterKind.Type,
+                var other => throw new FormatDefinitionException($"Unknown kind '{other}' of parameter {name} (choice, text, integer, type)"),
             };
             if (kind == NativeParameterKind.Choice && choices is not { Count: > 0 })
                 throw new FormatDefinitionException($"Parameter {name} needs its 'choices'");

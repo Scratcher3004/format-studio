@@ -468,7 +468,8 @@ public sealed class FormatProject
 
     /// <summary>
     /// A type expression with the bare names of native types as <see cref="NativeRef"/>: without arguments, the parser
-    /// can't tell <c>rgb</c> from the name of a definition. Native types take precedence.
+    /// can't tell <c>rgb</c> from the name of a definition. Native types take precedence. The type arguments of native
+    /// types are parsed into <see cref="NativeRef.Types"/> (those that don't parse are left out, for binding to report).
     /// </summary>
     public TypeRef Normalize(TypeRef type) => type switch
     {
@@ -477,8 +478,29 @@ public sealed class FormatProject
         MapRef map => map with { Key = Normalize(map.Key), Value = Normalize(map.Value) },
         OptionalRef optional => new OptionalRef(Normalize(optional.Inner)),
         SizedRef sized => sized with { Inner = Normalize(sized.Inner) },
+        NativeRef native => WithTypes(native),
         _ => type,
     };
+
+    private NativeRef WithTypes(NativeRef native)
+    {
+        if (Natives.Find(native.Name) is not { } nativeType || !nativeType.Parameters.Any(p => p.Kind == NativeParameterKind.Type)) return native;
+        var types = new TypeRef?[native.Args.Count];
+        for (var i = 0; i < types.Length && i < nativeType.Parameters.Count; i++)
+        {
+            var parameter = nativeType.Parameters[i];
+            if (parameter.Kind != NativeParameterKind.Type || native.Args[i].Trim() is "" or "default") continue;
+            try
+            {
+                types[i] = Normalize(NativeTypes.ParseType(native.Name, parameter, native.Args[i].Trim()));
+            }
+            catch (FormatDefinitionException)
+            {
+            }
+        }
+
+        return native with { Types = types };
+    }
 
     private void Normalize(TypeDef definition)
     {
@@ -547,7 +569,7 @@ public sealed class FormatProject
     };
 
     /// <summary>The native type of a reference, with its arguments completed from the project's defaults.</summary>
-    public BoundNative Bind(NativeRef native) => Natives.Bind(native, Defaults);
+    public BoundNative Bind(NativeRef native) => Natives.Bind(native.Types.Count == native.Args.Count ? native : WithTypes(native), Defaults, this);
 
     /// <summary>Follows aliases until a non-alias type expression.</summary>
     public TypeRef Unalias(TypeRef type)

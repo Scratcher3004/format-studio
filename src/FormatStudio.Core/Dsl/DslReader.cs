@@ -321,10 +321,15 @@ public sealed class DslReader
     private static readonly string[] TypeMapKeys =
         ["array", "string", "bytes", "map", "optional", "sized", "fixed", "native", "type", .. NativeTypes.BuiltIn.All.Select(t => t.Name)];
 
-    /// <summary>One argument, or a list of them; <c>default</c> alone means none.</summary>
+    /// <summary>
+    /// One argument, or a list of them; <c>default</c> alone means none. A type argument may be a type mapping; it is
+    /// kept as text, in the flow style.
+    /// </summary>
     private List<string> NativeArgs(YamlNode node) => node is YamlSequenceNode sequence
-        ? sequence.Children.Select(child => Scalar(child, "an argument")).ToList()
-        : Scalar(node, "an argument") is var arg && arg is "" or "default" ? [] : [arg];
+        ? sequence.Children.Select(NativeArg).ToList()
+        : node is YamlMappingNode ? [NativeArg(node)] : Scalar(node, "an argument") is var arg && arg is "" or "default" ? [] : [arg];
+
+    private string NativeArg(YamlNode node) => node is YamlMappingNode ? DslWriter.FormatType(ParseType(node)) : Scalar(node, "an argument");
 
     internal TypeRef ParseType(YamlNode node)
     {

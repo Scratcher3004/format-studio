@@ -19,6 +19,15 @@ import java.util.UUID;
  * checked against the remaining bytes before anything is allocated; otherwise against {@link #maxCount()}.
  */
 public final class FormatReader {
+    /**
+     * Reads one value. Generated code passes such functions to the code of native types with type arguments
+     * ({@code {{T:read}}}).
+     */
+    @FunctionalInterface
+    public interface ValueReader<T> {
+        T read(FormatReader reader) throws IOException;
+    }
+
     private static final int MAX_NBT_DEPTH = 512;
     private static final int JAVA = 0;
     private static final int BEDROCK = 1;
