@@ -45,7 +45,7 @@ public sealed class Validator
             _diagnostics.Error($"{definition.Name} is the name of a native type, which references to it would mean; rename the definition", definition.Source);
         if (definition.SkipCodegen is { All: false } skip)
         {
-            foreach (var name in skip.Targets.Where(n => Codegen.CodeGeneration.TryFind(n) == null && _project.Settings.Codegen.All(t => t.Name != n)))
+            foreach (var name in skip.Targets.Where(n => _project.Generators.Find(n) == null && _project.Settings.Codegen.All(t => t.Name != n)))
                 _diagnostics.Warning($"{definition.Name}: skipCodegen names '{name}', which is neither a codegen target nor a generator", definition.Source);
         }
 

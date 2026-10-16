@@ -22,7 +22,9 @@ codegen:
 | `csharp-stream` | C# (streams) | Reader and writer classes over `System.IO.Stream`. See [C#](csharp.md). |
 | `java-stream` | Java 8+ (streams) | `FormatReader`/`FormatWriter` over `InputStream`/`OutputStream`. See [Java](java.md). |
 
-`format-studio generators --verbose` lists the generators with all their options. Unknown options are reported as
+Projects and libraries can add generators of their own from .NET plugins (see [writing a code
+generator](generators.md#using-a-generator-in-a-project)). `format-studio generators --verbose` lists the project's
+generators with all their options. Unknown options are reported as
 warnings. `format-studio show <type> --target <target|generator>` prints the code of one type, `format-studio generate`
 writes the targets.
 

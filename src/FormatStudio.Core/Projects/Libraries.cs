@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Reflection;
+using FormatStudio.Codegen;
 using FormatStudio.Dsl;
 using FormatStudio.Expressions;
 using FormatStudio.Model;
@@ -106,6 +107,12 @@ public sealed class LibraryPackage
         {
             Add(native.Source.File, native.Name);
             foreach (var file in native.Files) Add(file, native.Name);
+        }
+
+        foreach (var generator in library.DeclaredGenerators.OrderBy(g => g.Name, StringComparer.Ordinal))
+        {
+            Add(generator.Source.File, generator.Name);
+            foreach (var file in generator.Files) Add(file, generator.Name);
         }
 
         return path;
@@ -223,6 +230,7 @@ public sealed class LibraryLoader
         }
 
         project.AddNatives(project.Modules.Values.SelectMany(m => m.Natives), where);
+        project.AddGenerators(project.Modules.Values.SelectMany(m => m.Generators), where);
     }
 
     private FormatModule Load(string name, string? version, IReadOnlyList<string> chain)
@@ -254,13 +262,17 @@ public sealed class LibraryLoader
         // Native types first: the definitions' references to them are told apart from type names by their names.
         var files = NativeFiles.Package(package);
         var natives = new DiagnosticBag();
-        var declared = package.Files.Where(f => DeclaredNative.IsDeclaration(f.Text))
+        var generators = package.Files.Where(f => DeclaredGenerator.IsDeclaration(f.Text))
+            .Select(f => DeclaredGenerator.Read(f.Text, f.Path, files, _project.Plugins, natives, $"{package.Origin}!/{f.Path}"))
+            .OfType<DeclaredGenerator>()
+            .ToList();
+        var declared = package.Files.Where(f => DeclaredNative.IsDeclaration(f.Text) && !DeclaredGenerator.IsDeclaration(f.Text))
             .Select(f => DeclaredNative.Read(f.Text, f.Path, files, _project.Plugins, natives, $"{package.Origin}!/{f.Path}"))
             .OfType<DeclaredNative>()
             .ToList();
         var used = dependencies.SelectMany(d => d.Natives).Concat(declared).Distinct().ToList();
         library.AddNatives(used, new SourceLocation($"{package.Origin}"));
-        foreach (var (path, text) in package.Files.Where(f => !DeclaredNative.IsDeclaration(f.Text)))
+        foreach (var (path, text) in package.Files.Where(f => !FormatProject.IsDeclaration(f.Text)))
             if (DslReader.Read(text, $"{package.Origin}!/{path}", library.Diagnostics) is { } definition) library.Add(definition);
         Validation.Validator.Validate(library);
         foreach (var diagnostic in natives.Concat(library.Diagnostics.Where(d => d.Severity == Severity.Error)))
@@ -268,7 +280,7 @@ public sealed class LibraryLoader
 
         var definitions = library.Types.Values.ToList();
         new Baker(library, name).Bake(definitions);
-        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin, Natives = used };
+        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin, Natives = used, Generators = generators };
         _project.AddModule(result);
         return result;
     }

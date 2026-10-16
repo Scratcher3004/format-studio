@@ -1,7 +1,5 @@
 using System.Text;
 using System.Text.Json.Nodes;
-using FormatStudio.Codegen.CSharp;
-using FormatStudio.Codegen.Java;
 using FormatStudio.Model;
 using FormatStudio.Projects;
 
@@ -55,25 +53,13 @@ public sealed class WriteSummary
 /// </summary>
 public static class CodeGeneration
 {
-    public static IReadOnlyList<ICodeGenerator> Generators { get; } =
-    [
-        new CSharpGenerator(CSharpIo.Span),
-        new CSharpGenerator(CSharpIo.Stream),
-        new JavaGenerator(),
-    ];
-
-    public static ICodeGenerator? TryFind(string name) => Generators.FirstOrDefault(g => g.Name == name);
-
-    public static ICodeGenerator Find(string name) =>
-        TryFind(name) ?? throw new FormatDefinitionException($"Unknown generator '{name}' ({string.Join(", ", Generators.Select(g => g.Name))})");
-
     /// <summary>A target with the generator's defaults, e.g. to preview code of a project without targets.</summary>
     public static CodegenTarget DefaultTarget(ICodeGenerator generator) =>
         new() { Name = generator.Name, Generator = generator.Name, Output = generator.DefaultOutput };
 
     public static GeneratedOutput Generate(FormatProject project, CodegenTarget target)
     {
-        var generator = Find(target.Generator);
+        var generator = project.Generators.Get(target.Generator);
         GeneratedOutput output;
         try
         {
@@ -86,6 +72,8 @@ public static class CodeGeneration
             output.Diagnostics.Error($"Target '{target.Name}': {e.Message}");
         }
 
+        // A generator without its plugin knows no options; that it can't generate is reported already.
+        if (generator is DeclaredGenerator { Implementation: null }) return output;
         foreach (var key in target.Options.Select(o => o.Key).Where(key => generator.Options.All(o => o.Key != key)))
             output.Diagnostics.Warning(key == "exclude"
                 ? $"Target '{target.Name}': the option 'exclude' was replaced by 'skipCodegen' in the definitions; it is ignored"
@@ -113,19 +101,25 @@ public static class CodeGeneration
         return excluded;
     }
 
-    /// <summary>Checks a target before it is saved: the generator exists and the output folder stays inside the project.</summary>
-    public static void Check(CodegenTarget target)
+    /// <summary>Checks a target before it is saved: the project has its generator and the output folder stays inside the project.</summary>
+    public static void Check(FormatProject project, CodegenTarget target)
     {
-        Find(target.Generator);
+        project.Generators.Get(target.Generator);
         if (string.IsNullOrWhiteSpace(target.Name)) throw new FormatDefinitionException("A codegen target needs a name");
-        if (string.IsNullOrWhiteSpace(target.Output)) throw new FormatDefinitionException("A codegen target needs an output folder");
-        if (Path.IsPathRooted(target.Output)) throw new FormatDefinitionException("The output folder must be relative to the project folder");
-        var parts = target.Output.Split('/', '\\');
+        CheckOutput(target.Output);
+    }
+
+    /// <summary>Checks an output folder: relative, inside the project folder and not the project folder itself.</summary>
+    public static void CheckOutput(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output)) throw new FormatDefinitionException("A codegen target needs an output folder");
+        if (Path.IsPathRooted(output)) throw new FormatDefinitionException("The output folder must be relative to the project folder");
+        var parts = output.Split('/', '\\');
         var depth = 0;
         foreach (var part in parts)
         {
             depth += part switch { ".." => -1, "." or "" => 0, _ => 1 };
-            if (depth < 0) throw new FormatDefinitionException($"The output folder {target.Output} is outside the project folder");
+            if (depth < 0) throw new FormatDefinitionException($"The output folder {output} is outside the project folder");
         }
 
         if (depth == 0) throw new FormatDefinitionException("The output folder can't be the project folder itself");
@@ -133,7 +127,8 @@ public static class CodeGeneration
 
     public static WriteSummary Write(FormatProject project, CodegenTarget target, GeneratedOutput output, bool clean = true)
     {
-        var generator = Find(target.Generator);
+        var generator = project.Generators.Get(target.Generator);
+        var marker = generator.Marker;
         var directory = project.Sandbox.Check(Path.GetFullPath(target.Output, project.Directory));
         var projectDirectory = Path.GetFullPath(project.Directory) + Path.DirectorySeparatorChar;
         if (!(directory + Path.DirectorySeparatorChar).StartsWith(projectDirectory, StringComparison.Ordinal))
@@ -154,7 +149,7 @@ public static class CodeGeneration
                     continue;
                 }
 
-                if (!existing.StartsWith(generator.Marker, StringComparison.Ordinal))
+                if (!existing.StartsWith(marker, StringComparison.Ordinal))
                 {
                     summary.Refused.Add(path);
                     continue;
@@ -173,8 +168,8 @@ public static class CodeGeneration
                 if (written.Contains(Path.GetFullPath(path))) continue;
                 using (var reader = new StreamReader(path))
                 {
-                    var buffer = new char[generator.Marker.Length];
-                    if (reader.ReadBlock(buffer) != buffer.Length || new string(buffer) != generator.Marker) continue;
+                    var buffer = new char[marker.Length];
+                    if (reader.ReadBlock(buffer) != buffer.Length || new string(buffer) != marker) continue;
                 }
 
                 File.Delete(path);

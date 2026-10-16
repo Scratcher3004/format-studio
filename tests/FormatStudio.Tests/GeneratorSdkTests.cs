@@ -258,18 +258,24 @@ public class GeneratorSdkTests
         }
         """;
 
-    private static readonly Lazy<Assembly> Plugin = new(() =>
+    /// <summary>The sketch generator as a plugin assembly (<c>Sketch.SketchGenerator</c>).</summary>
+    internal static readonly Lazy<byte[]> SketchAssembly = new(() => Compile("Sketch", GeneratorSource));
+
+    private static readonly Lazy<Assembly> Plugin = new(() => Assembly.Load(SketchAssembly.Value));
+
+    /// <summary>Compiles an assembly against the running Format Studio.</summary>
+    internal static byte[] Compile(string name, string source)
     {
         var references = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator)
             .Select(path => MetadataReference.CreateFromFile(path));
         // Another assembly name than FormatStudio.Tests, so that the internals of Format Studio are out of reach.
-        var compilation = CSharpCompilation.Create("Sketch", [CSharpSyntaxTree.ParseText(GeneratorSource)], references,
+        var compilation = CSharpCompilation.Create(name, [CSharpSyntaxTree.ParseText(source)], references,
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
         using var stream = new MemoryStream();
         var emit = compilation.Emit(stream);
         Assert.True(emit.Success, string.Join("\n", emit.Diagnostics));
-        return Assembly.Load(stream.ToArray());
-    });
+        return stream.ToArray();
+    }
 
     private static ICodeGenerator Sketch() => (ICodeGenerator)Activator.CreateInstance(Plugin.Value.GetType("Sketch.SketchGenerator")!)!;
 

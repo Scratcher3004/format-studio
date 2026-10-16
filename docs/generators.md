@@ -66,9 +66,35 @@ Native types have code for a generator by its `Name` (see [native types](natives
 `{{pass-writer}}` placeholders come from `PassReader`/`PassWriter`, and a native write becomes a statement through
 `Statement`.
 
+## Using a generator in a project
+
+A generator comes into a project as a .NET plugin. A YAML file among the project's sources declares it, with paths
+relative to the file:
+
+```yaml
+generator: sketch                 # the name targets use (generator: sketch) and native types have code for
+doc: Pseudo-code for reviews      # optional; otherwise the class's Description
+plugin: ../plugins/Sketch.dll     # the .NET assembly
+class: Sketch.SketchGenerator     # the class in it that implements FormatStudio.Codegen.ICodeGenerator
+```
+
+The class needs a public parameterless constructor and a `Marker`; its title, language, default output and options
+are shown as for the built-in generators. The plugin is built and loaded like a [native type's](natives.md#writing-the-plugin):
+it references `FormatStudio.Core` without copying it, gets a load context of its own and is reloaded when it is
+rebuilt. The same [plugin policy](natives.md#which-plugins-are-loaded) decides whether it is loaded.
+
+Each project has its own generators: the built-in ones, those it declares and those of its libraries. A name can't be
+used twice, also not a built-in one. The command line (`generate`, `show --target`, `generators`) and the web UI use
+the project's generators, and `skipCodegen` and the `codegen` of native types can name them.
+
+Without its plugin (not allowed, failed to load) the generator still exists: targets naming it stay valid, but
+generating reports why it can't, and nothing is written. Exceptions of `Generate` other than
+`FormatDefinitionException` (an invalid option) are reported as errors of the generator.
+
+A library ships its generators: `format-studio pack` puts each declaration into the package with the plugin and the
+dependencies it references from its folder, and projects that use the library can use the generator.
+
 ## Compatibility
 
 The protected members of `CodeEmitter` are a public API, versioned by `CodeEmitter.ApiVersion` (now 1). The version is
-raised when a hook is added or a member changes incompatibly. Generators are not loaded from plugins yet: for now a
-generator is used from .NET code (`generator.Generate(project, options, skipped)`), and `CodeGeneration.Generators`
-lists only the built-in ones.
+raised when a hook is added or a member changes incompatibly.

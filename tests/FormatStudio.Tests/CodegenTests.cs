@@ -411,7 +411,7 @@ public class CodegenTests
     [Fact]
     public void EveryGeneratorDescribesItsOptions()
     {
-        foreach (var generator in CodeGeneration.Generators)
+        foreach (var generator in CodeGenerators.BuiltIn.All)
         {
             Assert.NotEmpty(generator.Title);
             Assert.NotEmpty(generator.DefaultOutput);
@@ -434,7 +434,7 @@ public class CodegenTests
     public void GeneratedFilesKnowTheirType()
     {
         var project = FormatProject.Load(TestPaths.JavaSample);
-        foreach (var generator in CodeGeneration.Generators)
+        foreach (var generator in CodeGenerators.BuiltIn.All)
         {
             var output = CodeGeneration.Generate(project, CodeGeneration.DefaultTarget(generator));
             Assert.NotNull(output.FileOf("Slot"));
@@ -456,8 +456,9 @@ public class CodegenTests
     public void TargetsMustStayInsideTheProject(string output, bool valid)
     {
         var target = new CodegenTarget { Name = "t", Generator = "csharp", Output = output };
-        if (valid) CodeGeneration.Check(target);
-        else Assert.Throws<FormatDefinitionException>(() => CodeGeneration.Check(target));
+        var project = FormatProject.InMemory([]);
+        if (valid) CodeGeneration.Check(project, target);
+        else Assert.Throws<FormatDefinitionException>(() => CodeGeneration.Check(project, target));
     }
 
     [Fact]

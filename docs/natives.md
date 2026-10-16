@@ -95,7 +95,9 @@ included, by name.
 
 ## Which plugins are loaded
 
-Plugins run with the rights of Format Studio. The command line and the web UI load all of them unless told otherwise:
+Plugins run with the rights of Format Studio. The same setting applies to the plugins of native types and of
+[code generators](generators.md#using-a-generator-in-a-project). The command line and the web UI load all of them
+unless told otherwise:
 
 | Setting | |
 |---|---|

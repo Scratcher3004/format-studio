@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using FormatStudio.Codegen;
 using FormatStudio.Dsl;
 using FormatStudio.Expressions;
 using FormatStudio.Model;
@@ -59,7 +60,9 @@ public sealed partial class DeclaredNative : INativeType
     /// declaration, a warning when the policy doesn't allow the plugin. Returns null when the declaration is unusable.
     /// </summary>
     /// <param name="file">The declaration's path in <paramref name="files"/>; plugin and file paths are relative to its folder.</param>
-    public static DeclaredNative? Read(string text, string file, NativeFiles files, PluginPolicy policy, DiagnosticBag diagnostics, string? displayFile = null)
+    /// <param name="generators">The generators the codegen of the declaration is checked against; null for no check.</param>
+    public static DeclaredNative? Read(string text, string file, NativeFiles files, PluginPolicy policy, DiagnosticBag diagnostics, string? displayFile = null,
+        CodeGenerators? generators = null)
     {
         var where = new SourceLocation(displayFile ?? file);
         try
@@ -72,10 +75,10 @@ public sealed partial class DeclaredNative : INativeType
 
             var used = new List<string>();
             var codegen = new Dictionary<string, NativeCodegen>(StringComparer.Ordinal);
-            if (map["codegen"] is JsonObject generators)
+            if (map["codegen"] is JsonObject codegenMap)
             {
-                foreach (var (generator, node) in generators)
-                    codegen[generator] = Codegen(name, generator, node, file, files, used, diagnostics, where);
+                foreach (var (generator, node) in codegenMap)
+                    codegen[generator] = Codegen(name, generator, node, file, files, used, generators, diagnostics, where);
             }
             else if (map["codegen"] != null) throw new FormatDefinitionException("codegen must map generator names to their code");
 
@@ -111,18 +114,7 @@ public sealed partial class DeclaredNative : INativeType
     {
         try
         {
-            var assembly = NativePlugins.Load(files, Plugin!, policy);
-            var type = assembly.GetType(ClassName!, throwOnError: false)
-                ?? throw new FormatDefinitionException($"{Name}: {Plugin} has no class {ClassName}");
-            if (!typeof(INativeType).IsAssignableFrom(type))
-            {
-                throw new FormatDefinitionException(type.GetInterfaces().Any(i => i.FullName == typeof(INativeType).FullName)
-                    ? $"{Name}: {ClassName} implements another FormatStudio.Core's {nameof(INativeType)}; the plugin must not ship its own FormatStudio.Core.dll"
-                    : $"{Name}: {ClassName} doesn't implement {typeof(INativeType).FullName}");
-            }
-
-            Implementation = (INativeType)(Activator.CreateInstance(type)
-                ?? throw new FormatDefinitionException($"{Name}: {ClassName} couldn't be created"));
+            Implementation = NativePlugins.Create<INativeType>(files, Plugin!, ClassName!, policy, Name);
         }
         catch (PluginRefusedException e)
         {
@@ -181,11 +173,11 @@ public sealed partial class DeclaredNative : INativeType
     }
 
     private static NativeCodegen Codegen(string name, string generator, JsonNode? node, string file, NativeFiles files, List<string> used,
-        DiagnosticBag diagnostics, SourceLocation where)
+        CodeGenerators? generators, DiagnosticBag diagnostics, SourceLocation where)
     {
         if (node is not JsonObject map) throw new FormatDefinitionException($"codegen.{generator} must be a mapping");
-        if (FormatStudio.Codegen.CodeGeneration.TryFind(generator) == null)
-            diagnostics.Warning($"Unknown generator '{generator}' in the codegen of {name} ({string.Join(", ", FormatStudio.Codegen.CodeGeneration.Generators.Select(g => g.Name))})", where);
+        if (generators != null && generators.Find(generator) == null)
+            diagnostics.Warning($"Unknown generator '{generator}' in the codegen of {name} ({string.Join(", ", generators.All.Select(g => g.Name))})", where);
         foreach (var key in map.Select(p => p.Key).Where(k => !CodegenKeys.Contains(k)))
             diagnostics.Warning($"Unknown key '{key}' in codegen.{generator}", where);
         string Template(string key) => map[key]?.ToString() is { Length: > 0 } text

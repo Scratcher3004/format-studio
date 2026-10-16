@@ -23,7 +23,7 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 | `samples` | Check the project's samples |
 | `import <importer> [options] [--dry-run]` | Run an importer (see [importers](importers.md)) |
 | `generate [target] [--dry-run]` | Run the codegen targets (see [code generation](codegen.md)) |
-| `generators [--verbose]` | List the code generators and their options |
+| `generators [--verbose]` | List the code generators and their options: built-in, and those the project and its libraries declare |
 
 ## Web UI
 
@@ -39,7 +39,7 @@ folder browser) or create a new one from the same template as `format-studio new
 | `--project <file\|folder>` | Opens the project at startup; `/` goes straight to it. Also `FORMATSTUDIO_PROJECT`. |
 | `--workspace <folder>` | Lists every `*.fstudio.yaml` below the folder on the start page (skips hidden folders, `bin`, `obj`, `node_modules`, `generated`). The web UI then reads, writes and lists nothing outside the folder, also not through symbolic links or junctions or through project settings like `sources: [../**/*.yaml]`; `--project` must be inside it. |
 | `--state-dir <folder>` | Where the recent projects are kept; default `~/.config/format-studio` (`%APPDATA%\format-studio` on Windows). |
-| `--plugins all\|none\|<sha256>,...` | Which plugins of [native types](natives.md#which-plugins-are-loaded) are loaded; default `all`. Also `FORMATSTUDIO_PLUGINS`. |
+| `--plugins all\|none\|<sha256>,...` | Which plugins ([native types](natives.md#which-plugins-are-loaded), code generators) are loaded; default `all`. Also `FORMATSTUDIO_PLUGINS`. |
 
 Relative paths are relative to the folder `dotnet run` is started from.
 

@@ -33,16 +33,26 @@
             This project has no code generation targets yet. Pick a language to add one, or preview its output first.
         </MudText>
         <MudGrid Spacing="2" Class="mb-3">
-            @foreach (var generator in CodeGeneration.Generators)
+            @foreach (var generator in project.Generators.All)
             {
+                var declared = generator as DeclaredGenerator;
                 <MudItem xs="12" md="4">
                     <MudPaper Outlined="@true" Class="pa-3" Style="height: 100%; display: flex; flex-direction: column">
                         <MudText Typo="@Typo.h6">@generator.Title</MudText>
                         <MudText Typo="@Typo.body2" Class="mb-2" Style="flex: 1">@generator.Description</MudText>
+                        @if (declared != null)
+                        {
+                            <MudText Typo="@Typo.caption" Class="mb-1">Plugin generator from <span class="mono">@declared.Source.File</span></MudText>
+                        }
+                        @if (declared?.Unavailable is { } unavailable)
+                        {
+                            <MudText Typo="@Typo.caption" Color="@Color.Error" Class="mb-1">Can't generate: @unavailable</MudText>
+                        }
                         <MudText Typo="@Typo.caption" Class="mono mb-2">→ @generator.DefaultOutput</MudText>
                         <MudStack Row="@true" Spacing="2">
                             <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="@(() => StartAdding(generator))">Add</MudButton>
-                            <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="@(() => Preview(CodeGeneration.DefaultTarget(generator), false))">Preview</MudButton>
+                            <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="@(() => Preview(CodeGeneration.DefaultTarget(generator), false))"
+                                       Disabled="@(declared is { Implementation: null })">Preview</MudButton>
                         </MudStack>
                     </MudPaper>
                 </MudItem>
@@ -59,16 +69,18 @@
             continue;
         }
 
-        var generator = CodeGeneration.TryFind(target.Generator);
+        var generator = project.Generators.Find(target.Generator);
+        var unavailable = (generator as DeclaredGenerator)?.Unavailable;
         <MudPaper Outlined="@true" Class="pa-3 mb-3">
             <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="2" Wrap="@Wrap.Wrap">
                 <MudText Typo="@Typo.h6">@target.Name</MudText>
-                <MudChip T="string" Size="@Size.Small" Color="@(generator == null ? Color.Error : Color.Default)">@(generator?.Title ?? $"unknown generator '{target.Generator}'")</MudChip>
+                <MudChip T="string" Size="@Size.Small" Color="@(generator == null || unavailable != null ? Color.Error : Color.Default)"
+                         title="@(unavailable != null ? $"Can't generate: {unavailable}" : null)">@(generator?.Title ?? $"unknown generator '{target.Generator}'")</MudChip>
                 <MudText Typo="@Typo.body2" Class="mono">→ @target.Output</MudText>
                 <MudSpacer />
-                <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="@(() => Preview(target, true))" Disabled="@(generator == null)">Preview</MudButton>
+                <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Preview" OnClick="@(() => Preview(target, true))" Disabled="@(generator == null || unavailable != null)">Preview</MudButton>
                 <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="@(() => Write(project, target))"
-                           Disabled="@(project.Diagnostics.HasErrors || generator == null)">Write</MudButton>
+                           Disabled="@(project.Diagnostics.HasErrors || generator == null || unavailable != null)">Write</MudButton>
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" title="Edit" OnClick="@(() => { _editing = target; _adding = false; })" />
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" title="Delete" OnClick="@(() => Delete(project, target))" />
             </MudStack>

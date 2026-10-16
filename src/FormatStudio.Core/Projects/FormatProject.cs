@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using FormatStudio.Codegen;
 using FormatStudio.Dsl;
 using FormatStudio.Model;
 using FormatStudio.Natives;
@@ -378,7 +379,11 @@ public sealed class FormatProject
     public NativeTypes Natives { get; set; } = NativeTypes.BuiltIn;
     /// <summary>The native types the project declares itself (<c>native:</c> files among its sources).</summary>
     public List<DeclaredNative> DeclaredNatives { get; } = [];
-    /// <summary>Which plugins of native types may be loaded, the project's and its libraries'.</summary>
+    /// <summary>The code generators the project's targets can use: built-in, its own and its libraries'.</summary>
+    public CodeGenerators Generators { get; set; } = CodeGenerators.BuiltIn;
+    /// <summary>The code generators the project declares itself (<c>generator:</c> files among its sources).</summary>
+    public List<DeclaredGenerator> DeclaredGenerators { get; } = [];
+    /// <summary>Which plugins (native types, code generators) may be loaded, the project's and its libraries'.</summary>
     public PluginPolicy Plugins { get; init; } = PluginPolicy.All;
 
     public FormatProject(ProjectSettings settings, string directory, string? filePath = null)
@@ -498,8 +503,9 @@ public sealed class FormatProject
     /// </summary>
     public FormatProject With(TypeDef definition)
     {
-        var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox, Natives = Natives, Plugins = Plugins };
+        var copy = new FormatProject(Settings, Directory, FilePath) { Sandbox = Sandbox, Natives = Natives, Generators = Generators, Plugins = Plugins };
         copy.DeclaredNatives.AddRange(DeclaredNatives);
+        copy.DeclaredGenerators.AddRange(DeclaredGenerators);
         foreach (var type in _types.Values) copy.Add(type);
         foreach (var module in _modules.Values) copy.AddModule(module);
         foreach (var (alias, module) in _dependencies) copy.AddModule(module, alias);
@@ -518,6 +524,19 @@ public sealed class FormatProject
         DeclaredNative declared => declared.Source.File,
         _ when NativeTypes.IsBuiltIn(type.Name) => "built-in",
         _ => type.GetType().FullName ?? type.Name,
+    };
+
+    /// <summary>Adds code generators; one named like a generator the project already has is an error.</summary>
+    public void AddGenerators(IEnumerable<ICodeGenerator> generators, SourceLocation? where = null) =>
+        Generators = Generators.With(generators, (existing, added) =>
+            Diagnostics.Error($"Two generators are named '{added.Name}': {GeneratorOrigin(existing)} and {GeneratorOrigin(added)}",
+                (added as DeclaredGenerator)?.Source ?? where));
+
+    private static string GeneratorOrigin(ICodeGenerator generator) => generator switch
+    {
+        DeclaredGenerator declared => declared.Source.File,
+        _ when CodeGenerators.IsBuiltIn(generator.Name) => "built-in",
+        _ => generator.GetType().FullName ?? generator.Name,
     };
 
     /// <summary>The native type of a reference, with its arguments completed from the project's defaults.</summary>
@@ -631,11 +650,26 @@ public sealed class FormatProject
             .Select(source => (source.File, source.Pattern, Text: File.ReadAllText(source.File)))
             .ToList();
 
-        // Native type declarations first: references to them are told apart from type names by their names.
+        // Generators first, which native types name in their codegen.
         var files = NativeFiles.Folder(Directory, Sandbox);
-        foreach (var source in sources.Where(s => DeclaredNative.IsDeclaration(s.Text)))
+        foreach (var source in sources.Where(s => DeclaredGenerator.IsDeclaration(s.Text)))
         {
-            if (DeclaredNative.Read(source.Text, Relative(source.File), files, Plugins, Diagnostics) is not { } native) continue;
+            if (DeclaredGenerator.Read(source.Text, Relative(source.File), files, Plugins, Diagnostics) is not { } generator) continue;
+            if (DeclaredGenerators.FirstOrDefault(g => g.Name == generator.Name) is { } twice)
+            {
+                Diagnostics.Error($"Generator '{generator.Name}' is also declared in {twice.Source.File}", generator.Source);
+                continue;
+            }
+
+            DeclaredGenerators.Add(generator);
+        }
+
+        AddGenerators(DeclaredGenerators);
+
+        // Native type declarations next: references to them are told apart from type names by their names.
+        foreach (var source in sources.Where(s => DeclaredNative.IsDeclaration(s.Text) && !DeclaredGenerator.IsDeclaration(s.Text)))
+        {
+            if (DeclaredNative.Read(source.Text, Relative(source.File), files, Plugins, Diagnostics, generators: Generators) is not { } native) continue;
             if (DeclaredNatives.FirstOrDefault(n => n.Name == native.Name) is { } twice)
             {
                 Diagnostics.Error($"Native type '{native.Name}' is also declared in {twice.Source.File}", native.Source);
@@ -646,7 +680,7 @@ public sealed class FormatProject
         }
 
         AddNatives(DeclaredNatives);
-        foreach (var (file, patternIndex, text) in sources.Where(s => !DeclaredNative.IsDeclaration(s.Text)))
+        foreach (var (file, patternIndex, text) in sources.Where(s => !IsDeclaration(s.Text)))
         {
             var definition = DslReader.Read(text, Relative(file), Diagnostics);
             if (definition == null) continue;
@@ -666,6 +700,9 @@ public sealed class FormatProject
             Add(definition);
         }
     }
+
+    /// <summary>Whether a source file declares a native type or a code generator rather than a definition.</summary>
+    public static bool IsDeclaration(string text) => DeclaredNative.IsDeclaration(text) || DeclaredGenerator.IsDeclaration(text);
 
     private void LoadSamples()
     {
@@ -810,7 +847,7 @@ public sealed class FormatProject
     public void SaveCodegen(IReadOnlyList<CodegenTarget> targets)
     {
         var file = Sandbox.Check(FilePath ?? throw new FormatDefinitionException("The project has no file"));
-        foreach (var target in targets) Codegen.CodeGeneration.Check(target);
+        foreach (var target in targets) CodeGeneration.Check(this, target);
         if (targets.GroupBy(t => t.Name).FirstOrDefault(g => g.Count() > 1) is { } duplicate)
             throw new FormatDefinitionException($"Two codegen targets are named '{duplicate.Key}'");
 

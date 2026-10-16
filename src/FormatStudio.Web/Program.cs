@@ -11,7 +11,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = ar
 
 // All optional: --project <file|folder> (or FORMATSTUDIO_PROJECT) opens a project at "/", --workspace <folder> lists the
 // projects in a folder on the start page, --state-dir <folder> moves the list of recent projects, --plugins
-// all|none|<sha256>,... (or FORMATSTUDIO_PLUGINS) limits the plugins of native types that are loaded.
+// all|none|<sha256>,... (or FORMATSTUDIO_PLUGINS) limits the plugins (native types, code generators) that are loaded.
 var options = new StudioOptions
 {
     Project = builder.Configuration["project"] ?? Environment.GetEnvironmentVariable("FORMATSTUDIO_PROJECT"),

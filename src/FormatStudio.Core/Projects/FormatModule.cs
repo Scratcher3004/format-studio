@@ -34,6 +34,8 @@ public sealed class FormatModule
     public IReadOnlyDictionary<string, TypeDef> Types => _types;
     /// <summary>The native types the library's definitions use: its own and those of its dependencies.</summary>
     public IReadOnlyList<Natives.INativeType> Natives { get; init; } = [];
+    /// <summary>The code generators the library declares (not those of its dependencies, which are modules of their own).</summary>
+    public IReadOnlyList<Codegen.DeclaredGenerator> Generators { get; init; } = [];
 
     public TypeDef? Find(string name) => _types.GetValueOrDefault(name);
 

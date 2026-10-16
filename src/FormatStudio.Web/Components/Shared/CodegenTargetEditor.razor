@@ -8,7 +8,7 @@
         <MudItem xs="12" md="4">
             <MudSelect T="ICodeGenerator" Value="@_generator" ValueChanged="@SelectGenerator" ToStringFunc="@(g => g?.Title)" Label="Language"
                        Variant="@Variant.Outlined" Margin="@Margin.Dense">
-                @foreach (var generator in CodeGeneration.Generators)
+                @foreach (var generator in AllGenerators.All)
                 {
                     <MudSelectItem Value="@generator">@generator.Title</MudSelectItem>
                 }
@@ -110,7 +110,9 @@
     [Parameter] public EventCallback<CodegenTarget> OnSave { get; set; }
     [Parameter] public EventCallback OnCancel { get; set; }
 
-    private ICodeGenerator _generator = CodeGeneration.Generators[0];
+    private ICodeGenerator _generator = CodeGenerators.BuiltIn.All[0];
+
+    private CodeGenerators AllGenerators => Project?.Generators ?? CodeGenerators.BuiltIn;
     private string? _name;
     private string? _output;
     private readonly Dictionary<string, string?> _texts = new(StringComparer.Ordinal);
@@ -124,7 +126,7 @@
     {
         if (Target != null)
         {
-            _generator = CodeGeneration.TryFind(Target.Generator) ?? _generator;
+            _generator = AllGenerators.Find(Target.Generator) ?? _generator;
             _name = Target.Name;
             _output = Target.Output;
             Load(Target.Options);
@@ -235,7 +237,8 @@
         };
         try
         {
-            CodeGeneration.Check(target);
+            if (Project != null) CodeGeneration.Check(Project, target);
+            else CodeGeneration.CheckOutput(target.Output);
             if (TakenNames.Contains(target.Name)) throw new FormatDefinitionException($"There is already a target named '{target.Name}'");
         }
         catch (FormatDefinitionException e)

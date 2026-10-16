@@ -47,7 +47,8 @@ const string usage = """
       format-studio generate [<target>...] [--no-clean] [--dry-run]
           Runs the project's codegen targets. Output only goes to the target's output folder.
       format-studio generators [--verbose]
-          Lists the code generators (csharp, csharp-stream, java-stream) and their options.
+          Lists the code generators and their options: the built-in ones (csharp, csharp-stream, java-stream) and,
+          in a project, those it and its libraries declare.
       format-studio web [--project <p>] [--workspace <folder>] [--urls <url>]
           Hint for starting the web UI (FormatStudio.Web).
     """;

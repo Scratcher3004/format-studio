@@ -220,7 +220,9 @@ public sealed class ProjectService
         get
         {
             var targets = Project?.Settings.Codegen ?? [];
-            return targets.Concat(CodeGeneration.Generators.Where(g => targets.All(t => t.Generator != g.Name)).Select(CodeGeneration.DefaultTarget)).ToList();
+            // Generators whose plugin isn't loaded have no defaults to show.
+            var generators = (Project?.Generators ?? CodeGenerators.BuiltIn).All.Where(g => g is not DeclaredGenerator { Implementation: null });
+            return targets.Concat(generators.Where(g => targets.All(t => t.Generator != g.Name)).Select(CodeGeneration.DefaultTarget)).ToList();
         }
     }
 

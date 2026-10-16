@@ -32,7 +32,7 @@ public static class GeneratedCodeVerifier
     /// <param name="runtime">The assembly with the runtime the target's options name (reader, writer, interfaces).</param>
     public static IReadOnlyList<string> CheckAgainstSimulator(FormatProject project, CodegenTarget target, Assembly runtime, int iterations)
     {
-        if (CodeGeneration.Find(target.Generator) is not CSharpGenerator generator)
+        if (project.Generators.Get(target.Generator) is not CSharpGenerator generator)
             throw new ArgumentException($"{target.Generator} doesn't generate C#; use {nameof(CheckJavaAgainstSimulator)} for Java", nameof(target));
         var output = Generate(project, target);
         var options = CSharpOptions.From(target.Options, generator.Io);
@@ -58,7 +58,7 @@ public static class GeneratedCodeVerifier
     /// </summary>
     public static IReadOnlyList<string> CheckJavaAgainstSimulator(FormatProject project, CodegenTarget target, JavaToolchain java, int iterations)
     {
-        if (CodeGeneration.Find(target.Generator) is not JavaGenerator)
+        if (project.Generators.Get(target.Generator) is not JavaGenerator)
             throw new ArgumentException($"{target.Generator} doesn't generate Java", nameof(target));
         var output = Generate(project, target);
         var options = JavaOptions.From(target.Options);

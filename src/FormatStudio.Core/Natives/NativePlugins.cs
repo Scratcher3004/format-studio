@@ -63,7 +63,7 @@ public sealed class PluginPolicy
 }
 
 /// <summary>
-/// Loads the assemblies of native type plugins. Each plugin gets a collectible load context of its own, which shares
+/// Loads the assemblies of plugins (native types, code generators). Each plugin gets a collectible load context of its own, which shares
 /// Format Studio and the framework with the host and loads other dependencies from the plugin's folder. Assemblies are
 /// read into memory, so the files aren't locked and can be rebuilt; a plugin whose bytes are unchanged is loaded once.
 /// </summary>
@@ -115,6 +115,28 @@ public static class NativePlugins
                 throw new FormatDefinitionException($"{path} is not a .NET assembly: {e.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// Loads a plugin and creates an instance of its class <paramref name="className"/>, which must implement
+    /// <typeparamref name="T"/> and have a public parameterless constructor. Throws <see cref="PluginRefusedException"/>
+    /// when the policy doesn't allow the plugin and <see cref="FormatDefinitionException"/> for other problems; the
+    /// constructor's exceptions are passed on.
+    /// </summary>
+    /// <param name="owner">What the class implements, for messages: the native type's or generator's name.</param>
+    public static T Create<T>(NativeFiles files, string path, string className, PluginPolicy policy, string owner) where T : class
+    {
+        var assembly = Load(files, path, policy);
+        var type = assembly.GetType(className, throwOnError: false)
+            ?? throw new FormatDefinitionException($"{owner}: {path} has no class {className}");
+        if (!typeof(T).IsAssignableFrom(type))
+        {
+            throw new FormatDefinitionException(type.GetInterfaces().Any(i => i.FullName == typeof(T).FullName)
+                ? $"{owner}: {className} implements another FormatStudio.Core's {typeof(T).Name}; the plugin must not ship its own FormatStudio.Core.dll"
+                : $"{owner}: {className} doesn't implement {typeof(T).FullName}");
+        }
+
+        return (T)(Activator.CreateInstance(type) ?? throw new FormatDefinitionException($"{owner}: {className} couldn't be created"));
     }
 
     /// <summary>

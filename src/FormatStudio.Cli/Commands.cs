@@ -207,9 +207,9 @@ internal static class Commands
     {
         var targets = project.Settings.Codegen;
         if ((targets.FirstOrDefault(t => t.Name == name) ?? targets.FirstOrDefault(t => t.Generator == name)) is { } target) return target;
-        var generator = CodeGeneration.TryFind(name)
+        var generator = project.Generators.Find(name)
             ?? throw new UsageException($"No codegen target or generator '{name}' (targets: {string.Join(", ", targets.Select(t => t.Name).DefaultIfEmpty("none"))}; " +
-                                        $"generators: {string.Join(", ", CodeGeneration.Generators.Select(g => g.Name))}).");
+                                        $"generators: {string.Join(", ", project.Generators.All.Select(g => g.Name))}).");
         return CodeGeneration.DefaultTarget(generator);
     }
 
@@ -450,11 +450,15 @@ internal static class Commands
 
     public static int Generators(string[] args)
     {
-        var line = CommandLine.Parse(args, [], ["verbose"]);
-        line.MaxPositional(0, "format-studio generators [--verbose]");
-        foreach (var generator in CodeGeneration.Generators)
+        var line = CommandLine.Parse(args, ["project"], ["verbose"]);
+        line.MaxPositional(0, "format-studio generators [--project <path>] [--verbose]");
+        // The project's generators when there is a project, else the built-in ones.
+        var project = line.Single("project") != null || FindProject(Directory.GetCurrentDirectory()) != null ? LoadProject(line) : null;
+        foreach (var generator in project?.Generators.All ?? CodeGenerators.BuiltIn.All)
         {
             Console.WriteLine($"{generator.Name,-16} {generator.Title} (default output: {generator.DefaultOutput})");
+            if (generator is DeclaredGenerator declared)
+                Console.WriteLine($"{"",-16} from {declared.Source.File}" + (declared.Unavailable != null ? $" (can't generate: {declared.Unavailable})" : ""));
             Console.WriteLine($"{"",-16} {generator.Description}");
             foreach (var option in generator.Options.Where(o => line.Has("verbose") || !o.Advanced))
             {

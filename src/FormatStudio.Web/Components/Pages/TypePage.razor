@@ -94,7 +94,7 @@ else
             {
             <MudStack Row="@true" AlignItems="@AlignItems.Start" Spacing="2" Class="mb-4">
                 <div class="grow">
-                    <CodegenSkipEditor @bind-Value="_skip" Targets="@(Projects.Project?.Settings.Codegen ?? [])" />
+                    <CodegenSkipEditor @bind-Value="_skip" Targets="@(Projects.Project?.Settings.Codegen ?? [])" Generators="@(Projects.Project?.Generators ?? CodeGenerators.BuiltIn)" />
                 </div>
                 @if (!SameSkip(_skip, _definition.SkipCodegen))
                 {
@@ -268,7 +268,7 @@ else
 
     private string TargetLabel(CodegenTarget target)
     {
-        var title = CodeGeneration.TryFind(target.Generator)?.Title ?? target.Generator;
+        var title = Projects.Project?.Generators.Find(target.Generator)?.Title ?? target.Generator;
         return Projects.Project?.Settings.Codegen.Contains(target) == true ? $"{target.Name} ({title})" : $"{title}, default options";
     }
 
