@@ -19,9 +19,6 @@ jobs:
           java-version: "21"
       - run: dotnet build FormatStudio.slnx -c Release
       - run: dotnet test FormatStudio.slnx -c Release --no-build
+      # Fails on errors in the project too; the project's fuzz cases replace a roundtrip step.
       - name: Sample project
-        run: |
-          cli="dotnet run --project src/FormatStudio.Cli -c Release --no-build --"
-          $cli validate --project samples/java-protocol
-          $cli test --project samples/java-protocol
-          $cli roundtrip --project samples/java-protocol --iterations 50
+        run: dotnet run --project src/FormatStudio.Cli -c Release --no-build -- test --project samples/java-protocol

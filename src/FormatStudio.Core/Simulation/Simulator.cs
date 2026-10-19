@@ -54,6 +54,21 @@ public static class Simulator
         return new RoundTripResult(type.ToString(), value ?? decoded.Value, bytes, second.Bytes, diagnostics);
     }
 
+    /// <summary>The types fuzzing covers when none are named: the packets, or all structs of a project without packets.</summary>
+    public static IEnumerable<StructDef> FuzzTypes(FormatProject project) =>
+        project.Packets.Any() ? project.Packets : project.Types.Values.OfType<StructDef>();
+
+    /// <summary>
+    /// The seed of the random value of one iteration for one type. Unlike <see cref="HashCode"/>, which differs from
+    /// process to process, it is the same every time, so that a failure can be repeated.
+    /// </summary>
+    public static int FuzzSeed(int seed, string type, int iteration)
+    {
+        var hash = 2166136261u;
+        foreach (var c in $"{seed}/{type}/{iteration}") hash = (hash ^ c) * 16777619u;
+        return unchecked((int)hash);
+    }
+
     /// <summary>Round-trips random values of each type.</summary>
     public static IEnumerable<RoundTripResult> Fuzz(FormatProject project, IEnumerable<TypeDef> types, int seed, int iterations)
     {
@@ -63,7 +78,7 @@ public static class Simulator
             for (var i = 0; i < iterations; i++)
             {
                 var type = new NamedRef(definition.Name);
-                var random = new RandomValues(project, HashCode.Combine(seed, definition.Name, i));
+                var random = new RandomValues(project, FuzzSeed(seed, definition.Name, i));
                 JsonNode? value = null;
                 string? error = null;
                 try
@@ -112,5 +127,23 @@ public static class Simulator
         var packet = (candidates ?? codec.Project.Packets).FirstOrDefault(p => p.Id == (long)id);
         if (packet == null) return (null, id, reader.Position, null);
         return (packet, id, reader.Position, codec.Decode(new NamedRef(packet.Name), bytes[reader.Position..]));
+    }
+
+    /// <summary>Writes the packet's id with <paramref name="header"/>, then the packet: what <see cref="DecodePacket"/> reads.</summary>
+    public static EncodeResult EncodePacket(Codec codec, StructDef packet, JsonNode? value, PacketHeader header)
+    {
+        var body = codec.Encode(new NamedRef(packet.Name), value);
+        var writer = new WireWriter();
+        try
+        {
+            writer.WriteInteger(header.Type.Kind, header.Type.Endian ?? codec.Project.Defaults.Endian, packet.Id ?? 0);
+        }
+        catch (EncodeException e)
+        {
+            body.Diagnostics.Error($"Packet id of {packet.Name}: {e.Message}");
+        }
+
+        writer.WriteBytes(body.Bytes);
+        return body with { Bytes = writer.ToArray() };
     }
 }

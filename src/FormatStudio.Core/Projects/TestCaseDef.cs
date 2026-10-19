@@ -5,19 +5,27 @@ namespace FormatStudio.Projects;
 
 /// <summary>
 /// One test case of a project's test files. Without <see cref="Expect"/> it is what a sample always was: the value must
-/// encode (to the hex, when both are given) and the bytes must decode and encode back to themselves.
+/// encode (to the hex, when both are given) and the bytes must decode and encode back to themselves. With
+/// <see cref="Packet"/> the bytes start with a packet id, and with <see cref="Fuzz"/> the case round-trips random values.
 /// </summary>
 public sealed class TestCaseDef
 {
     public required string Name { get; set; }
-    /// <summary>A type expression; the suite's type when the case has none.</summary>
-    public required string Type { get; set; }
+    /// <summary>
+    /// A type expression; the suite's type when the case has none. Only packet cases (whose bytes say which packet they
+    /// are) and fuzz cases (of all packets) may go without.
+    /// </summary>
+    public string? Type { get; set; }
     public JsonNode? Value { get; set; }
     /// <summary>The expected encoding, if known.</summary>
     public string? Hex { get; set; }
     /// <summary>A file with the expected encoding instead of <see cref="Hex"/>, relative to the test file.</summary>
     public string? File { get; set; }
     public TestExpectation? Expect { get; set; }
+    /// <summary>The bytes are a packet id followed by the packet; the case's or its suite's.</summary>
+    public PacketFrame? Packet { get; set; }
+    /// <summary>The case round-trips random values instead of a value or bytes of its own.</summary>
+    public FuzzOptions? Fuzz { get; set; }
     /// <summary>Why the case is skipped, or null when it runs.</summary>
     public string? Skip { get; set; }
     /// <summary>The tags of the case and of its suite.</summary>
@@ -34,6 +42,37 @@ public sealed class TestCaseDef
 
     /// <summary>The bytes the case starts from are given, by hex or file.</summary>
     public bool HasBytes => Hex != null || File != null;
+
+    /// <summary>What the case tests, for lists of cases: its type, else the packets it may be.</summary>
+    public string Subject => Type ?? (Packet?.Protocol is { } protocol ? $"packet of {protocol}" : Packet != null ? "packet" : "all packets");
+}
+
+/// <summary>How a packet case's bytes start: a packet id, which picks the packet among those of a protocol.</summary>
+public sealed class PacketFrame
+{
+    /// <summary>The keys of a <c>packet</c> mapping.</summary>
+    public static IReadOnlyList<string> Keys { get; } = ["header", "protocol", "group", "id-mask"];
+
+    /// <summary>The integer primitive the id is written as, e.g. <c>varint32</c>.</summary>
+    public required PrimitiveRef Header { get; set; }
+    /// <summary>The protocol whose packets the id is looked up in; all packets when null.</summary>
+    public string? Protocol { get; set; }
+    /// <summary>Only packets in this group, e.g. a direction.</summary>
+    public string? Group { get; set; }
+    /// <summary>The bits of the header that are the id, e.g. Bedrock's 10-bit id.</summary>
+    public ulong IdMask { get; set; } = ulong.MaxValue;
+}
+
+/// <summary>A fuzz case: random values of its type, or of all packets (of its frame's protocol), must round-trip.</summary>
+public sealed class FuzzOptions
+{
+    /// <summary>The keys of a <c>fuzz</c> mapping.</summary>
+    public static IReadOnlyList<string> Keys { get; } = ["iterations", "seed"];
+
+    /// <summary>Values per type.</summary>
+    public int Iterations { get; set; } = 20;
+    /// <summary>The same seed gives the same values, on every machine.</summary>
+    public int Seed { get; set; } = 1;
 }
 
 public enum MatchMode

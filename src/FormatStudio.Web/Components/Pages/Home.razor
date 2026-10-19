@@ -58,7 +58,20 @@
                         var outcome = _testResults.GetValueOrDefault(test)?.Summary ?? (test.Skip != null ? "skipped: " + test.Skip : null);
                         <tr>
                             <td><MudLink Href="@Link($"test/{index}")">@test.Name</MudLink> <span class="mud-text-secondary">@test.Suite</span></td>
-                            <td><MudLink Href="@Link($"type/{test.Type}")">@test.Type</MudLink></td>
+                            <td>
+                                @if (test.Type != null)
+                                {
+                                    <MudLink Href="@Link($"type/{test.Type}")">@test.Type</MudLink>
+                                }
+                                else
+                                {
+                                    <span class="mud-text-secondary">@test.Subject</span>
+                                }
+                                @if (test.Fuzz != null)
+                                {
+                                    <span class="mud-text-secondary"> (fuzz)</span>
+                                }
+                            </td>
                             <td>@string.Join(", ", test.Tags)</td>
                             <td class="mono" title="@(test.Hex ?? test.File)">@Truncate(test.Hex ?? test.File)</td>
                             <td title="@outcome" class="@(_testResults.GetValueOrDefault(test)?.Failed == true ? "mud-error-text" : null)">@Truncate(outcome)</td>

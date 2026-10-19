@@ -51,6 +51,7 @@ public static class TestReports
         if (failure.Offset is { } offset) node["offset"] = offset;
         if (failure.Expected is { } expected) node["expected"] = Hex.Format(expected);
         if (failure.Actual is { } actual) node["actual"] = Hex.Format(actual);
+        if (failure.Value is { } value) node["value"] = value.DeepClone();
         return node;
     }
 

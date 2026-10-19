@@ -79,8 +79,9 @@ The [test cases](testing.md) of a project are listed on the overview with their 
 for all of it), where they can be run, deleted or opened. A case's page edits its name, type, file, value and hex, and
 decodes the hex (or, without hex, encodes the value) into the annotated hex view and value tree, so a failing case can
 be debugged byte by byte; Encode, Decode and Round trip work as on the Simulate page, and their results are what Save
-writes. Its other keys (a bytes file, expectations, skip, tags) are listed and kept. New cases go to a file matched by
+writes. Its other keys (a bytes file, expectations, a packet header, fuzzing, skip, tags) are listed and kept; a packet
+case's value and hex are plain text fields, since its bytes start with the packet id. New cases go to a file matched by
 the project's `tests` patterns (by default the first file with cases). Saving or deleting rewrites the test file,
 keeping its shape and the other cases but not comments.
-Test files are checked when the project loads: an unknown type or key, invalid hex, a missing bytes file, a case with
-nothing to test or a repeated name shows up with the other diagnostics, at the case's line.
+Test files are checked when the project loads: an unknown type, key or protocol, invalid hex, a missing bytes file, a
+case with nothing to test, a packet case whose type isn't one of the packets it may be, or a repeated name shows up with the other diagnostics, at the case's line.

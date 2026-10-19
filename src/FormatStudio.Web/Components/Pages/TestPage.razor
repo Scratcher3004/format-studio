@@ -64,7 +64,23 @@ else
         }
     </MudStack>
 
-    @if (!string.IsNullOrWhiteSpace(_type))
+    @if (_base?.Fuzz != null)
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true">A fuzz case makes up its values; Check runs it.</MudAlert>
+    }
+    else if (_base?.Packet != null)
+    {
+        @* The simulator shows a type's bytes, while a packet case's bytes start with the packet id. *@
+        <MudGrid Spacing="@(2)">
+            <MudItem xs="12" md="6">
+                <MudTextField T="string" @bind-Value="_json" Label="Value (JSON)" Variant="@Variant.Outlined" Lines="@(12)" Class="mono" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField T="string" @bind-Value="_hex" Label="Hex, starting with the packet id" Variant="@Variant.Outlined" Lines="@(12)" Class="mono" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (!string.IsNullOrWhiteSpace(_type))
     {
         <SimulatorPanel Type="@_type" @bind-Json="_json" @bind-HexText="_hex" />
     }
@@ -113,7 +129,7 @@ else
         }
 
         _name = _original.Name;
-        _type = _original.Type;
+        _type = _original.Type ?? "";
         _file = _original.Source?.File ?? "";
         _json = _original.Value != null ? JsonValues.ToText(_original.Value) : "";
         _hex = _original.Hex ?? "";
@@ -124,6 +140,13 @@ else
     {
         if (_base == null) return "";
         var parts = new List<string>();
+        if (_base.Packet is { } frame)
+        {
+            var among = string.Join(", ", new[] { frame.Protocol, frame.Group is { } group ? "group " + group : null }.OfType<string>());
+            parts.Add($"bytes start with a {frame.Header} packet id{(among.Length > 0 ? $" ({among})" : "")}");
+        }
+
+        if (_base.Fuzz is { } fuzz) parts.Add($"fuzz: {fuzz.Iterations} random values per type, seed {fuzz.Seed}");
         if (_base.File != null) parts.Add($"bytes from {_base.File}");
         if (_base.Expect is { } expect)
         {
@@ -161,13 +184,14 @@ else
         string? problem = null;
         JsonNode? value = null;
         if (string.IsNullOrWhiteSpace(_name)) problem = "The test needs a name.";
-        else if (string.IsNullOrWhiteSpace(_type)) problem = "The test needs a type.";
-        else if (string.IsNullOrWhiteSpace(_json) && string.IsNullOrWhiteSpace(_hex) && _base?.File == null) problem = "The test needs a value, hex or both.";
+        else if (string.IsNullOrWhiteSpace(_type) && _base?.Packet == null && _base?.Fuzz == null) problem = "The test needs a type.";
+        else if (string.IsNullOrWhiteSpace(_json) && string.IsNullOrWhiteSpace(_hex) && _base?.File == null && _base?.Fuzz == null)
+            problem = "The test needs a value, hex or both.";
         else
         {
             try
             {
-                Codec.ParseType(_type);
+                if (!string.IsNullOrWhiteSpace(_type)) Codec.ParseType(_type);
                 if (!string.IsNullOrWhiteSpace(_hex)) Hex.Parse(_hex);
                 if (!string.IsNullOrWhiteSpace(_json)) value = JsonNode.Parse(_json);
             }
@@ -188,12 +212,14 @@ else
         return new TestCaseDef
         {
             Name = _name.Trim(),
-            Type = _type.Trim(),
+            Type = string.IsNullOrWhiteSpace(_type) ? null : _type.Trim(),
             Value = value,
             Hex = hex,
             // Typed hex replaces the bytes of a file.
             File = hex == null ? _base?.File : null,
             Expect = _base?.Expect,
+            Packet = _base?.Packet,
+            Fuzz = _base?.Fuzz,
             Skip = _base?.Skip,
             Tags = _base?.Tags ?? [],
             Suite = _base?.Suite ?? "",

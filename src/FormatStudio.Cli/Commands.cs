@@ -321,7 +321,7 @@ internal static class Commands
 
         IEnumerable<TypeDef> types = line.Positional.Count > 0
             ? line.Positional.Select(name => project.Find(name) ?? throw new UsageException($"Unknown type '{name}'."))
-            : project.Packets.Any() ? project.Packets : project.Types.Values.OfType<StructDef>();
+            : Simulator.FuzzTypes(project);
         var iterations = line.Int("iterations", 20);
         var failures = 0;
         var total = 0;
@@ -412,7 +412,10 @@ internal static class Commands
             Console.Write(format == "text" ? report : report + "\n");
         }
 
-        return results.Any(r => r.Failed) ? 1 : 0;
+        // The errors are printed when the project loads; with them the project isn't fine even when its tests pass.
+        var errors = project.Diagnostics.Count(d => d.Severity == Severity.Error);
+        if (errors > 0) Console.WriteLine($"The project has {errors} errors (format-studio validate).");
+        return results.Any(r => r.Failed) || errors > 0 ? 1 : 0;
     }
 
     private static string TextReport(IReadOnlyList<CaseResult> results, int total)
@@ -424,14 +427,17 @@ internal static class Commands
             switch (result.Status)
             {
                 case CaseStatus.Passed:
-                    text.AppendLine($"ok      {test.Suite}/{test.Name} ({test.Type})");
+                    text.AppendLine($"ok      {test.Suite}/{test.Name} ({test.Subject})");
                     break;
                 case CaseStatus.Skipped:
-                    text.AppendLine($"skip    {test.Suite}/{test.Name} ({test.Type}): {test.Skip}");
+                    text.AppendLine($"skip    {test.Suite}/{test.Name} ({test.Subject}): {test.Skip}");
                     break;
                 default:
-                    text.AppendLine($"FAILED  {test.Suite}/{test.Name} ({test.Type}) in {test.Source}");
+                    text.AppendLine($"FAILED  {test.Suite}/{test.Name} ({test.Subject}) in {test.Source}");
                     foreach (var problem in result.Failures.Select(f => f.ToString()).Distinct()) text.AppendLine($"        {problem}");
+                    // A random value that fails, to repeat it with encode --json.
+                    foreach (var failure in result.Failures.Where(f => f.Value != null).Take(3))
+                        text.AppendLine($"          value: {JsonValues.ToText(failure.Value, false)}");
                     break;
             }
         }

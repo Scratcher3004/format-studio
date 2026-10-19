@@ -14,10 +14,10 @@ namespace FormatStudio.Projects;
 public static class TestFiles
 {
     /// <summary>The keys of a case.</summary>
-    public static IReadOnlyList<string> Keys { get; } = ["name", "sample", "type", "value", "hex", "file", "expect", "skip", "tags"];
+    public static IReadOnlyList<string> Keys { get; } = ["name", "sample", "type", "value", "hex", "file", "expect", "packet", "fuzz", "skip", "tags"];
 
     /// <summary>The keys of a suite besides its cases: defaults for the cases of the file.</summary>
-    public static IReadOnlyList<string> SuiteKeys { get; } = ["suite", "type", "tags", "skip"];
+    public static IReadOnlyList<string> SuiteKeys { get; } = ["suite", "type", "packet", "tags", "skip"];
 
     /// <summary>The list of cases of a suite: its <c>cases</c>, or its <c>samples</c> in older files.</summary>
     private static string? ListKey(JsonObject root) =>
@@ -109,16 +109,24 @@ public static class TestFiles
             JsonObject map => ReadExpectation(map, name, source, unknown),
             _ => throw new FormatDefinitionException($"Test {name}: 'expect' must be a mapping", source),
         };
+        var packet = entry.ContainsKey("packet")
+            ? ReadPacket(entry["packet"], name, source, unknown)
+            : suite.ContainsKey("packet") ? ReadPacket(suite["packet"], name, source, []) : null;
+        var fuzz = entry.ContainsKey("fuzz") ? ReadFuzz(entry["fuzz"], name, source, unknown) : null;
+        var type = (entry["type"] ?? suite["type"])?.ToString();
+        if (type == null && packet == null && fuzz == null)
+            throw new FormatDefinitionException($"Test {name} needs a 'type' (or its suite one)", source);
 
         return new TestCaseDef
         {
             Name = name,
-            Type = (entry["type"] ?? suite["type"])?.ToString()
-                   ?? throw new FormatDefinitionException($"Test {name} needs a 'type' (or its suite one)", source),
+            Type = type,
             Value = entry["value"]?.DeepClone(),
             Hex = entry["hex"]?.ToString(),
             File = entry["file"]?.ToString(),
             Expect = expect,
+            Packet = packet,
+            Fuzz = fuzz,
             Skip = SkipReason(entry["skip"]) ?? SkipReason(suite["skip"]),
             Tags = Strings(suite["tags"]).Concat(Strings(entry["tags"])).Distinct().ToList(),
             Suite = suiteName,
@@ -162,6 +170,64 @@ public static class TestFiles
         }
 
         return expectation;
+    }
+
+    /// <summary>A <c>packet</c> key: a mapping, or just the header type, e.g. <c>packet: varint32</c>.</summary>
+    private static PacketFrame? ReadPacket(JsonNode? node, string name, SourceLocation source, List<string> unknown)
+    {
+        var map = node switch
+        {
+            null => null,
+            JsonObject obj => obj,
+            JsonValue value when value.GetValueKind() == JsonValueKind.String => new JsonObject { ["header"] = value.ToString() },
+            _ => throw new FormatDefinitionException($"Test {name}: 'packet' must be a header type or a mapping", source),
+        };
+        if (map == null) return null;
+        unknown.AddRange(map.Select(pair => pair.Key).Where(key => !PacketFrame.Keys.Contains(key)).Select(key => "packet." + key));
+
+        var header = map["header"]?.ToString() ?? throw new FormatDefinitionException($"Test {name}: 'packet' needs a 'header', e.g. varint32", source);
+        if (!Primitives.TryParse(header, out var primitive) || !Primitives.IsInteger(primitive.Kind))
+            throw new FormatDefinitionException($"Test {name}: the packet header '{header}' is not an integer type", source);
+        var frame = new PacketFrame { Header = primitive, Protocol = map["protocol"]?.ToString(), Group = map["group"]?.ToString() };
+        if (map["id-mask"] is { } mask)
+        {
+            var text = mask.ToString();
+            try
+            {
+                frame.IdMask = text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToUInt64(text[2..], 16) : ulong.Parse(text);
+            }
+            catch (Exception e) when (e is System.FormatException or OverflowException)
+            {
+                throw new FormatDefinitionException($"Test {name}: 'id-mask' must be a number, e.g. 0x3ff", source);
+            }
+        }
+
+        return frame;
+    }
+
+    /// <summary>A <c>fuzz</c> key: <c>true</c> or a mapping with iterations and a seed.</summary>
+    private static FuzzOptions? ReadFuzz(JsonNode? node, string name, SourceLocation source, List<string> unknown)
+    {
+        switch (node)
+        {
+            case JsonValue value when value.GetValueKind() == JsonValueKind.True:
+                return new FuzzOptions();
+            case JsonValue value when value.GetValueKind() == JsonValueKind.False:
+                return null;
+            case JsonObject map:
+                unknown.AddRange(map.Select(pair => pair.Key).Where(key => !FuzzOptions.Keys.Contains(key)).Select(key => "fuzz." + key));
+                var fuzz = new FuzzOptions();
+                if (map["iterations"] is { } iterations) fuzz.Iterations = Number(iterations, "iterations", 1);
+                if (map["seed"] is { } seed) fuzz.Seed = Number(seed, "seed", int.MinValue);
+                return fuzz;
+            default:
+                throw new FormatDefinitionException($"Test {name}: 'fuzz' must be true or a mapping (iterations, seed)", source);
+        }
+
+        int Number(JsonNode value, string key, int min) =>
+            value is JsonValue v && v.TryGetValue<long>(out var number) && number >= min && number <= int.MaxValue
+                ? (int)number
+                : throw new FormatDefinitionException($"Test {name}: 'fuzz.{key}' must be a whole number{(min == 1 ? " above 0" : "")}", source);
     }
 
     private static string? SkipReason(JsonNode? skip) => skip switch
@@ -221,7 +287,8 @@ public static class TestFiles
     {
         var entry = original == null ? new JsonObject() : (JsonObject)original.DeepClone();
         entry[entry.ContainsKey("sample") && !entry.ContainsKey("name") ? "sample" : "name"] = test.Name;
-        if (entry.ContainsKey("type") || suite?["type"]?.ToString() != test.Type) entry["type"] = test.Type;
+        if (test.Type == null) entry.Remove("type");
+        else if (entry.ContainsKey("type") || suite?["type"]?.ToString() != test.Type) entry["type"] = test.Type;
         Set(entry, "value", test.Value?.DeepClone());
         Set(entry, "hex", test.Hex);
         Set(entry, "file", test.File);

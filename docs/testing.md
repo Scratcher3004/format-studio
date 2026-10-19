@@ -1,7 +1,7 @@
 # Testing a format
 
 A project's test cases pin down how values and bytes of its types look: a value with its known encoding, bytes from a
-capture, input that must be rejected. `format-studio test` runs them against the simulator, the web UI lists and runs
+capture, a whole packet with its id, input that must be rejected, random values that must round-trip. `format-studio test` runs them against the simulator, the web UI lists and runs
 them on the overview, and CI can read the results as JUnit XML.
 
 ## Test files
@@ -17,7 +17,7 @@ Test files are never read as definitions, also when a source pattern such as the
 `samples` is the old name of `tests` and is still read; the settings page writes `tests`.
 
 A test file holds a list of cases, a suite or a single case. A suite is a mapping with a `cases` list; its `type`,
-`tags` and `skip` apply to all its cases, and `suite` names it (the file name without `.yaml` otherwise).
+`packet`, `tags` and `skip` apply to all its cases, and `suite` names it (the file name without `.yaml` otherwise).
 
 ```yaml
 suite: handshake
@@ -48,6 +48,8 @@ other diagnostics.
 | `hex` | The expected bytes in hex; spaces, `0x`, `:` and `-` are ignored |
 | `file` | A file with the expected bytes instead of `hex`, relative to the test file |
 | `expect` | More checks, or a failure the case must end in (below) |
+| `packet` | The bytes start with a packet id ([below](#packet-cases)) |
+| `fuzz` | Round-trip random values instead ([below](#fuzz-cases)) |
 | `skip` | `true` or a reason: the case doesn't run, and its type isn't checked (it may not exist yet) |
 | `tags` | Tags for `test --tag` |
 
@@ -84,6 +86,63 @@ Integers are compared exactly, other numbers to six significant digits, since a 
   expect: {fails: encode}
 ```
 
+## Packet cases
+
+With `packet`, a case's bytes are a whole packet as it follows the length prefix on the wire: the packet id, then the
+packet. The id picks the packet among the packets of a [protocol](dsl.md#protocols), as `decode-packet` does, so a case needs no
+type to decode; with a type, the bytes must be that packet, and a value is encoded with the packet's id in front.
+
+```yaml
+suite: packets
+packet: {header: varint32, protocol: PlayClientbound}   # for all cases of the suite
+cases:
+  - name: block-update
+    hex: 09 4607632c15b4833f 01                          # id 0x09: BlockUpdate
+    expect:
+      value: {location: {x: 18357644, z: -20882616, y: 831}, blockState: 1}
+  - name: set-slot-empty
+    type: SetSlot
+    value: {windowId: 0, stateId: 4, slot: 36, item: {}}
+    hex: 15 00 04 0024 00
+  - name: unknown-id
+    hex: 7f 00
+    expect: {error: no packet has id 127}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `header` | The integer type of the id, e.g. `varint32` or `u16be`; `packet: varint32` is short for `packet: {header: varint32}` |
+| `protocol` | The protocol whose packets the id picks from; all packets without it |
+| `group` | Only packets in this group as well |
+| `id-mask` | The bits of the header that are the id, e.g. `0x3ff` for Bedrock |
+
+Expectations apply to the whole bytes: `consumed` counts the id too, and a mismatch is at its offset in the packet.
+
+## Fuzz cases
+
+A case with `fuzz` makes up random values, encodes them, decodes the bytes and encodes the result again; both encodings
+must be the same. It covers the case's type, or without one all packets (all structs of a project without packets),
+as `format-studio roundtrip` does. With `packet` too, the values go through the packet id, which checks that each
+packet's id picks it again among the packets of its protocol.
+
+```yaml
+suite: fuzz
+cases:
+  - name: all-packets
+    fuzz: {iterations: 50}
+  - name: play-ids
+    packet: {header: varint32, protocol: PlayClientbound}
+    fuzz: true
+  - name: slot
+    type: Slot
+    fuzz: {iterations: 200, seed: 7}
+```
+
+`iterations` is the number of values per type (20 by default), `seed` picks them (1 by default): the same seed gives
+the same values on every machine, so a failure in CI happens locally as well. A type that fails is reported with how
+many of its values failed and the first one, which `format-studio encode <type> --json` repeats. A fuzz case has no
+`value`, `hex`, `file` or `expect`.
+
 ## Running tests
 
 ```
@@ -96,7 +155,8 @@ format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob
   differ the offset and both byte strings). `--format junit` writes one `testsuite` per suite.
 - `--output` writes the report to a file and prints the text summary to the console, e.g. for CI:
   `format-studio test --format junit --output test-results.xml`.
-- The exit code is 1 when a case fails. `format-studio samples` is the same command.
+- The exit code is 1 when a case fails or the project has errors, so CI needs no `validate` or `roundtrip` step
+  besides it. `format-studio samples` is the same command.
 
 The cases run against the simulator only. In the web UI, the overview's **Tests** panel runs them and shows each
 result; a case's page edits its name, type, value and hex and keeps its other keys.

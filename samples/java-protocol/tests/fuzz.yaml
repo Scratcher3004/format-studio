@@ -1,0 +1,14 @@
+# Random values must encode and decode back to themselves.
+suite: fuzz
+tags: [fuzz]
+cases:
+  # Every packet, as format-studio roundtrip does.
+  - name: all-packets
+    fuzz: {iterations: 50}
+  # Through the packet id: each packet's id must pick it again among the packets of its protocol.
+  - name: play-ids
+    packet: {header: varint32, protocol: PlayClientbound}
+    fuzz: {iterations: 20}
+  - name: slot
+    type: Slot
+    fuzz: {iterations: 200, seed: 7}

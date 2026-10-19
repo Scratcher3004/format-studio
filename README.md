@@ -4,7 +4,7 @@ A tool for describing, analysing and simulating binary data formats, and for gen
 
 Formats are written in a small YAML DSL, one file per type, grouped into projects. Format Studio validates them,
 encodes and decodes arbitrary values with an annotated byte view, fuzzes round trips, guesses which packet some bytes
-are, runs test cases (known encodings, captures, expected errors), imports external schemas and generates C# (spans or streams) and Java. It handles little- and big-endian
+are, runs test cases (known encodings, captures, whole packets, expected errors, fuzzing), imports external schemas and generates C# (spans or streams) and Java. It handles little- and big-endian
 formats, LEB128 and zigzag varints, length prefixes of any width, conditional and computed fields, tagged unions with
 inline or external tags, bit fields, fixed-point numbers and NBT. Very custom bit-level formats are out of scope.
 
@@ -29,7 +29,7 @@ Requires the .NET 10 SDK.
 
 ```
 dotnet run --project src/FormatStudio.Cli -- new my-format --endian big
-dotnet run --project src/FormatStudio.Cli -- roundtrip --project samples/java-protocol
+dotnet run --project src/FormatStudio.Cli -- test --project samples/java-protocol
 dotnet run --project src/FormatStudio.Web -- --workspace samples --urls http://localhost:5180
 ```
 

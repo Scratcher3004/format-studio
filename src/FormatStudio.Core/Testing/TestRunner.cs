@@ -27,6 +27,8 @@ public enum CaseFailureKind
     Warnings,
     /// <summary>The case was expected to fail, but succeeded or failed with another error.</summary>
     ExpectedFailure,
+    /// <summary>Random values of a type don't round-trip.</summary>
+    Fuzz,
 }
 
 public enum CaseStatus
@@ -48,6 +50,8 @@ public sealed record CaseFailure(CaseFailureKind Kind, string Message, Diagnosti
     public int? Offset { get; init; }
     /// <summary>The field the failure is about, e.g. <c>location.x</c>.</summary>
     public string? Path { get; init; }
+    /// <summary>The random value of a <see cref="CaseFailureKind.Fuzz"/> failure, to repeat it with.</summary>
+    public JsonNode? Value { get; init; }
 
     /// <summary>The failure as one line: the diagnostic it comes from, or its message.</summary>
     public override string ToString() => Diagnostic?.ToString() ?? (Path != null ? $"{Message} [{Path}]" : Message);
@@ -92,7 +96,7 @@ public sealed record TestFilter
     public bool Matches(TestCaseDef test) =>
         (Names.Count == 0 || Names.Any(n => Glob(n, test.Name) || Glob(n, $"{test.Suite}/{test.Name}")))
         && (Tags.Count == 0 || Tags.Any(test.Tags.Contains))
-        && (Types.Count == 0 || Types.Contains(test.Type))
+        && (Types.Count == 0 || test.Type != null && Types.Contains(test.Type))
         && (Files.Count == 0 || test.Source?.File is { } file && Files.Any(f => Glob(f, file)));
 
     private static bool Glob(string pattern, string text) =>
@@ -102,8 +106,8 @@ public sealed record TestFilter
 /// <summary>
 /// Runs a project's test cases against the simulator. A value must encode (to the case's bytes, when both are given),
 /// and the bytes must decode and encode back to themselves; <see cref="TestCaseDef.Expect"/> adds checks of the decoded
-/// value, warnings and length, or turns the case into one that must fail. The CLI, the web UI and tests all run cases
-/// through here.
+/// value, warnings and length, or turns the case into one that must fail. A packet case's bytes start with the packet's
+/// id, and a fuzz case round-trips random values. The CLI, the web UI and tests all run cases through here.
 /// </summary>
 public static class TestRunner
 {
@@ -128,11 +132,11 @@ public static class TestRunner
 
     private static CaseResult RunCase(Codec codec, TestCaseDef test)
     {
-        TypeRef type;
+        Subject subject;
         byte[]? given;
         try
         {
-            type = codec.Project.Normalize(Codec.ParseType(test.Type));
+            subject = Subject.For(codec, test);
             given = codec.Project.TestBytes(test);
         }
         catch (Exception e) when (e is System.FormatException or FormatDefinitionException or IOException or UnauthorizedAccessException)
@@ -140,21 +144,29 @@ public static class TestRunner
             return Invalid(test, e.Message);
         }
 
+        if (test.Fuzz is { } fuzz)
+        {
+            return test.Value != null || given != null || test.Expect != null
+                ? Invalid(test, "a fuzz case has no value, hex, file or expect of its own")
+                : RunFuzz(codec.Project, test, subject, fuzz);
+        }
+
         if (test.Value == null && given == null) return Invalid(test, "no value, hex or file");
+        if (test.Value != null && subject.Type == null) return Invalid(test, "a packet case with a value needs a type to encode it as");
         var expect = test.Expect ?? new TestExpectation();
-        return expect.ExpectsFailure ? RunFailing(codec, test, type, given, expect) : RunPassing(codec, test, type, given, expect);
+        return expect.ExpectsFailure ? RunFailing(test, subject, given, expect) : RunPassing(test, subject, given, expect);
     }
 
     private static CaseResult Invalid(TestCaseDef test, string message) => new(test, [new CaseFailure(CaseFailureKind.Invalid, message)], null);
 
-    private static CaseResult RunPassing(Codec codec, TestCaseDef test, TypeRef type, byte[]? given, TestExpectation expect)
+    private static CaseResult RunPassing(TestCaseDef test, Subject subject, byte[]? given, TestExpectation expect)
     {
         var failures = new List<CaseFailure>();
         var warnings = new List<Diagnostic>();
         byte[]? bytes = null;
         if (test.Value != null)
         {
-            var encoded = codec.Encode(type, test.Value);
+            var encoded = subject.Encode(subject.Type!, test.Value);
             failures.AddRange(Errors(encoded.Diagnostics, CaseFailureKind.Encode));
             warnings.AddRange(encoded.Diagnostics.Where(d => d.Severity == Severity.Warning));
             if (encoded.Success)
@@ -180,13 +192,13 @@ public static class TestRunner
         {
             if (expect.Consumed is { } consumed)
             {
-                var decoded = codec.Decode(type, bytes);
+                var decoded = subject.Decode(bytes);
                 if (decoded.Success && decoded.Consumed != consumed)
                     failures.Add(new CaseFailure(CaseFailureKind.Consumed, $"decoding takes up {decoded.Consumed} bytes, expected {consumed}"));
                 bytes = bytes[..Math.Min(consumed, bytes.Length)];
             }
 
-            var roundTrip = Simulator.RoundTripBytes(codec, type, bytes);
+            var roundTrip = subject.RoundTrip(bytes);
             failures.AddRange(Errors(roundTrip.Diagnostics, CaseFailureKind.RoundTrip));
             warnings.AddRange(roundTrip.Diagnostics.Where(d => d.Severity == Severity.Warning));
             if (expect.HasValue && roundTrip.Success)
@@ -197,19 +209,19 @@ public static class TestRunner
         return new CaseResult(test, failures, bytes);
     }
 
-    private static CaseResult RunFailing(Codec codec, TestCaseDef test, TypeRef type, byte[]? given, TestExpectation expect)
+    private static CaseResult RunFailing(TestCaseDef test, Subject subject, byte[]? given, TestExpectation expect)
     {
         var step = expect.Fails ?? (given != null ? ExpectedFailure.Decode : ExpectedFailure.Encode);
         DiagnosticBag diagnostics;
         if (step == ExpectedFailure.Encode)
         {
             if (test.Value == null) return Invalid(test, "'fails: encode' needs a value");
-            diagnostics = codec.Encode(type, test.Value).Diagnostics;
+            diagnostics = subject.Encode(subject.Type!, test.Value).Diagnostics;
         }
         else
         {
             if (given == null) return Invalid(test, "'fails: decode' needs a hex or file");
-            diagnostics = codec.Decode(type, given).Diagnostics;
+            diagnostics = subject.Decode(given).Diagnostics;
         }
 
         var errors = diagnostics.Where(d => d.Severity == Severity.Error).ToList();
@@ -220,6 +232,47 @@ public static class TestRunner
 
         var wanted = string.Join(" ", new[] { expect.Error is { } text ? $"'{text}'" : null, expect.Path is { } path ? $"at {path}" : null }.OfType<string>());
         return new CaseResult(test, [new CaseFailure(CaseFailureKind.ExpectedFailure, $"fails with other errors than {wanted}: {errors[0].Message}", errors[0])], given);
+    }
+
+    /// <summary>Round-trips random values of the case's type, or of all packets, and reports each type that fails.</summary>
+    private static CaseResult RunFuzz(FormatProject project, TestCaseDef test, Subject subject, FuzzOptions fuzz)
+    {
+        IEnumerable<TypeRef> types = subject.Type != null
+            ? [subject.Type]
+            : (subject.Packets ?? Simulator.FuzzTypes(project)).OrderBy(t => t.Name, StringComparer.Ordinal).Select(t => new NamedRef(t.Name));
+        var failures = new List<CaseFailure>();
+        foreach (var type in types)
+        {
+            var name = type.ToString();
+            var failed = 0;
+            CaseFailure? first = null;
+            for (var i = 0; i < fuzz.Iterations; i++)
+            {
+                JsonNode? value;
+                try
+                {
+                    value = new RandomValues(project, Simulator.FuzzSeed(fuzz.Seed, name, i)).Generate(type);
+                }
+                catch (Exception e) when (e is Expressions.ExprException or FormatDefinitionException)
+                {
+                    failed++;
+                    first ??= new CaseFailure(CaseFailureKind.Fuzz, $"random value: {e.Message}");
+                    continue;
+                }
+
+                var encoded = subject.Encode(type, value);
+                var error = encoded.Diagnostics.FirstOrDefault(d => d.Severity == Severity.Error)
+                            ?? subject.RoundTrip(encoded.Bytes, type).Diagnostics.FirstOrDefault(d => d.Severity == Severity.Error);
+                if (error == null) continue;
+                failed++;
+                first ??= new CaseFailure(CaseFailureKind.Fuzz, error.Message, error) { Value = value?.DeepClone(), Actual = encoded.Bytes, Path = error.Path };
+            }
+
+            if (first != null)
+                failures.Add(first with { Message = $"{name}: {failed} of {fuzz.Iterations} round trips fail, e.g. {first.Message}", Diagnostic = null });
+        }
+
+        return new CaseResult(test, failures, null);
     }
 
     private static bool ErrorMatches(Diagnostic error, TestExpectation expect) =>
@@ -315,5 +368,120 @@ public static class TestRunner
         }
 
         return JsonNode.DeepEquals(expected, actual);
+    }
+
+    private sealed record Decoded(TypeRef? Type, JsonNode? Value, int Consumed, DiagnosticBag Diagnostics)
+    {
+        public bool Success => !Diagnostics.HasErrors;
+    }
+
+    /// <summary>
+    /// What a case encodes and decodes: its type, or for a packet case a packet id and the packet with that id. A packet
+    /// case without a type takes the packet its bytes say.
+    /// </summary>
+    private sealed class Subject
+    {
+        private readonly Codec _codec;
+        private readonly PacketHeader? _header;
+        private readonly string? _protocol;
+
+        private Subject(Codec codec, TypeRef? type, PacketHeader? header, IReadOnlyList<StructDef>? packets, string? protocol)
+        {
+            _codec = codec;
+            Type = type;
+            _header = header;
+            Packets = packets;
+            _protocol = protocol;
+        }
+
+        public TypeRef? Type { get; }
+        /// <summary>The packets a packet case's id may pick; null for other cases.</summary>
+        public IReadOnlyList<StructDef>? Packets { get; }
+
+        public static Subject For(Codec codec, TestCaseDef test)
+        {
+            var project = codec.Project;
+            var type = test.Type is { } text ? project.Normalize(Codec.ParseType(text)) : null;
+            if (test.Packet is not { } frame) return new Subject(codec, type, null, null, null);
+
+            var packets = project.Packets;
+            if (frame.Protocol != null)
+            {
+                var protocol = project.FindProtocol(frame.Protocol) ?? throw new FormatDefinitionException($"there is no protocol '{frame.Protocol}'");
+                packets = project.PacketsOf(protocol);
+            }
+
+            if (frame.Group is { } group) packets = packets.Where(p => p.Groups.Contains(group));
+            var subject = new Subject(codec, type, new PacketHeader(frame.Header, frame.IdMask), packets.ToList(), frame.Protocol);
+            if (type != null) subject.PacketOf(type);
+            return subject;
+        }
+
+        private StructDef PacketOf(TypeRef type) =>
+            type is NamedRef named && _codec.Project.Find(named.Name) is StructDef { IsPacket: true } packet
+                ? packet
+                : throw new FormatDefinitionException($"{type} is not a packet, so it has no id to start the bytes with");
+
+        public EncodeResult Encode(TypeRef type, JsonNode? value) =>
+            _header == null ? _codec.Encode(type, value) : Simulator.EncodePacket(_codec, PacketOf(type), value, _header);
+
+        /// <summary>Decodes the bytes as <paramref name="type"/> (the case's type by default), or as the packet their id picks.</summary>
+        public Decoded Decode(byte[] bytes, TypeRef? type = null)
+        {
+            type ??= Type;
+            if (_header == null)
+            {
+                var result = _codec.Decode(type ?? throw new InvalidOperationException("A case without a frame has a type"), bytes);
+                return new Decoded(type, result.Value, result.Consumed, result.Diagnostics);
+            }
+
+            var diagnostics = new DiagnosticBag();
+            try
+            {
+                var (packet, id, headerLength, decoded) = Simulator.DecodePacket(_codec, bytes, _header, Packets);
+                if (packet == null || decoded == null)
+                {
+                    diagnostics.Error($"No packet has id {id}" + (_protocol != null ? $" in {_protocol}" : ""));
+                    return new Decoded(null, null, headerLength, diagnostics);
+                }
+
+                var actual = new NamedRef(packet.Name);
+                if (type != null && PacketOf(type) != packet)
+                {
+                    diagnostics.Error($"The bytes are {packet.Name} (id {id}), not {type}");
+                    return new Decoded(actual, null, headerLength, diagnostics);
+                }
+
+                return new Decoded(actual, decoded.Value, headerLength + decoded.Consumed, decoded.Diagnostics);
+            }
+            catch (DecodeException e)
+            {
+                diagnostics.Error($"Packet id: {e.Message}");
+                return new Decoded(null, null, 0, diagnostics);
+            }
+        }
+
+        /// <summary>Decodes the bytes and encodes the result, which must give the same bytes; see <see cref="Simulator.RoundTripBytes"/>.</summary>
+        public RoundTripResult RoundTrip(byte[] bytes, TypeRef? type = null)
+        {
+            if (_header == null) return Simulator.RoundTripBytes(_codec, type ?? Type!, bytes);
+
+            var decoded = Decode(bytes, type);
+            var diagnostics = new DiagnosticBag();
+            diagnostics.AddRange(decoded.Diagnostics);
+            var name = (decoded.Type ?? type ?? Type)?.ToString() ?? "packet";
+            if (!decoded.Success || decoded.Type == null) return new RoundTripResult(name, decoded.Value, bytes, null, diagnostics);
+            if (decoded.Consumed != bytes.Length) diagnostics.Error($"Decoding consumed {decoded.Consumed} of {bytes.Length} bytes");
+
+            var second = Encode(decoded.Type, decoded.Value);
+            diagnostics.AddRange(second.Diagnostics);
+            if (second.Success && !second.Bytes.AsSpan().SequenceEqual(bytes))
+            {
+                var mismatch = bytes.AsSpan().CommonPrefixLength(second.Bytes);
+                diagnostics.Error($"Re-encoding differs at offset {mismatch} ({bytes.Length} vs {second.Bytes.Length} bytes)");
+            }
+
+            return new RoundTripResult(name, decoded.Value, bytes, second.Bytes, diagnostics);
+        }
     }
 }

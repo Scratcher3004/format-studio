@@ -99,12 +99,22 @@ public sealed class Validator
             var name = $"Test {test.Name}";
             foreach (var key in test.UnknownKeys)
             {
-                var keys = key.StartsWith("expect.", StringComparison.Ordinal) ? TestExpectation.Keys : TestFiles.Keys;
+                var keys = key.Split('.')[0] switch
+                {
+                    "expect" when key.Contains('.') => TestExpectation.Keys,
+                    "packet" when key.Contains('.') => PacketFrame.Keys,
+                    "fuzz" when key.Contains('.') => FuzzOptions.Keys,
+                    _ => TestFiles.Keys,
+                };
                 _diagnostics.Warning($"{name}: unknown key '{key}' ({string.Join(", ", keys)})", source);
             }
 
             if (test.Hex != null && test.File != null) _diagnostics.Error($"{name} has both a 'hex' and a 'file'; keep one", source);
-            else if (test.Value == null && !test.HasBytes) _diagnostics.Error($"{name} needs a 'value', 'hex' or 'file'", source);
+            else if (test.Fuzz != null && (test.Value != null || test.HasBytes || test.Expect != null))
+                _diagnostics.Error($"{name}: a fuzz case makes up its values, so it has no 'value', 'hex', 'file' or 'expect'", source);
+            else if (test.Value == null && !test.HasBytes && test.Fuzz == null) _diagnostics.Error($"{name} needs a 'value', 'hex' or 'file'", source);
+            if (test.Packet != null && test.Type == null && test.Value != null)
+                _diagnostics.Error($"{name}: a packet case with a 'value' needs a 'type', the packet to encode it as", source);
             if (test.Expect is { ExpectsFailure: true } expect)
             {
                 if (expect.Fails == ExpectedFailure.Encode && test.Value == null) _diagnostics.Error($"{name}: 'fails: encode' needs a 'value'", source);
@@ -138,6 +148,10 @@ public sealed class Validator
             }
 
             if (test.Skip != null) continue;
+            ProtocolDef? protocol = null;
+            if (test.Packet?.Protocol is { } protocolName && (protocol = _project.FindProtocol(protocolName)) == null)
+                _diagnostics.Error($"{name}: there is no protocol '{protocolName}'", source);
+            if (test.Type == null) continue;
             TypeRef type;
             try
             {
@@ -150,11 +164,19 @@ public sealed class Validator
             }
 
             CheckType(type, source, test.Name, null);
+            if (test.Packet is not { } frame) continue;
+            if (type is not NamedRef named || _project.Find(named.Name) is not StructDef { IsPacket: true } packet)
+                _diagnostics.Error($"{name}: {test.Type} is not a packet, so its bytes can't start with a packet id", source);
+            else if (protocol != null && !protocol.Contains(packet) || frame.Group != null && !packet.Groups.Contains(frame.Group))
+                _diagnostics.Error($"{name}: {packet.Name} is not one of the packets the id is looked up among ({FrameText(frame)})", source);
         }
 
         foreach (var duplicate in _project.Tests.GroupBy(t => (t.Source?.File, t.Name)).Where(g => g.Count() > 1))
             _diagnostics.Warning($"Several tests are named {duplicate.Key.Name}", duplicate.Skip(1).First().Source);
     }
+
+    private static string FrameText(PacketFrame frame) =>
+        string.Join(", ", new[] { frame.Protocol is { } p ? "protocol " + p : null, frame.Group is { } g ? "group " + g : null }.OfType<string>());
 
     private void CheckStruct(StructDef structDef)
     {

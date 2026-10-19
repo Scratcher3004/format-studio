@@ -1,0 +1,21 @@
+# Whole packets as they follow the length prefix on the wire: the packet id, then the packet. The id picks the packet
+# among those of the protocol, so these cases need no type unless they encode a value.
+suite: packets
+packet: {header: varint32, protocol: PlayClientbound}
+tags: [play, packets]
+cases:
+  - name: block-update
+    hex: 09 4607632c15b4833f 01
+    expect:
+      value: {location: {x: 18357644, z: -20882616, y: 831}, blockState: 1}
+  - name: set-slot-empty
+    type: SetSlot
+    value: {windowId: 0, stateId: 4, slot: 36, item: {}}
+    hex: 15 00 04 0024 00
+  - name: wrong-packet
+    type: SetSlot
+    hex: 09 4607632c15b4833f 01
+    expect: {error: not SetSlot}
+  - name: unknown-id
+    hex: 7f 00
+    expect: {error: no packet has id 127}
