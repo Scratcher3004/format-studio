@@ -234,6 +234,29 @@ public sealed class ProjectService
         Reload();
     }
 
+    /// <summary>
+    /// Writes the general settings to the project file (see <see cref="FormatProject.SaveSettings"/>) and reloads. When
+    /// the project can't be loaded with them, the file is restored and the error thrown, so that the settings page stays
+    /// usable.
+    /// </summary>
+    public void SaveSettings(ProjectSettings settings)
+    {
+        var file = Sandbox.Check(Project!.FilePath!);
+        var previous = File.ReadAllText(file);
+        Project.SaveSettings(settings);
+        try
+        {
+            FormatProject.Load(Path, Sandbox, plugins: Plugins);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or System.FormatException or YamlDotNet.Core.YamlException)
+        {
+            File.WriteAllText(file, previous);
+            throw new FormatDefinitionException($"The project can't be loaded with these settings: {e.Message}");
+        }
+
+        Reload();
+    }
+
     /// <summary>Writes the codegen targets to the project file (see <see cref="FormatProject.SaveCodegen"/>) and reloads.</summary>
     public void SaveCodegen(IReadOnlyList<CodegenTarget> targets)
     {

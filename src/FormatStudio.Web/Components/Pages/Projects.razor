@@ -81,16 +81,39 @@
             <MudText Typo="Typo.h6" Class="mb-2">New</MudText>
             <MudTextField T="string" @bind-Value="_newFolder" Label="Folder" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2"
                           HelperText="@($"Relative to {BaseFolder}; created if it doesn't exist; must not contain a project yet")" />
-            <MudTextField T="string" @bind-Value="_newName" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-2"
-                          HelperText="Default: the folder name" />
+            <MudStack Row="true" Spacing="2" Class="mb-2">
+                <MudSelect T="ProjectKind" @bind-Value="_newKind" Label="Kind" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                           HelperText="@(_newKind == ProjectKind.Library ? "Shared types for other projects, packed into a .fslib" : "A format with packets and protocols")">
+                    <MudSelectItem Value="@ProjectKind.Project">Project</MudSelectItem>
+                    <MudSelectItem Value="@ProjectKind.Library">Library</MudSelectItem>
+                </MudSelect>
+                <MudTextField T="string" @bind-Value="_newName" Label="Name" Variant="Variant.Outlined" Margin="Margin.Dense"
+                              HelperText="@(_newKind == ProjectKind.Library ? "Default: the folder name; must be an identifier (geo, not my-geo)" : "Default: the folder name")" />
+                @if (_newKind == ProjectKind.Library)
+                {
+                    <MudTextField T="string" @bind-Value="_newVersion" Label="Version" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                                  HelperText="Needed to pack the library" />
+                }
+            </MudStack>
             <MudStack Row="true" Spacing="2">
-                <MudSelect T="string" @bind-Value="_newEndian" Label="Endian" Variant="Variant.Outlined" Margin="Margin.Dense">
+                <MudSelect T="string" @bind-Value="_newEndian" Label="Endian" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@Inherited("endian")" HelperText="@(Inherited("endian") ? InheritedHelp : null)">
                     <MudSelectItem Value="@("little")">little</MudSelectItem>
                     <MudSelectItem Value="@("big")">big</MudSelectItem>
                 </MudSelect>
                 <MudTextField T="string" @bind-Value="_newLength" Label="Length prefix" Variant="Variant.Outlined" Margin="Margin.Dense"
-                              HelperText="e.g. varuint32, u16, u32be" />
+                              Disabled="@Inherited("length")" HelperText="@(Inherited("length") ? InheritedHelp : "e.g. varuint32, u16, u32be")" />
             </MudStack>
+            @if (_newKind == ProjectKind.Library)
+            {
+                <MudText Typo="@Typo.body2" Class="mt-2">Take from the project using the library instead:</MudText>
+                <MudStack Row="true" Spacing="0" Wrap="@Wrap.Wrap">
+                    @foreach (var (setting, label) in InheritableDefaults)
+                    {
+                        <MudCheckBox T="bool" Value="@_newInherit.Contains(setting)" ValueChanged="@(on => SetInherit(setting, on))" Label="@label" Dense="true" />
+                    }
+                </MudStack>
+            }
             <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" OnClick="Create" Disabled="string.IsNullOrWhiteSpace(_newFolder)">
                 Create
             </MudButton>
@@ -105,6 +128,12 @@
     private string? _newName;
     private string _newEndian = "little";
     private string _newLength = "varuint32";
+    private ProjectKind _newKind = ProjectKind.Project;
+    private string _newVersion = "0.1.0";
+    private readonly HashSet<string> _newInherit = new(StringComparer.Ordinal);
+
+    private static readonly (string Setting, string Label)[] InheritableDefaults =
+        [("endian", "Endian"), ("length", "Length prefix"), ("string", "String encoding")];
 
     private string? StartFolder => Store.Options.Workspace ?? (_known.Count > 0 ? Path.GetDirectoryName(_known[0].File) : null);
 
@@ -153,8 +182,23 @@
     /// </summary>
     private string BaseFolder => Store.Options.Workspace ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-    private void Create() => Go(() => Store.Create(
-        Path.GetFullPath(_newFolder!.Trim().Trim('"'), BaseFolder), _newName, _newEndian, _newLength.Trim()));
+    private const string InheritedHelp = "Taken from the projects using the library";
+
+    /// <summary>Whether a default of the new library comes from the projects using it; its own value then only applies on its own.</summary>
+    private bool Inherited(string setting) => _newKind == ProjectKind.Library && _newInherit.Contains(setting);
+
+    private void SetInherit(string setting, bool on)
+    {
+        if (on) _newInherit.Add(setting);
+        else _newInherit.Remove(setting);
+    }
+
+    private void Create()
+    {
+        var library = _newKind == ProjectKind.Library;
+        Go(() => Store.Create(Path.GetFullPath(_newFolder!.Trim().Trim('"'), BaseFolder), _newName, _newEndian, _newLength.Trim(), _newKind,
+            library ? _newVersion : null, library ? InheritableDefaults.Select(d => d.Setting).Where(_newInherit.Contains).ToList() : null));
+    }
 
     private void Go(Func<ProjectEntry> action)
     {

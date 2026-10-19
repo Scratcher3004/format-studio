@@ -10,7 +10,10 @@
     <MudText Typo="Typo.body2">Start from:</MudText>
     @foreach (var (kind, template) in Templates)
     {
-        <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="() => _text = template">@kind</MudButton>
+        var disabled = kind == "packet" && IsLibrary;
+        <MudTooltip Text="Libraries can't have packets" Disabled="@(!disabled)">
+            <MudButton Variant="Variant.Outlined" Size="Size.Small" OnClick="() => _text = template" Disabled="@disabled">@kind</MudButton>
+        </MudTooltip>
     }
 </MudStack>
 <DefinitionEditor @bind-Text="_text" FileName="@FileName" Rows="20">
@@ -45,10 +48,15 @@
         ("bitfield", "bitfield: MyFlags\ntype: u8\nfields:\n  - name: enabled\n    bits: 1\n    type: bool\n  - mode: 3\n"),
     ];
 
-    private string _text = Templates[0].Template;
+    private string _text = "";
     private string? _folder;
     private string? _file;
     private DiagnosticBag _diagnostics = [];
+
+    private bool IsLibrary => Projects.Project?.Settings.Kind == ProjectKind.Library;
+
+    /// <summary>Starts from a packet, or from a struct in libraries.</summary>
+    protected override void OnInitialized() => _text = Templates.First(t => t.Kind == (IsLibrary ? "struct" : "packet")).Template;
 
     private string FileName => string.IsNullOrWhiteSpace(_file) ? "new.yaml" : _file.Trim();
 

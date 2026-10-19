@@ -263,7 +263,23 @@ public sealed class ProjectSettings
         }
     }
 
+    /// <summary>
+    /// The top-level keys of the project file that the settings page edits (<see cref="ReplaceGeneral"/>), in the
+    /// order <see cref="ToYaml"/> writes them. Imports, protocols and codegen targets have pages of their own.
+    /// </summary>
+    public static IReadOnlyList<string> GeneralKeys { get; } = ["name", "description", "version", "kind", "defaults", "dependencies", "libraries", "sources", "samples"];
+
     public string ToYaml()
+    {
+        var map = GeneralYaml();
+        if (Import.Count > 0) map.Add("import", Import);
+        map.AddIf("protocols", ProtocolsYaml(Protocols));
+        map.AddIf("codegen", CodegenYaml(Codegen));
+        return YamlEmitter.Write(map);
+    }
+
+    /// <summary>The entries of <see cref="GeneralKeys"/> that differ from their defaults.</summary>
+    private YMap GeneralYaml()
     {
         var map = new YMap { { "name", Name } };
         map.AddIf("description", Description);
@@ -301,10 +317,7 @@ public sealed class ProjectSettings
         if (Libraries is not ["libraries"]) map.Add("libraries", Libraries.Cast<object?>().ToList());
         map.Add("sources", Sources.Cast<object?>().ToList());
         map.AddIf("samples", Samples.Cast<object?>().ToList());
-        if (Import.Count > 0) map.Add("import", Import);
-        map.AddIf("protocols", ProtocolsYaml(Protocols));
-        map.AddIf("codegen", CodegenYaml(Codegen));
-        return YamlEmitter.Write(map);
+        return map;
     }
 
     private static List<object?> CodegenYaml(IEnumerable<CodegenTarget> targets) => targets.Select(target =>
@@ -332,31 +345,69 @@ public sealed class ProjectSettings
     public static string ReplaceProtocols(string text, IReadOnlyList<ProtocolDef> protocols) =>
         ReplaceSection(text, "protocols", ProtocolsYaml(protocols));
 
-    private static string ReplaceSection(string text, string key, List<object?> items)
+    /// <summary>
+    /// Replaces the <see cref="GeneralKeys"/> of a project file's text with those of <paramref name="settings"/>, like
+    /// <see cref="ReplaceCodegen"/>: keys at their defaults are removed, new keys go after the key before them. The other
+    /// sections and the comments around the sections stay; comments inside a replaced section don't.
+    /// </summary>
+    public static string ReplaceGeneral(string text, ProjectSettings settings)
+    {
+        var values = settings.GeneralYaml().ToDictionary(e => e.Key, e => e.Value);
+        for (var i = 0; i < GeneralKeys.Count; i++)
+            text = ReplaceSection(text, GeneralKeys[i], values.GetValueOrDefault(GeneralKeys[i]), GeneralKeys.Take(i).ToList());
+        return text;
+    }
+
+    private static string ReplaceSection(string text, string key, List<object?> items) =>
+        ReplaceSection(text, key, items.Count == 0 ? null : items, null);
+
+    /// <summary>
+    /// Replaces the top-level <paramref name="key"/> with <paramref name="value"/>, or removes it when the value is null. A
+    /// missing key goes after the last of the <paramref name="before"/> keys in the text (at the start when there is none
+    /// of them), or at the end without <paramref name="before"/>.
+    /// </summary>
+    private static string ReplaceSection(string text, string key, object? value, IReadOnlyList<string>? before)
     {
         var newline = text.Contains("\r\n") ? "\r\n" : "\n";
         var lines = text.Replace("\r\n", "\n").Split('\n').ToList();
-        var section = items.Count == 0
+        var section = value == null
             ? []
-            : YamlEmitter.Write(new YMap { { key, items } }).TrimEnd('\n').Split('\n');
-        var start = lines.FindIndex(line => System.Text.RegularExpressions.Regex.IsMatch(line, $@"^{key}\s*:"));
+            : YamlEmitter.Write(new YMap { { key, value } }).TrimEnd('\n').Split('\n');
+        var start = FindKey(lines, key);
         if (start < 0)
         {
             if (section.Length == 0) return text;
+            if (before != null)
+            {
+                var after = before.Select(k => FindKey(lines, k)).Where(i => i >= 0).Select(i => SectionEnd(lines, i)).DefaultIfEmpty(0).Max();
+                lines.InsertRange(after, section);
+                return string.Join(newline, lines);
+            }
+
             while (lines.Count > 0 && lines[^1].Trim().Length == 0) lines.RemoveAt(lines.Count - 1);
             lines.AddRange(section);
             lines.Add("");
             return string.Join(newline, lines);
         }
 
+        var end = SectionEnd(lines, start);
+        lines.RemoveRange(start, end - start);
+        lines.InsertRange(start, section);
+        return string.Join(newline, lines);
+    }
+
+    private static int FindKey(List<string> lines, string key) =>
+        lines.FindIndex(line => System.Text.RegularExpressions.Regex.IsMatch(line, $@"^{key}\s*:"));
+
+    /// <summary>The line after the section starting at <paramref name="start"/>, trailing empty lines excluded.</summary>
+    private static int SectionEnd(List<string> lines, int start)
+    {
         // The section goes on while lines are indented, empty or list items at the margin ("- name: ...").
         var end = start + 1;
         while (end < lines.Count && (lines[end].Length == 0 || lines[end][0] is ' ' or '\t' || lines[end].StartsWith('-') && !lines[end].StartsWith("---")))
             end++;
         while (end > start + 1 && lines[end - 1].Trim().Length == 0) end--;
-        lines.RemoveRange(start, end - start);
-        lines.InsertRange(start, section);
-        return string.Join(newline, lines);
+        return end;
     }
 }
 
@@ -877,6 +928,26 @@ public sealed class FormatProject
         }
         matcher.AddExclude("**/*" + ProjectSettings.Extension);
         return matcher.Match(relative).HasMatches;
+    }
+
+    /// <summary>
+    /// Writes the general settings (<see cref="ProjectSettings.GeneralKeys"/>: name, kind, defaults, dependencies, sources,
+    /// ...) of <paramref name="settings"/> to the project file and returns them as read back. The other sections stay as
+    /// they are (see <see cref="ProjectSettings.ReplaceGeneral"/>); <see cref="Settings"/> doesn't change, the project
+    /// has to be loaded again.
+    /// </summary>
+    public ProjectSettings SaveSettings(ProjectSettings settings)
+    {
+        var file = Sandbox.Check(FilePath ?? throw new FormatDefinitionException("The project has no file"));
+        if (string.IsNullOrWhiteSpace(settings.Name)) throw new FormatDefinitionException("The project needs a name");
+        if (settings.Sources.Count == 0) throw new FormatDefinitionException("The project needs at least one source pattern");
+        if (settings.Dependencies.FirstOrDefault(d => string.IsNullOrWhiteSpace(d.Library)) != null)
+            throw new FormatDefinitionException("Every dependency needs a library name");
+
+        var updated = ProjectSettings.ReplaceGeneral(File.ReadAllText(file), settings);
+        var parsed = ProjectSettings.Parse(updated, file);
+        File.WriteAllText(file, updated);
+        return parsed;
     }
 
     /// <summary>

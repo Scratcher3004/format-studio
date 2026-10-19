@@ -1,0 +1,357 @@
+@page "/p/{ProjectId}/settings"
+@using FormatStudio.Dsl
+@implements IDisposable
+@inherits ProjectComponent
+@inject ISnackbar Snackbar
+
+<PageTitle>Settings - Format Studio</PageTitle>
+
+<MudText Typo="@Typo.h5" Class="mb-2">Project settings</MudText>
+<MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true" Class="mb-3">
+    Saved to the project file. Imports, <MudLink Href="@Link("protocols")" Typo="@Typo.body2">protocols</MudLink> and
+    <MudLink Href="@Link("codegen")" Typo="@Typo.body2">code generation</MudLink> have pages of their own and stay as they are,
+    as do comments between the sections; comments inside the sections edited here are not kept.
+</MudAlert>
+
+@if (Projects.Project is { } project && _draft is { } draft)
+{
+    var library = draft.Kind == ProjectKind.Library;
+    <MudPaper Outlined="@true" Class="pa-3 mb-3">
+        <MudText Typo="@Typo.h6" Class="mb-2">General</MudText>
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudTextField T="string" Value="@draft.Name" ValueChanged="@(v => Change(() => draft.Name = (v ?? "").Trim()))" Label="Name"
+                              Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true"
+                              Error="@(NameError != null)" ErrorText="@NameError"
+                              HelperText="@(library ? "Qualifies its definitions (geo.Point); the file name stays" : "The file name stays")" />
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="ProjectKind" Value="@draft.Kind" ValueChanged="@(k => Change(() => draft.Kind = k))" Label="Kind"
+                           Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                           HelperText="@(library ? "Shared types for other projects, packed into a .fslib" : "A format with packets and protocols")">
+                    <MudSelectItem Value="@ProjectKind.Project">Project</MudSelectItem>
+                    <MudSelectItem Value="@ProjectKind.Library">Library</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudTextField T="string" Value="@draft.Version" ValueChanged="@(v => Change(() => draft.Version = Blank(v)))" Label="Version"
+                              Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" Placeholder="1.0.0"
+                              Error="@(library && draft.Version == null)" ErrorText="A library needs a version to be packed"
+                              HelperText="@(library ? "Needed to pack the library" : "Optional")" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField T="string" Value="@draft.Description" ValueChanged="@(v => Change(() => draft.Description = Blank(v)))" Label="Description"
+                              Variant="@Variant.Outlined" Margin="@Margin.Dense" Lines="2" Sizing="@InputSizing.Auto" />
+            </MudItem>
+        </MudGrid>
+        @if (library && (project.Packets.Any() || draft.Protocols.Count > 0))
+        {
+            <MudAlert Severity="@MudBlazor.Severity.Warning" Dense="@true" Class="mt-2">
+                Libraries can't have packets or protocols yet. This project has
+                @(project.Packets.Count() == 1 ? "1 packet" : $"{project.Packets.Count()} packets")@(draft.Protocols.Count > 0 ? $" and {draft.Protocols.Count} protocol(s)" : "");
+                validation reports them as errors until they are made structs or removed.
+            </MudAlert>
+        }
+    </MudPaper>
+
+    <MudPaper Outlined="@true" Class="pa-3 mb-3">
+        <MudText Typo="@Typo.h6" Class="mb-1">Defaults</MudText>
+        <MudText Typo="@Typo.body2" Class="mud-text-secondary mb-2">
+            Everything a type leaves open.
+            @if (library)
+            {
+                <span>A library's definitions keep these, whatever the project using it has, except the settings ticked "from the project using it".</span>
+            }
+        </MudText>
+        @if (library)
+        {
+            <MudSwitch T="bool" Value="@draft.Defaults.InheritAll" ValueChanged="@(v => Change(() => draft.Defaults.InheritAll = v))" Color="@Color.Primary"
+                       Label="Take every default from the project using the library (inherit: true)" Class="mb-2" />
+        }
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudSelect T="Endian" Value="@draft.Defaults.Endian" ValueChanged="@(v => Change(() => draft.Defaults.Endian = v))" Label="Endian"
+                           Variant="@Variant.Outlined" Margin="@Margin.Dense" Disabled="@Inherited("endian")" HelperText="@Help("endian", "Of numbers wider than a byte")">
+                    <MudSelectItem Value="@Endian.Little">little</MudSelectItem>
+                    <MudSelectItem Value="@Endian.Big">big</MudSelectItem>
+                </MudSelect>
+                @InheritBox("endian")
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudTextField T="string" Value="@_length" ValueChanged="@(v => Change(() => _length = (v ?? "").Trim()))" Label="Length prefix"
+                              Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" Disabled="@Inherited("length")"
+                              Error="@(LengthError != null)" ErrorText="@LengthError" HelperText="@Help("length", "Of strings, bytes, arrays and maps, e.g. varuint32, u16, u32be")" />
+                @InheritBox("length")
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="StringEncoding" Value="@draft.Defaults.String" ValueChanged="@(v => Change(() => draft.Defaults.String = v))" Label="String encoding"
+                           Variant="@Variant.Outlined" Margin="@Margin.Dense" Disabled="@Inherited("string")" HelperText="@Help("string", "Of strings that don't name one")">
+                    @foreach (var encoding in Enum.GetValues<StringEncoding>())
+                    {
+                        <MudSelectItem Value="@encoding">@TypeExpressions.EncodingName(encoding)</MudSelectItem>
+                    }
+                </MudSelect>
+                @InheritBox("string")
+            </MudItem>
+        </MudGrid>
+
+        @{ var natives = project.Natives.All.Where(n => n.Parameters.Any(p => p.Kind != FormatStudio.Natives.NativeParameterKind.Type)).OrderBy(n => n.Name, StringComparer.Ordinal).ToList(); }
+        @if (natives.Count > 0)
+        {
+            <MudText Typo="@Typo.subtitle2" Class="mt-3">Native types</MudText>
+            <MudText Typo="@Typo.body2" Class="mud-text-secondary mb-2">The arguments a reference leaves out, comma separated; empty for the type's own defaults.</MudText>
+            <MudGrid Spacing="2">
+                @foreach (var native in natives)
+                {
+                    var name = native.Name;
+                    <MudItem xs="12" md="4">
+                        <MudTextField T="string" Value="@NativeText(name)" ValueChanged="@(v => Change(() => SetNative(name, v)))" Label="@name"
+                                      Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" Disabled="@Inherited(name)" Class="mono"
+                                      Placeholder="@string.Join(", ", native.Parameters.Select(p => p.Default ?? p.Name))"
+                                      HelperText="@Help(name, string.Join(", ", native.Parameters.Select(p => p.Choices is { } choices ? $"{p.Name}: {string.Join("|", choices)}" : p.Name)))" />
+                        @InheritBox(name)
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    </MudPaper>
+
+    <MudPaper Outlined="@true" Class="pa-3 mb-3">
+        <MudStack Row="@true" AlignItems="@AlignItems.Center" Class="mb-1">
+            <MudText Typo="@Typo.h6">Dependencies</MudText>
+            <MudSpacer />
+            <MudButton Variant="@Variant.Outlined" Size="@Size.Small" StartIcon="@Icons.Material.Filled.Add"
+                       OnClick="@(() => Change(() => draft.Dependencies.Add(new LibraryDependency { Library = "" })))">Add</MudButton>
+        </MudStack>
+        <MudText Typo="@Typo.body2" Class="mud-text-secondary mb-2">
+            Libraries whose definitions the project uses, as <span class="mono">alias.Name</span> or by name alone when unambiguous.
+            See <span class="mono">docs/libraries.md</span>.
+        </MudText>
+        @foreach (var dependency in draft.Dependencies)
+        {
+            var current = dependency;
+            <MudStack Row="@true" AlignItems="@AlignItems.Start" Spacing="2" Class="mb-2">
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" md="3">
+                        <MudSelect T="string" Value="@current.Library" ValueChanged="@(v => Change(() => current.Library = v ?? ""))" Label="Library"
+                                   Variant="@Variant.Outlined" Margin="@Margin.Dense" Error="@(current.Library.Length == 0)" ErrorText="Pick a library">
+                            @foreach (var name in _available.Select(p => p.Name).Append(current.Library).Where(n => n.Length > 0).Distinct().Order(StringComparer.Ordinal))
+                            {
+                                <MudSelectItem Value="@name">@name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="2">
+                        <MudSelect T="string" Value="@(current.Version ?? "")" ValueChanged="@(v => Change(() => current.Version = Blank(v)))" Label="Version"
+                                   Variant="@Variant.Outlined" Margin="@Margin.Dense">
+                            <MudSelectItem Value="@("")">highest found</MudSelectItem>
+                            @foreach (var version in Versions(current))
+                            {
+                                <MudSelectItem Value="@version">@version</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="2">
+                        <MudTextField T="string" Value="@current.Alias" ValueChanged="@(v => Change(() => current.Alias = Blank(v)))" Label="As"
+                                      Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" Placeholder="@current.Library" Class="mono"
+                                      Error="@(AliasError(current) != null)" ErrorText="@AliasError(current)" />
+                    </MudItem>
+                    <MudItem xs="12" md="5">
+                        <MudStack Row="@true" Spacing="2" AlignItems="@AlignItems.Center">
+                            <MudCheckBox T="bool" Value="@current.SkipCodegen" ValueChanged="@(v => Change(() => current.SkipCodegen = v))" Dense="@true"
+                                         Label="Skip in codegen" title="Leave the library's types out of the generated code; their code comes from elsewhere" />
+                            <MudTextField T="string" Value="@current.Namespace" ValueChanged="@(v => Change(() => current.Namespace = Blank(v)))" Label="C# namespace"
+                                          Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" Class="mono" />
+                            <MudTextField T="string" Value="@current.Package" ValueChanged="@(v => Change(() => current.Package = Blank(v)))" Label="Java package"
+                                          Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" Class="mono" />
+                        </MudStack>
+                    </MudItem>
+                </MudGrid>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" title="Remove" OnClick="@(() => Change(() => draft.Dependencies.Remove(current)))" />
+            </MudStack>
+        }
+        @if (_available.Count == 0)
+        {
+            <MudText Typo="@Typo.body2" Class="mud-text-secondary">No library packages found in the library folders below.</MudText>
+        }
+        else
+        {
+            <MudText Typo="@Typo.body2" Class="mud-text-secondary">
+                Found: @string.Join(", ", _available.Select(p => p.ToString()))
+            </MudText>
+        }
+    </MudPaper>
+
+    <MudPaper Outlined="@true" Class="pa-3 mb-3">
+        <MudText Typo="@Typo.h6" Class="mb-2">Files</MudText>
+        <MudGrid Spacing="2">
+            <MudItem xs="12" md="4">
+                <MudTextField T="string" Value="@_sources" ValueChanged="@(v => Change(() => _sources = v ?? ""))" Label="Sources"
+                              Variant="@Variant.Outlined" Margin="@Margin.Dense" Lines="4" Sizing="@InputSizing.Auto" Immediate="@true" Class="mono"
+                              Error="@(Lines(_sources).Count == 0)" ErrorText="At least one pattern"
+                              HelperText="Globs of definition files, one per line; !pattern excludes. A type in a later glob replaces one of the same name." />
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudTextField T="string" Value="@_samples" ValueChanged="@(v => Change(() => _samples = v ?? ""))" Label="Samples"
+                              Variant="@Variant.Outlined" Margin="@Margin.Dense" Lines="4" Sizing="@InputSizing.Auto" Immediate="@true" Class="mono"
+                              HelperText="Globs of sample files, one per line" />
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudTextField T="string" Value="@_libraries" ValueChanged="@(v => Change(() => _libraries = v ?? ""))" Label="Library folders"
+                              Variant="@Variant.Outlined" Margin="@Margin.Dense" Lines="4" Sizing="@InputSizing.Auto" Immediate="@true" Class="mono"
+                              HelperText="Folders with .fslib packages, one per line, relative to the project; the built-in libraries come after them" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudStack Row="@true" Spacing="2" Class="mb-4">
+        <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="@(() => Save(project))"
+                   Disabled="@(!_dirty || HasErrors)">Save</MudButton>
+        <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Undo" OnClick="@(() => Load(project))" Disabled="@(!_dirty)">Discard changes</MudButton>
+    </MudStack>
+}
+
+@code {
+    private const string InheritedHelp = "Only used when the library is checked on its own";
+
+    /// <summary>A copy of the project's settings, edited in place; lists are edited as text below.</summary>
+    private ProjectSettings? _draft;
+    private string _length = "";
+    private string _sources = "";
+    private string _samples = "";
+    private string _libraries = "";
+    private IReadOnlyList<LibraryPackage> _available = [];
+    private bool _dirty;
+    private int _version = -1;
+
+    protected override void OnInitialized() => Projects.Changed += OnChanged;
+
+    protected override void OnParametersSet()
+    {
+        if (Projects.Project is { } project && _version != Projects.Version && !_dirty) Load(project);
+    }
+
+    /// <summary>Takes over a reload of the project (e.g. after saving), unless there are unsaved changes.</summary>
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        if (Projects.Project is { } project && !_dirty) Load(project);
+        StateHasChanged();
+    });
+
+    public void Dispose() => Projects.Changed -= OnChanged;
+
+    private void Load(FormatProject project)
+    {
+        _draft = ProjectSettings.Parse(project.Settings.ToYaml(), project.FilePath ?? "project" + ProjectSettings.Extension);
+        _length = _draft.Defaults.Length.ToString();
+        _sources = string.Join("\n", _draft.Sources);
+        _samples = string.Join("\n", _draft.Samples);
+        _libraries = string.Join("\n", _draft.Libraries);
+        try
+        {
+            _available = LibraryCatalog.For(project).All()
+                .DistinctBy(p => (p.Name, p.Version))
+                .OrderBy(p => p.Name, StringComparer.Ordinal).ThenBy(p => p.Version, Comparer<string?>.Create(LibraryPackage.CompareVersions))
+                .ToList();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatDefinitionException)
+        {
+            _available = [];
+        }
+
+        _dirty = false;
+        _version = Projects.Version;
+    }
+
+    private void Change(Action change)
+    {
+        change();
+        _dirty = true;
+    }
+
+    private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    private static List<string> Lines(string text) =>
+        text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+
+    private bool IsLibrary => _draft?.Kind == ProjectKind.Library;
+
+    private bool Inherited(string setting) => IsLibrary && _draft!.Defaults.Inherits(setting);
+
+    private string? Help(string setting, string? otherwise) => Inherited(setting) ? InheritedHelp : otherwise;
+
+    /// <summary>The "from the project using it" check box under a default, for libraries.</summary>
+    private RenderFragment InheritBox(string setting) => __builder =>
+    {
+        if (!IsLibrary) return;
+        <MudCheckBox T="bool" Value="@_draft!.Defaults.Inherits(setting)" ValueChanged="@(on => Change(() => SetInherit(setting, on)))"
+                     Disabled="@_draft.Defaults.InheritAll" Dense="@true" Size="@Size.Small" Label="From the project using it" />
+    };
+
+    private void SetInherit(string setting, bool on)
+    {
+        if (on) _draft!.Defaults.Inherit.Add(setting);
+        else _draft!.Defaults.Inherit.Remove(setting);
+    }
+
+    private string NativeText(string name) => _draft!.Defaults.Natives.TryGetValue(name, out var args) ? string.Join(", ", args) : "";
+
+    private void SetNative(string name, string? text)
+    {
+        var args = (text ?? "").Split(',', StringSplitOptions.TrimEntries).ToList();
+        if (args is [""]) _draft!.Defaults.Natives.Remove(name);
+        else _draft!.Defaults.Natives[name] = args;
+    }
+
+    private IEnumerable<string> Versions(LibraryDependency dependency) =>
+        _available.Where(p => p.Name == dependency.Library && p.Version != null).Select(p => p.Version!)
+            .Append(dependency.Version).OfType<string>().Distinct().Order(Comparer<string?>.Create(LibraryPackage.CompareVersions)).Reverse()!;
+
+    private string? NameError =>
+        string.IsNullOrWhiteSpace(_draft?.Name) ? "A name is needed"
+        : IsLibrary && !TypeExpressions.IsIdentifier(_draft.Name) ? "A library's name must be an identifier ([A-Za-z_][A-Za-z0-9_]*)"
+        : null;
+
+    private string? LengthError =>
+        Primitives.TryParse(_length, out var prefix) && Primitives.IsInteger(prefix.Kind) ? null : "An integer type, e.g. varuint32 or u16";
+
+    private string? AliasError(LibraryDependency dependency)
+    {
+        var name = dependency.AliasOrName;
+        if (name.Length == 0) return null;
+        if (!TypeExpressions.IsIdentifier(name)) return "Not an identifier; give it a name here";
+        return _draft!.Dependencies.Count(d => d.AliasOrName == name) > 1 ? "Another dependency has this name" : null;
+    }
+
+    private bool HasErrors =>
+        NameError != null || LengthError != null || Lines(_sources).Count == 0
+        || _draft!.Dependencies.Any(d => d.Library.Length == 0 || AliasError(d) != null);
+
+    private void Save(FormatProject project)
+    {
+        var draft = _draft!;
+        Primitives.TryParse(_length, out var length);
+        draft.Defaults.Length = length;
+        draft.Sources = Lines(_sources);
+        draft.Samples = Lines(_samples);
+        draft.Libraries = Lines(_libraries);
+        if (draft.Kind != ProjectKind.Library)
+        {
+            // Only libraries inherit; the validator would warn about a leftover list.
+            draft.Defaults.Inherit.Clear();
+            draft.Defaults.InheritAll = false;
+        }
+
+        try
+        {
+            _dirty = false;
+            Projects.SaveSettings(draft);
+            Snackbar.Add("Saved the settings to the project file.", MudBlazor.Severity.Success);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
+        {
+            _dirty = true;
+            Snackbar.Add($"Not saved: {e.Message}", MudBlazor.Severity.Error);
+        }
+    }
+}

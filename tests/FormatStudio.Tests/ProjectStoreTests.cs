@@ -22,6 +22,34 @@ public class ProjectStoreTests
     }
 
     [Fact]
+    public void TemplateCreatesALibrary()
+    {
+        var directory = Path.Combine(TestPaths.NewTempDirectory(), "geo");
+        ProjectTemplate.Create(directory, endian: "big", kind: ProjectKind.Library, version: "1.2.0", inherit: ["endian", "length"]);
+
+        var project = FormatProject.Load(directory);
+        Assert.Equal(ProjectKind.Library, project.Settings.Kind);
+        Assert.Equal("1.2.0", project.Settings.Version);
+        Assert.Equal(["endian", "length"], project.Settings.Defaults.Inherit.Order());
+        Assert.True(project.Settings.Defaults.Inherits("endian"));
+        Assert.False(project.Settings.Defaults.Inherits("string"));
+        Assert.False(Directory.Exists(Path.Combine(directory, "packets")));
+        FormatStudio.Validation.Validator.Validate(project);
+        Assert.DoesNotContain(project.Diagnostics, d => d.Severity >= Severity.Warning);
+    }
+
+    [Fact]
+    public void TemplateRejectsInvalidLibraries()
+    {
+        var root = TestPaths.NewTempDirectory();
+        Assert.Throws<FormatDefinitionException>(() => ProjectTemplate.Create(Path.Combine(root, "my-geo"), kind: ProjectKind.Library));
+        Assert.Throws<FormatDefinitionException>(() => ProjectTemplate.Create(Path.Combine(root, "a"), inherit: ["endian"]));
+        Assert.Throws<FormatDefinitionException>(() => ProjectTemplate.Create(Path.Combine(root, "b"), kind: ProjectKind.Library, inherit: ["not-a-name"]));
+        Assert.Throws<FormatDefinitionException>(() => ProjectTemplate.Create(Path.Combine(root, "c"), kind: ProjectKind.Library, version: "1\"\nkind: project"));
+        Assert.Empty(Directory.GetFileSystemEntries(root));
+    }
+
+    [Fact]
     public void TemplateRejectsInvalidSettings()
     {
         var directory = TestPaths.NewTempDirectory();

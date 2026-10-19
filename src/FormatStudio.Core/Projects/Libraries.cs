@@ -169,21 +169,37 @@ public sealed class LibraryCatalog(IReadOnlyList<string> folders, FileSandbox sa
     public IReadOnlyList<string> Folders => folders;
 
     /// <summary>Every package of the given library: those in the folders first, then the built-in ones.</summary>
-    public IEnumerable<LibraryPackage> Candidates(string name)
+    public IEnumerable<LibraryPackage> Candidates(string name) => Packages($"{name}-*{LibraryPackage.Extension}").Where(p => p.Name == name);
+
+    /// <summary>
+    /// Every package in the folders, then the built-in ones, e.g. to pick a dependency from. Packages that can't be read
+    /// are left out.
+    /// </summary>
+    public IEnumerable<LibraryPackage> All() => Packages("*" + LibraryPackage.Extension, skipUnreadable: true);
+
+    private IEnumerable<LibraryPackage> Packages(string pattern, bool skipUnreadable = false)
     {
         foreach (var folder in folders)
         {
             if (!sandbox.Contains(folder) || !Directory.Exists(folder)) continue;
-            foreach (var file in sandbox.EnumerateFiles(folder, $"{name}-*{LibraryPackage.Extension}").Order(StringComparer.Ordinal))
+            foreach (var file in sandbox.EnumerateFiles(folder, pattern).Order(StringComparer.Ordinal))
             {
-                using var stream = File.OpenRead(sandbox.Check(file));
-                var package = LibraryPackage.Read(stream, Path.GetFileName(file));
-                if (package.Name == name) yield return package;
+                LibraryPackage package;
+                try
+                {
+                    using var stream = File.OpenRead(sandbox.Check(file));
+                    package = LibraryPackage.Read(stream, Path.GetFileName(file));
+                }
+                catch (Exception e) when (skipUnreadable && e is FormatDefinitionException or IOException or InvalidDataException or UnauthorizedAccessException)
+                {
+                    continue;
+                }
+
+                yield return package;
             }
         }
 
-        foreach (var package in builtins ?? Builtins)
-            if (package.Name == name) yield return package;
+        foreach (var package in builtins ?? Builtins) yield return package;
     }
 
     /// <summary>The package with the exact <paramref name="version"/>, or the highest version when it is null.</summary>

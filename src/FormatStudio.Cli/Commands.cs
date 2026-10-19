@@ -51,9 +51,14 @@ internal static class Commands
 
     public static int New(string[] args)
     {
-        var line = CommandLine.Parse(args, ["name", "endian", "length"], NoFlags);
+        var line = CommandLine.Parse(args, ["name", "endian", "length", "version", "inherit"], ["library"]);
         if (line.Positional.Count != 1) throw new UsageException("Usage: format-studio new <folder>");
-        var file = ProjectTemplate.Create(line.Positional[0], line.Single("name"), line.Single("endian") ?? "little", line.Single("length") ?? "varuint32");
+        var library = line.Has("library");
+        if (!library && (line.Single("version") != null || line.All("inherit").Count > 0))
+            throw new UsageException("--version and --inherit are for libraries (--library).");
+        var inherit = line.All("inherit").SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Distinct().ToList();
+        var file = ProjectTemplate.Create(line.Positional[0], line.Single("name"), line.Single("endian") ?? "little", line.Single("length") ?? "varuint32",
+            library ? ProjectKind.Library : ProjectKind.Project, line.Single("version"), inherit);
         Console.WriteLine($"Created {file}");
         return 0;
     }

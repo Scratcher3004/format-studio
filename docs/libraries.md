@@ -6,7 +6,9 @@ text components, written once and packed into a versioned `.fslib` package.
 ## Library projects
 
 A library is an ordinary project with `kind: library`. Its name must be an identifier (it qualifies its definitions,
-`geo.Point`), it needs a `version` to be packed, and it can't have packets or protocols (yet).
+`geo.Point`), it needs a `version` to be packed, and it can't have packets or protocols (yet). `format-studio new <folder>
+--library [--version <version>] [--inherit endian,length,string]` and the web UI's New form (kind Library) create one;
+the web UI's Settings page turns a project into a library and back, and edits its version, `inherit` and dependencies.
 
 ```yaml
 name: geo

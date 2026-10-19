@@ -45,7 +45,8 @@
                     The YAML has comments. Changes in the builder rewrite it without them; edit as YAML to keep them.
                 </MudAlert>
             }
-            <DefinitionBuilder Definition="_draft" TypeNames="TypeNames" Find="Find" Natives="@(Projects.Project?.Natives ?? FormatStudio.Natives.NativeTypes.BuiltIn)" Changed="BuilderChanged" />
+            <DefinitionBuilder Definition="_draft" TypeNames="TypeNames" Find="Find" Natives="@(Projects.Project?.Natives ?? FormatStudio.Natives.NativeTypes.BuiltIn)"
+                               PacketSwitch="@PacketSwitch" Changed="BuilderChanged" />
         }
         else
         {
@@ -131,6 +132,12 @@
     [Parameter] public string? OriginalName { get; set; }
     /// <summary>Buttons shown under the editor.</summary>
     [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>New definitions get their kind from their template; libraries can't have packets.</summary>
+    private PacketSwitchMode PacketSwitch =>
+        OriginalName == null ? PacketSwitchMode.Hidden
+        : Projects.Project?.Settings.Kind == ProjectKind.Library ? PacketSwitchMode.Disabled
+        : PacketSwitchMode.Shown;
 
     private readonly string _uploadId = "upload-" + Guid.NewGuid().ToString("n");
     private bool _builder = true;

@@ -28,6 +28,7 @@
 
     <MudExpansionPanels MultiExpansion="true">
         <MudExpansionPanel Text="Settings" Expanded="false">
+            <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Settings" Href="@Link("settings")" Class="mb-2">Edit settings</MudButton>
             <pre class="code-block">@project.Settings.ToYaml()</pre>
         </MudExpansionPanel>
         <MudExpansionPanel Text="@($"Diagnostics ({project.Diagnostics.Count(d => d.Severity != Severity.Info)})")" Expanded="true">

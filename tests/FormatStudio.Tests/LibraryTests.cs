@@ -371,4 +371,16 @@ public class LibraryTests
         Assert.Equal(["Placed"], java.Files.Select(f => f.TypeName).OfType<string>());
         Assert.Contains("hand.geo.Point.read(", java.FileOf("Placed")!.Content);
     }
+
+    [Fact]
+    public void CatalogListsEveryPackage()
+    {
+        var libraries = TestPaths.NewTempDirectory();
+        Pack(libraries, Geo("1.0.0"));
+        Pack(libraries, Geo("1.2.0"));
+        File.WriteAllText(Path.Combine(libraries, "broken-1.0.0.fslib"), "not a zip");
+
+        var all = new LibraryCatalog([libraries], FileSandbox.Unrestricted, builtins: []).All().Select(p => p.ToString()).ToList();
+        Assert.Equal(["geo 1.0.0", "geo 1.2.0"], all);
+    }
 }

@@ -6,7 +6,14 @@
                   Error="@(!TypeExpressions.IsIdentifier(Definition.Name))" ErrorText="A name is [A-Za-z_][A-Za-z0-9_]*" Style="min-width: 200px" />
     @if (Definition is StructDef header)
     {
-        <MudSwitch T="bool" Value="header.IsPacket" ValueChanged="p => Set(() => header.IsPacket = p)" Label="Packet" Color="Color.Primary" Class="mt-1" />
+        @if (PacketSwitch != PacketSwitchMode.Hidden)
+        {
+            @* A packet in a library can still be turned into a struct, the fix for the validator's error. *@
+            <MudTooltip Text="@(PacketSwitch == PacketSwitchMode.Disabled ? "Libraries can't have packets" : "")" Disabled="@(PacketSwitch != PacketSwitchMode.Disabled)">
+                <MudSwitch T="bool" Value="header.IsPacket" ValueChanged="p => Set(() => header.IsPacket = p)" Label="Packet" Color="Color.Primary" Class="mt-1"
+                           Disabled="@(PacketSwitch == PacketSwitchMode.Disabled && !header.IsPacket)" />
+            </MudTooltip>
+        }
         @if (header.IsPacket)
         {
             <IntegerField Value="header.Id" ValueChanged="v => Set(() => header.Id = v)" Base="header.IdBase" BaseChanged="b => Set(() => header.IdBase = b)"
@@ -164,6 +171,8 @@
     [Parameter] public IReadOnlyList<string> TypeNames { get; set; } = [];
     [Parameter] public Func<string, TypeDef?>? Find { get; set; }
     [Parameter] public FormatStudio.Natives.NativeTypes Natives { get; set; } = FormatStudio.Natives.NativeTypes.BuiltIn;
+    /// <summary>Whether a struct can be made a packet here.</summary>
+    [Parameter] public PacketSwitchMode PacketSwitch { get; set; } = PacketSwitchMode.Shown;
     /// <summary>Raised after every change of the definition (which is edited in place).</summary>
     [Parameter] public EventCallback Changed { get; set; }
 

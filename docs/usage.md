@@ -8,7 +8,7 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 
 | Command | |
 |---|---|
-| `new <folder>` | Create an empty project |
+| `new <folder> [--library [--version 1.0.0] [--inherit endian,length]]` | Create an empty project or library |
 | `validate` | Check references, expressions, tags, ids |
 | `list [--kind packet] [--filter text] [--libraries]` | List definitions (`--libraries`: also those of the libraries) |
 | `pack [--output <folder>]` | Pack a library project into `<name>-<version>.fslib` (see [libraries](libraries.md)) |
@@ -50,7 +50,14 @@ long as the project is in the recent list or the workspace. The project name in 
 Type browser with filter; per type: structure table, simulator (JSON ⇄ hex with an annotated hex view and value
 tree, random values, round trip), editor (imported files are saved as overrides), generated code for any target or
 language, references. Also pages for identify, round-trip fuzzing over all types, code generation (add, edit and
-remove targets, preview and write), imports (dry run and report) and new definitions.
+remove targets, preview and write), imports (dry run and report), new definitions and the project's settings.
+
+The start page's New form creates projects and libraries (kind, version and the defaults a library takes from the
+projects using it). **Settings** edits the project file: name, kind, version, description, defaults (those a library
+inherits are greyed out), dependencies (picked from the packages in the library folders), sources, samples and
+library folders. Only those sections are rewritten; imports, protocols and codegen targets and the comments between
+sections stay. In a library, new definitions start from a struct and packets can't be picked; the Packet switch
+appears only when editing a struct, and is greyed out in libraries.
 
 The editor of new and existing definitions has two views of the same YAML, switched with Builder / YAML:
 

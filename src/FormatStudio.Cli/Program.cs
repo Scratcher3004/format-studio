@@ -12,7 +12,9 @@ const string usage = """
 
     Usage:
       format-studio new <folder> [--name <name>] [--endian little|big] [--length <prefix>]
-          Creates an empty project.
+                  [--library [--version <version>] [--inherit endian,length,string]]
+          Creates an empty project, or a library (version default 0.1.0) whose --inherit defaults come from the
+          projects using it.
       format-studio import <importer> [<importer options>] [--dry-run]
           Runs an importer with the project's settings (import.<importer>). Only files with the importer's
           generated header are replaced. Importers:

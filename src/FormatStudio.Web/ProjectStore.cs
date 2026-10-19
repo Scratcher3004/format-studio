@@ -119,8 +119,9 @@ public sealed class ProjectStore
     }
 
     /// <summary>Creates a project from <see cref="ProjectTemplate"/> and opens it.</summary>
-    public ProjectEntry Create(string directory, string? name, string endian, string length) =>
-        Open(ProjectTemplate.Create(Sandbox.Check(directory), name, endian, length));
+    public ProjectEntry Create(string directory, string? name, string endian, string length,
+        ProjectKind kind = ProjectKind.Project, string? version = null, IReadOnlyCollection<string>? inherit = null) =>
+        Open(ProjectTemplate.Create(Sandbox.Check(directory), name, endian, length, kind, version, inherit));
 
     /// <summary>Removes a project from the recent list (the files stay).</summary>
     public void Forget(string id)
