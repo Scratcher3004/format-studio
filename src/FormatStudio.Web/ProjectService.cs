@@ -5,6 +5,7 @@ using FormatStudio.Model;
 using FormatStudio.Natives;
 using FormatStudio.Projects;
 using FormatStudio.Simulation;
+using FormatStudio.Testing;
 using FormatStudio.Validation;
 
 namespace FormatStudio.Web;
@@ -109,41 +110,8 @@ public sealed class ProjectService
         Reload();
     }
 
-    /// <summary>
-    /// Checks a sample: its value must encode to its hex (when both are given), and its bytes must round trip.
-    /// Returns "ok" or what went wrong.
-    /// </summary>
-    public string CheckSample(SampleDef sample)
-    {
-        try
-        {
-            var codec = new Codec(Project!);
-            var type = Codec.ParseType(sample.Type);
-            byte[] bytes;
-            if (sample.Value != null)
-            {
-                var encoded = codec.Encode(type, sample.Value);
-                if (!encoded.Success) return "encode failed: " + encoded.Diagnostics.First(d => d.Severity == Severity.Error).Message;
-                if (sample.Hex != null && !Hex.Parse(sample.Hex).AsSpan().SequenceEqual(encoded.Bytes)) return $"differs: {Hex.Format(encoded.Bytes)}";
-                bytes = encoded.Bytes;
-            }
-            else if (sample.Hex != null)
-            {
-                bytes = Hex.Parse(sample.Hex);
-            }
-            else
-            {
-                return "no value or hex";
-            }
-
-            var roundTrip = Simulator.RoundTripBytes(codec, type, bytes);
-            return roundTrip.Success ? "ok" : "round trip failed: " + roundTrip.Diagnostics.First(d => d.Severity == Severity.Error).Message;
-        }
-        catch (Exception e) when (e is System.FormatException or FormatDefinitionException or Expressions.ExprException)
-        {
-            return e.Message;
-        }
-    }
+    /// <summary>Runs a sample against the simulator (see <see cref="TestRunner"/>).</summary>
+    public CaseResult RunSample(SampleDef sample) => TestRunner.Run(Project!, sample);
 
     /// <summary>
     /// Where an override of an imported definition goes: the folder of the last source pattern

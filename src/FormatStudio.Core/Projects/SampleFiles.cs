@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using FormatStudio.Dsl;
 using FormatStudio.Model;
+using YamlDotNet.RepresentationModel;
 
 namespace FormatStudio.Projects;
 
@@ -19,16 +20,69 @@ public static class SampleFiles
         _ => [],
     };
 
+    /// <summary>The keys a sample entry may have.</summary>
+    public static IReadOnlyList<string> Keys { get; } = ["sample", "name", "type", "value", "hex"];
+
     public static string? NameOf(JsonObject entry) => entry["sample"]?.ToString() ?? entry["name"]?.ToString();
 
-    public static SampleDef Read(JsonObject entry, string defaultName, string file, int index) => new()
+    /// <summary>
+    /// The samples of a sample file, each with the line it starts on. Entries that aren't samples are reported to
+    /// <paramref name="diagnostics"/> and skipped, so that one broken entry doesn't hide the others.
+    /// </summary>
+    /// <param name="file">The file as shown in diagnostics, relative to the project.</param>
+    public static IReadOnlyList<SampleDef> Load(string text, string file, DiagnosticBag diagnostics)
+    {
+        var stream = new YamlStream();
+        stream.Load(new StringReader(text));
+        if (stream.Documents.Count == 0) return [];
+
+        var root = stream.Documents[0].RootNode;
+        IReadOnlyList<YamlNode> entries = root switch
+        {
+            YamlSequenceNode sequence => sequence.Children.ToList(),
+            YamlMappingNode mapping when mapping.Children.TryGetValue(new YamlScalarNode("samples"), out var list) && list is YamlSequenceNode sequence
+                => sequence.Children.ToList(),
+            YamlMappingNode mapping => [mapping],
+            _ => [],
+        };
+
+        var samples = new List<SampleDef>();
+        var defaultName = Path.GetFileNameWithoutExtension(file);
+        // Indices count mappings only, as Entries does, since edits address samples by index.
+        var index = 0;
+        foreach (var node in entries)
+        {
+            var source = new SourceLocation(file, (int)node.Start.Line, (int)node.Start.Column);
+            if (node is not YamlMappingNode || YamlValues.ToJson(node) is not JsonObject entry)
+            {
+                diagnostics.Error("A sample must be a mapping", source);
+                continue;
+            }
+
+            try
+            {
+                samples.Add(Read(entry, defaultName, source, index));
+            }
+            catch (FormatDefinitionException e)
+            {
+                diagnostics.Error(e.Message, source);
+            }
+
+            index++;
+        }
+
+        return samples;
+    }
+
+    public static SampleDef Read(JsonObject entry, string defaultName, SourceLocation source, int index) => new()
     {
         Name = NameOf(entry) ?? defaultName,
-        Type = entry["type"]?.ToString() ?? throw new FormatDefinitionException("A sample needs a 'type'"),
+        Type = entry["type"]?.ToString() ?? throw new FormatDefinitionException("A sample needs a 'type'", source),
         Value = entry["value"]?.DeepClone(),
         Hex = entry["hex"]?.ToString(),
-        Source = new SourceLocation(file),
+        Source = source,
         Index = index,
+        UnknownKeys = entry.Select(pair => pair.Key).Where(key => !Keys.Contains(key)).ToList(),
     };
 
     /// <summary>

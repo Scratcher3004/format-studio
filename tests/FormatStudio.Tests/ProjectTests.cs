@@ -2,6 +2,7 @@ using FormatStudio.Dsl;
 using FormatStudio.Model;
 using FormatStudio.Projects;
 using FormatStudio.Simulation;
+using FormatStudio.Testing;
 
 namespace FormatStudio.Tests;
 
@@ -23,17 +24,9 @@ public class ProjectTests
     public void SamplesEncodeAsExpected(string path)
     {
         var project = FormatProject.Load(path);
-        var codec = new Codec(project);
         Assert.NotEmpty(project.Samples);
-        foreach (var sample in project.Samples)
-        {
-            var type = Codec.ParseType(sample.Type);
-            var encoded = codec.Encode(type, sample.Value);
-            Assert.True(encoded.Success, $"{sample.Name}: {string.Join("\n", encoded.Diagnostics)}");
-            if (sample.Hex != null) Assert.Equal(Hex.Format(Hex.Parse(sample.Hex)), Hex.Format(encoded.Bytes));
-            var roundTrip = Simulator.RoundTripBytes(codec, type, encoded.Bytes);
-            Assert.True(roundTrip.Success, $"{sample.Name}: {string.Join("\n", roundTrip.Diagnostics)}");
-        }
+        foreach (var result in TestRunner.Run(project))
+            Assert.True(result.Passed, $"{result.Sample.Name}: {string.Join("\n", result.Failures.Select(f => f.Message))}");
     }
 
     [Theory]

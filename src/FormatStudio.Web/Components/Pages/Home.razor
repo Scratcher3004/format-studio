@@ -55,7 +55,7 @@
                             <td><MudLink Href="@Link($"sample/{index}")">@sample.Name</MudLink></td>
                             <td><MudLink Href="@Link($"type/{sample.Type}")">@sample.Type</MudLink></td>
                             <td class="mono" title="@sample.Hex">@Truncate(sample.Hex)</td>
-                            <td title="@_sampleResults.GetValueOrDefault(sample)">@Truncate(_sampleResults.GetValueOrDefault(sample))</td>
+                            <td title="@_sampleResults.GetValueOrDefault(sample)?.Summary">@Truncate(_sampleResults.GetValueOrDefault(sample)?.Summary)</td>
                             <td class="row-buttons">
                                 <MudTooltip Text="View and debug">
                                     <MudIconButton Icon="@Icons.Material.Filled.BugReport" Size="@Size.Small" Href="@Link($"sample/{index}")" />
@@ -74,7 +74,7 @@
 
 @code {
     private bool _showInfo;
-    private readonly Dictionary<SampleDef, string> _sampleResults = [];
+    private readonly Dictionary<SampleDef, CaseResult> _sampleResults = [];
 
     /// <summary>The page a diagnostic is fixed on, as a link inside this project.</summary>
     private DiagnosticLink? FixLink(FormatProject project, Diagnostic diagnostic) =>
@@ -98,7 +98,7 @@
     private void RunSamples(FormatProject project)
     {
         _sampleResults.Clear();
-        foreach (var sample in project.Samples) _sampleResults[sample] = Projects.CheckSample(sample);
+        foreach (var result in TestRunner.Run(project)) _sampleResults[result.Sample] = result;
     }
 
     private async Task Delete(SampleDef sample)

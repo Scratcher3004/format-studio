@@ -6,6 +6,7 @@ using FormatStudio.Model;
 using FormatStudio.Natives;
 using FormatStudio.Projects;
 using FormatStudio.Simulation;
+using FormatStudio.Testing;
 
 namespace FormatStudio.Cli;
 
@@ -387,42 +388,23 @@ internal static class Commands
     {
         var line = CommandLine.Parse(args, ["project"], NoFlags);
         var project = LoadProject(line);
-        var codec = new Codec(project);
-        var failures = 0;
-        foreach (var sample in project.Samples)
+        var results = TestRunner.Run(project);
+        foreach (var result in results)
         {
-            var type = Codec.ParseType(sample.Type);
-            var problems = new List<string>();
-            byte[]? bytes = null;
-            if (sample.Value != null)
-            {
-                var encoded = codec.Encode(type, sample.Value);
-                problems.AddRange(encoded.Diagnostics.Where(d => d.Severity == Severity.Error).Select(d => d.ToString()));
-                bytes = encoded.Success ? encoded.Bytes : null;
-                if (bytes != null && sample.Hex != null && !Hex.Parse(sample.Hex).AsSpan().SequenceEqual(bytes))
-                    problems.Add($"encodes to {Hex.Format(bytes)}, expected {Hex.Format(Hex.Parse(sample.Hex))}");
-            }
-
-            bytes ??= sample.Hex != null ? Hex.Parse(sample.Hex) : null;
-            if (bytes != null)
-            {
-                var roundTrip = Simulator.RoundTripBytes(codec, type, bytes);
-                problems.AddRange(roundTrip.Diagnostics.Where(d => d.Severity == Severity.Error).Select(d => d.ToString()));
-            }
-
-            if (problems.Count == 0)
+            var sample = result.Sample;
+            if (result.Passed)
             {
                 Console.WriteLine($"ok      {sample.Name} ({sample.Type})");
                 continue;
             }
 
-            failures++;
             Console.WriteLine($"FAILED  {sample.Name} ({sample.Type}) in {sample.Source}");
-            foreach (var problem in problems.Distinct()) Console.WriteLine($"        {problem}");
+            foreach (var problem in result.Failures.Select(f => f.Diagnostic?.ToString() ?? f.Message).Distinct())
+                Console.WriteLine($"        {problem}");
         }
 
-        Console.WriteLine($"{project.Samples.Count - failures} of {project.Samples.Count} samples passed.");
-        return failures == 0 ? 0 : 1;
+        Console.WriteLine($"{results.Count(r => r.Passed)} of {results.Count} samples passed.");
+        return results.All(r => r.Passed) ? 0 : 1;
     }
 
     // ------------------------------------------------------------------ codegen

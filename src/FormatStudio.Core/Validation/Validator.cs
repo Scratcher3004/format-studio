@@ -3,6 +3,7 @@ using FormatStudio.Expressions;
 using FormatStudio.Model;
 using FormatStudio.Natives;
 using FormatStudio.Projects;
+using FormatStudio.Simulation;
 
 namespace FormatStudio.Validation;
 
@@ -30,6 +31,7 @@ public sealed class Validator
         validator.CheckAliasCycles();
         validator.CheckNativeDefaults();
         validator.CheckLibrarySettings();
+        validator.CheckSamples();
     }
 
     /// <summary>Validates one definition against the project, e.g. while editing.</summary>
@@ -83,6 +85,47 @@ public sealed class Validator
                     _diagnostics.Error($"Bitfield {bitfield.Name}: duplicate member '{duplicate.Key}'", bitfield.Source);
                 break;
         }
+    }
+
+    /// <summary>Problems that would make a sample fail whatever the definitions: its type, its hex, missing data, unknown keys.</summary>
+    private void CheckSamples()
+    {
+        foreach (var sample in _project.Samples)
+        {
+            var source = sample.Source;
+            foreach (var key in sample.UnknownKeys)
+                _diagnostics.Warning($"Sample {sample.Name}: unknown key '{key}' ({string.Join(", ", SampleFiles.Keys)})", source);
+            if (sample.Value == null && sample.Hex == null)
+                _diagnostics.Error($"Sample {sample.Name} needs a 'value' or a 'hex'", source);
+
+            if (sample.Hex != null)
+            {
+                try
+                {
+                    Hex.Parse(sample.Hex);
+                }
+                catch (System.FormatException e)
+                {
+                    _diagnostics.Error($"Sample {sample.Name}: invalid hex: {e.Message}", source);
+                }
+            }
+
+            TypeRef type;
+            try
+            {
+                type = _project.Normalize(TypeExpressions.Parse(sample.Type));
+            }
+            catch (System.FormatException e)
+            {
+                _diagnostics.Error($"Sample {sample.Name}: {e.Message}", source);
+                continue;
+            }
+
+            CheckType(type, source, sample.Name, null);
+        }
+
+        foreach (var duplicate in _project.Samples.GroupBy(s => (s.Source?.File, s.Name)).Where(g => g.Count() > 1))
+            _diagnostics.Warning($"Several samples are named {duplicate.Key.Name}", duplicate.Skip(1).First().Source);
     }
 
     private void CheckStruct(StructDef structDef)

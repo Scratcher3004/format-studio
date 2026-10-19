@@ -96,6 +96,8 @@ public sealed class SampleDef
     public SourceLocation? Source { get; set; }
     /// <summary>The position of the sample among the samples of its file.</summary>
     public int Index { get; set; }
+    /// <summary>Keys of the sample's entry that samples don't have, e.g. misspelled ones; reported as warnings.</summary>
+    public IReadOnlyList<string> UnknownKeys { get; set; } = [];
 }
 
 /// <summary>The contents of a <c>*.fstudio.yaml</c> project file.</summary>
@@ -801,11 +803,13 @@ public sealed class FormatProject
             var relative = Relative(file);
             try
             {
-                var entries = SampleFiles.Entries(YamlValues.ParseYaml(File.ReadAllText(file)));
-                for (var index = 0; index < entries.Count; index++)
-                    Samples.Add(SampleFiles.Read(entries[index], Path.GetFileNameWithoutExtension(file), relative, index));
+                Samples.AddRange(SampleFiles.Load(File.ReadAllText(file), relative, Diagnostics));
             }
-            catch (Exception e) when (e is FormatDefinitionException or YamlDotNet.Core.YamlException or InvalidOperationException)
+            catch (YamlDotNet.Core.YamlException e)
+            {
+                Diagnostics.Error(e.InnerException?.Message ?? e.Message, new SourceLocation(relative, (int)e.Start.Line, (int)e.Start.Column));
+            }
+            catch (Exception e) when (e is FormatDefinitionException or InvalidOperationException)
             {
                 Diagnostics.Error(e.Message, new SourceLocation(relative));
             }

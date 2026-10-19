@@ -81,3 +81,5 @@ hex, encodes the value) into the annotated hex view and value tree, so a failing
 Encode, Decode and Round trip work as on the Simulate page, and their results are what Save writes. New samples go to
 a file matched by the project's `samples` patterns (by default the first file with samples). Saving or deleting
 rewrites the sample file, keeping its shape and the other samples but not comments.
+Sample files are checked when the project loads: an unknown type, invalid hex, a sample with neither value nor
+hex, an unknown key or a repeated name shows up with the other diagnostics, at the sample's line.

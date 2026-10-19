@@ -165,7 +165,7 @@ else
 
     private void Check()
     {
-        if (Edited() is { } sample) _check = Projects.CheckSample(sample);
+        if (Edited() is { } sample) _check = Projects.RunSample(sample).Summary;
     }
 
     private void Save()
