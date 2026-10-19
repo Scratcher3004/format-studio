@@ -39,6 +39,8 @@
     float: right;
     font-size: 11px;
     opacity: 0.6;
+    margin-right: 0.5rem;
+    margin-top: 3px;
 }
 
 .hex-view {

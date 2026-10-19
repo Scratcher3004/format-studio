@@ -47,6 +47,7 @@ public sealed class ProjectStore
 
     private readonly Lock _lock = new();
     private readonly Dictionary<string, ProjectService> _loaded = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Task<ProjectService?>> _loading = new(StringComparer.Ordinal);
     private readonly string _recentFile;
     private List<RecentProject> _recent;
     private List<string> _workspace = [];
@@ -86,19 +87,46 @@ public sealed class ProjectStore
     public ProjectEntry? Find(string id) => Known().FirstOrDefault(e => e.Id == id);
 
     /// <summary>The loaded project with this id (loaded on first use), or null if the id is unknown.</summary>
-    public ProjectService? Get(string id)
+    public ProjectService? Get(string id) => LoadAsync(id).GetAwaiter().GetResult();
+
+    /// <summary>The project with this id if it is already loaded; doesn't load it.</summary>
+    public ProjectService? Loaded(string id)
+    {
+        lock (_lock) return _loaded.GetValueOrDefault(id);
+    }
+
+    /// <summary>
+    /// Loads the project with this id in the background, so that the web UI can show a spinner meanwhile. Concurrent calls
+    /// for the same id share one load. Null if the id is unknown.
+    /// </summary>
+    public Task<ProjectService?> LoadAsync(string id)
     {
         lock (_lock)
         {
-            if (_loaded.TryGetValue(id, out var service)) return service;
+            if (_loaded.TryGetValue(id, out var service)) return Task.FromResult<ProjectService?>(service);
+            if (_loading.TryGetValue(id, out var running)) return running;
+            var task = Task.Run(() => Load(id));
+            _loading[id] = task;
+            return task;
         }
+    }
 
-        var entry = Find(id);
-        if (entry == null) return null;
-        lock (_lock)
+    private ProjectService? Load(string id)
+    {
+        ProjectService? service = null;
+        try
         {
-            if (!_loaded.TryGetValue(id, out var service)) _loaded[id] = service = new ProjectService(entry.File, Sandbox, Options.Plugins);
+            // Loading takes a while, so it runs outside the lock; Loaded and Known stay responsive meanwhile.
+            if (Find(id) is { } entry) service = new ProjectService(entry.File, Sandbox, Options.Plugins);
             return service;
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                if (service != null) _loaded[id] = service;
+                _loading.Remove(id);
+            }
         }
     }
 

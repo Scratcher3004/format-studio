@@ -26,8 +26,22 @@ public sealed class ProjectContext : IDisposable
     /// <summary>The id in the URL, or null outside of a project.</summary>
     public string? Id => IdFrom(_navigation.ToBaseRelativePath(_navigation.Uri));
 
-    /// <summary>The project in the URL, or null outside of a project or for an unknown id.</summary>
-    public ProjectService? Current => Id is { } id ? Store.Get(id) : null;
+    /// <summary>
+    /// The project in the URL, or null outside of a project, for an unknown id, and while it is still loading (see
+    /// <see cref="IsLoading"/>).
+    /// </summary>
+    public ProjectService? Current => Id is { } id ? Store.Loaded(id) : null;
+
+    /// <summary>Whether the project in the URL is known but not loaded yet; <see cref="LoadAsync"/> loads it.</summary>
+    public bool IsLoading => Id is { } id && Store.Loaded(id) == null && Store.Find(id) != null;
+
+    /// <summary>Loads the project in the URL in the background, then follows it (raising <see cref="Changed"/>).</summary>
+    public async Task LoadAsync()
+    {
+        if (Id is not { } id) return;
+        await Store.LoadAsync(id);
+        Follow();
+    }
 
     /// <summary>Raised when the page switches to another project, and when the current project is reloaded.</summary>
     public event Action? Changed;

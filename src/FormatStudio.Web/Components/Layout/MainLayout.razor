@@ -30,7 +30,7 @@
         @if (Context.Current is { } current)
         {
             <MudTooltip Text="Reload the project from disk">
-                <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Inherit" OnClick="current.Reload" />
+                <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Inherit" OnClick="() => Reload(current)" Disabled="@_reloading" />
             </MudTooltip>
         }
         <MudIconButton Icon="@(_dark ? Icons.Material.Filled.LightMode : Icons.Material.Filled.DarkMode)" Color="Color.Inherit"
@@ -43,7 +43,21 @@
         </MudDrawer>
     }
     <MudMainContent Class="px-4 my-4">
-        @if (Context.Id != null && Context.Current == null)
+        @{ var loading = Context.IsLoading; }
+        @if (loading || _reloading)
+        {
+            <MudOverlay Visible="true" DarkBackground="true" ZIndex="@(9999)">
+                <div class="d-flex flex-column align-center">
+                    <MudProgressCircular Color="@Color.Primary" Indeterminate="true" Size="@Size.Large" />
+                    <MudText Typo="@Typo.subtitle1" Class="mt-4" Style="color: white">@(_reloading ? "Reloading project..." : "Loading project...")</MudText>
+                </div>
+            </MudOverlay>
+        }
+        @if (loading)
+        {
+            @* Pages need the loaded project, so nothing is rendered below the overlay while it loads. *@
+        }
+        else if (Context.Id != null && Context.Current == null)
         {
             <MudAlert Severity="MudBlazor.Severity.Warning">
                 There is no project '@Context.Id'. It may have been removed from the recent projects;
@@ -65,6 +79,7 @@
 @code {
     private bool _drawer = true;
     private bool _dark;
+    private bool _reloading;
 
     private string ProjectLabel => Context.Current is { } current
         ? current.Project?.Settings.Name ?? Path.GetFileName(current.Path)
@@ -75,6 +90,25 @@
         Context.Changed += OnChanged;
         Context.Store.Changed += OnChanged;
         Context.Follow();
+    }
+
+    /// <summary>Opening or switching to a project that isn't loaded yet loads it in the background, behind the overlay.</summary>
+    protected override void OnParametersSet()
+    {
+        if (Context.IsLoading) _ = Context.LoadAsync();
+    }
+
+    private async Task Reload(ProjectService project)
+    {
+        _reloading = true;
+        try
+        {
+            await Task.Run(project.Reload);
+        }
+        finally
+        {
+            _reloading = false;
+        }
     }
 
     private void OnChanged() => InvokeAsync(StateHasChanged);
