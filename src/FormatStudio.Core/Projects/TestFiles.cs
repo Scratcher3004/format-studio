@@ -144,6 +144,8 @@ public static class TestFiles
         {
             HasValue = map.ContainsKey("value"),
             Value = map["value"]?.DeepClone(),
+            ValueAuto = map["value"] is JsonValue placeholder && placeholder.GetValueKind() == JsonValueKind.String
+                                                              && placeholder.GetValue<string>() == TestCaseDef.Auto,
             Error = map["error"]?.ToString(),
             Path = map["path"]?.ToString(),
             Warnings = map.ContainsKey("warnings") ? Strings(map["warnings"]) : null,
@@ -293,6 +295,110 @@ public static class TestFiles
         Set(entry, "hex", test.Hex);
         Set(entry, "file", test.File);
         return entry;
+    }
+
+    /// <summary>Lines that a new expected value may take up before it is written as a block instead of on one line.</summary>
+    private const int MaxWidth = 100;
+
+    /// <summary>
+    /// The text of a test file with the hex and expectations of the case at <paramref name="index"/> replaced where they
+    /// stand. Unlike <see cref="Replace"/> it keeps comments and the layout of the rest of the file. Only keys the case
+    /// has are replaced.
+    /// </summary>
+    public static string Update(string text, int index, TestUpdate update)
+    {
+        var stream = new YamlStream();
+        stream.Load(new StringReader(text));
+        var entry = (stream.Documents.Count > 0 ? EntryNodes(stream.Documents[0].RootNode) : []).ElementAtOrDefault(index)
+                    ?? throw new ArgumentOutOfRangeException(nameof(index));
+        var newline = text.Contains("\r\n") ? "\r\n" : "\n";
+        var edits = new List<(int Start, int End, string Text)>();
+        // Hex as written, never quoted: it is read from the raw scalar.
+        if (update.Hex != null) edits.Add(Edit(text, entry, "hex", null, update.Hex, newline));
+        if (update.SetsValue || update.Warnings != null || update.Consumed != null)
+        {
+            var expect = Find(entry, "expect")?.Value as YamlMappingNode
+                         ?? throw new FormatDefinitionException($"Test {NameOf(entry)} has no 'expect' to update");
+            if (update.SetsValue) edits.Add(Edit(text, expect, "value", update.Value, null, newline));
+            if (update.Warnings != null)
+                edits.Add(Edit(text, expect, "warnings", new JsonArray(update.Warnings.Select(w => (JsonNode)w).ToArray()), null, newline));
+            if (update.Consumed is { } consumed) edits.Add(Edit(text, expect, "consumed", consumed, null, newline));
+        }
+
+        foreach (var (start, end, replacement) in edits.OrderByDescending(e => e.Start))
+            text = string.Concat(text.AsSpan(0, start), replacement, text.AsSpan(end));
+        return text;
+    }
+
+    private static string? NameOf(YamlMappingNode entry) => (Find(entry, "name") ?? Find(entry, "sample"))?.Value is YamlScalarNode { Value: { } name } ? name : null;
+
+    /// <summary>The case mappings of a parsed test file, counted as <see cref="Entries"/> counts them.</summary>
+    private static IEnumerable<YamlMappingNode> EntryNodes(YamlNode root) => root switch
+    {
+        YamlSequenceNode sequence => sequence.Children.OfType<YamlMappingNode>(),
+        YamlMappingNode mapping when (Find(mapping, "cases") ?? Find(mapping, "samples"))?.Value is YamlSequenceNode cases =>
+            cases.Children.OfType<YamlMappingNode>(),
+        YamlMappingNode mapping => [mapping],
+        _ => [],
+    };
+
+    private static KeyValuePair<YamlNode, YamlNode>? Find(YamlMappingNode mapping, string key) =>
+        mapping.Children.Where(p => p.Key is YamlScalarNode { Value: var k } && k == key).Select(p => (KeyValuePair<YamlNode, YamlNode>?)p).FirstOrDefault();
+
+    /// <summary>
+    /// Replaces the value of <paramref name="key"/>: with <paramref name="raw"/> text, else with the value on one line,
+    /// or as a block when the old value was one or the line would get too long.
+    /// </summary>
+    private static (int, int, string) Edit(string text, YamlMappingNode parent, string key, JsonNode? value, string? raw, string newline)
+    {
+        var (keyNode, valueNode) = Find(parent, key) ?? throw new FormatDefinitionException($"The case has no '{key}' to update");
+        var start = (int)valueNode.Start.Index;
+        var end = End(text, valueNode);
+        var flow = raw ?? YamlEmitter.WriteFlow(value);
+        var wasBlock = valueNode is YamlMappingNode { Style: not YamlDotNet.Core.Events.MappingStyle.Flow, Children.Count: > 0 }
+            or YamlSequenceNode { Style: not YamlDotNet.Core.Events.SequenceStyle.Flow, Children.Count: > 0 };
+        var keyColumn = (int)keyNode.Start.Column - 1;
+        var canBlock = raw == null && parent.Style != YamlDotNet.Core.Events.MappingStyle.Flow && value is JsonObject { Count: > 0 } or JsonArray { Count: > 0 };
+        if (!canBlock || !wasBlock && keyColumn + key.Length + 2 + flow.Length <= MaxWidth) return (start, end, flow);
+
+        var lines = YamlEmitter.Write(value).TrimEnd('\n').Split('\n');
+        if (wasBlock)
+        {
+            // The block starts where the old one did, already indented.
+            var indent = new string(' ', (int)valueNode.Start.Column - 1);
+            return (start, end, lines[0] + string.Concat(lines.Skip(1).Select(line => newline + indent + line)));
+        }
+
+        // The old value was on the key's line: the block goes below the key.
+        start = (int)keyNode.End.Index;
+        while (start < text.Length && text[start] != ':') start++;
+        var below = new string(' ', keyColumn + 2);
+        return (start + 1, end, string.Concat(lines.Select(line => newline + below + line)));
+    }
+
+    /// <summary>
+    /// Where a value ends: after its last scalar for a block collection, so that comments after it stay, and after the
+    /// closing bracket for a flow collection. (A collection node's own end is where it starts.)
+    /// </summary>
+    private static int End(string text, YamlNode node)
+    {
+        var flow = node is YamlMappingNode { Style: YamlDotNet.Core.Events.MappingStyle.Flow } or YamlSequenceNode { Style: YamlDotNet.Core.Events.SequenceStyle.Flow };
+        YamlNode? lastChild = node switch
+        {
+            YamlMappingNode { Children.Count: > 0 } mapping => mapping.Children.Last().Value,
+            YamlSequenceNode { Children.Count: > 0 } sequence => sequence.Children.Last(),
+            _ => null,
+        };
+        var last = lastChild != null ? End(text, lastChild) : (int)node.End.Index;
+        if (flow)
+        {
+            if (lastChild == null) last = (int)node.Start.Index + 1;
+            while (last < text.Length && text[last] is not ('}' or ']')) last++;
+            return Math.Min(last + 1, text.Length);
+        }
+
+        while (last > (int)node.Start.Index && char.IsWhiteSpace(text[last - 1])) last--;
+        return last;
     }
 
     private static void Set(JsonObject entry, string key, JsonNode? value)

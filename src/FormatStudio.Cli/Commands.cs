@@ -19,11 +19,14 @@ internal static class Commands
     {
         var path = line.Single("project") ?? FindProject(Directory.GetCurrentDirectory())
             ?? throw new UsageException($"No *{ProjectSettings.Extension} found; pass --project.");
-        var project = FormatProject.Load(path, plugins: PluginPolicy.Parse(Environment.GetEnvironmentVariable("FORMATSTUDIO_PLUGINS")));
+        var project = Reload(path);
         foreach (var diagnostic in project.Diagnostics.Where(d => d.Severity == Severity.Error).Take(20))
             Console.Error.WriteLine(diagnostic);
         return project;
     }
+
+    private static FormatProject Reload(string path) =>
+        FormatProject.Load(path, plugins: PluginPolicy.Parse(Environment.GetEnvironmentVariable("FORMATSTUDIO_PLUGINS")));
 
     private static string? FindProject(string directory)
     {
@@ -387,12 +390,26 @@ internal static class Commands
 
     public static int Test(string[] args)
     {
-        var line = CommandLine.Parse(args, ["project", "filter", "tag", "type", "file", "format", "output"], NoFlags);
-        line.MaxPositional(0, "format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>]");
+        var line = CommandLine.Parse(args, ["project", "filter", "tag", "type", "file", "format", "output"], ["update"]);
+        line.MaxPositional(0, "format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>] [--update]");
         var format = line.Single("format") ?? "text";
         if (format is not ("text" or "json" or "junit")) throw new UsageException($"Unknown format '{format}' (text, json, junit).");
         var project = LoadProject(line);
         var filter = new TestFilter { Names = line.All("filter"), Tags = line.All("tag"), Types = line.All("type"), Files = line.All("file") };
+        if (line.Has("update"))
+        {
+            var path = project.FilePath!;
+            var outcomes = TestSnapshots.UpdateAll(project, () => Reload(path), filter, out project);
+            // To the console in any format: the report below is of the cases as they are now.
+            var log = format == "text" && line.Single("output") == null ? Console.Out : Console.Error;
+            foreach (var outcome in outcomes.Where(o => o.Updated.Count > 0))
+                log.WriteLine($"updated {outcome.Case.Suite}/{outcome.Case.Name}: {string.Join(", ", outcome.Updated)}");
+            foreach (var outcome in outcomes.Where(o => o.Reason != null))
+                log.WriteLine($"kept    {outcome.Case.Suite}/{outcome.Case.Name}: {outcome.Reason}");
+            var count = outcomes.Count(o => o.Updated.Count > 0);
+            log.WriteLine($"{count} {(count == 1 ? "case" : "cases")} updated.");
+        }
+
         var results = TestRunner.Run(project, filter);
 
         var report = format switch

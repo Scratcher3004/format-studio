@@ -55,6 +55,13 @@ else
     <MudStack Row="@true" Spacing="@(2)" Class="mb-3">
         <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Save">Save</MudButton>
         <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.FactCheck" OnClick="Check">Check</MudButton>
+        @if (_original != null && _checkResult != null && Projects.CanAccept(_checkResult))
+        {
+            <MudTooltip Text="@(Unsaved() ? "Save or revert your changes first: this writes into the saved case" : "Write what the case gives (hex, expected value, warnings, length) into its file")">
+                <MudButton Variant="@Variant.Outlined" Color="@Color.Warning" StartIcon="@Icons.Material.Filled.Done" OnClick="Accept"
+                           Disabled="@Unsaved()">Accept actual</MudButton>
+            </MudTooltip>
+        }
         @if (_original != null)
         {
             <MudButton Variant="@Variant.Text" StartIcon="@Icons.Material.Filled.Undo" OnClick="Load">Revert</MudButton>
@@ -106,6 +113,7 @@ else
     private string _json = "";
     private string _hex = "";
     private string? _check;
+    private CaseResult? _checkResult;
     private string? _loadedId;
 
     protected override void OnParametersSet()
@@ -120,6 +128,7 @@ else
         _original = _base = Index is { } index && index >= 0 && index < tests.Count ? tests[index] : null;
         _missing = _original == null && Id != "new";
         _check = null;
+        _checkResult = null;
         if (_original == null)
         {
             _name = _type = "";
@@ -132,7 +141,8 @@ else
         _type = _original.Type ?? "";
         _file = _original.Source?.File ?? "";
         _json = _original.Value != null ? JsonValues.ToText(_original.Value) : "";
-        _hex = _original.Hex ?? "";
+        // The placeholder isn't hex; the case keeps it until hex is typed (see Edited).
+        _hex = _original.HexAuto ? "" : _original.Hex ?? "";
     }
 
     /// <summary>What the case has besides name, type, value and hex, in a few words.</summary>
@@ -146,6 +156,7 @@ else
             parts.Add($"bytes start with a {frame.Header} packet id{(among.Length > 0 ? $" ({among})" : "")}");
         }
 
+        if (_base.HexAuto) parts.Add("hex: auto, filled in by Accept actual");
         if (_base.Fuzz is { } fuzz) parts.Add($"fuzz: {fuzz.Iterations} random values per type, seed {fuzz.Seed}");
         if (_base.File != null) parts.Add($"bytes from {_base.File}");
         if (_base.Expect is { } expect)
@@ -208,7 +219,7 @@ else
         }
 
         // Hex from the simulator comes in lines of 16 bytes; tests keep it on one line.
-        var hex = string.IsNullOrWhiteSpace(_hex) ? null : Regex.Replace(_hex.Trim(), @"\s+", " ");
+        var hex = string.IsNullOrWhiteSpace(_hex) ? _base?.HexAuto == true ? TestCaseDef.Auto : null : Regex.Replace(_hex.Trim(), @"\s+", " ");
         return new TestCaseDef
         {
             Name = _name.Trim(),
@@ -230,7 +241,45 @@ else
 
     private void Check()
     {
-        if (Edited() is { } test) _check = Projects.RunTest(test).Summary;
+        if (Edited() is not { } test) return;
+        _checkResult = Projects.RunTest(test);
+        _check = _checkResult.Summary;
+    }
+
+    /// <summary>The fields differ from the saved case.</summary>
+    private bool Unsaved()
+    {
+        if (_original == null) return true;
+        JsonNode? value;
+        try
+        {
+            value = string.IsNullOrWhiteSpace(_json) ? null : JsonNode.Parse(_json);
+        }
+        catch (JsonException)
+        {
+            return true;
+        }
+
+        static string Digits(string? hex) => Regex.Replace(hex ?? "", @"\s+", "");
+        return _name.Trim() != _original.Name || _type.Trim() != (_original.Type ?? "") || _file.Trim() != _original.Source?.File
+               || Digits(_hex) != Digits(_original.HexAuto ? "" : _original.Hex) || !JsonNode.DeepEquals(value, _original.Value);
+    }
+
+    private void Accept()
+    {
+        try
+        {
+            var keys = Projects.AcceptTest(_original!);
+            Snackbar.Add($"Updated {string.Join(", ", keys)} of '{_original!.Name}'.", MudBlazor.Severity.Success);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
+        {
+            Snackbar.Add($"Not updated: {e.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        Load();
+        Check();
     }
 
     private void Save()

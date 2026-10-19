@@ -123,7 +123,9 @@ public sealed class Validator
                     _diagnostics.Warning($"{name}: a case that must fail only checks its error; 'value', 'warnings' and 'consumed' are ignored", source);
             }
 
-            if (test.Hex != null)
+            if (test.HexAuto && test.Value == null)
+                _diagnostics.Error($"{name}: 'hex: auto' is filled in from the value's encoding, so the case needs a 'value'", source);
+            if (test.Hex != null && !test.HexAuto)
             {
                 try
                 {

@@ -873,6 +873,28 @@ public sealed class FormatProject
     }
 
     /// <summary>The full path of a test case's <c>file</c>, which is relative to the test file.</summary>
+    /// <summary>Writes new expected results into the case's file, keeping the rest of the file as it is.</summary>
+    public void UpdateTest(TestCaseDef test, TestUpdate update)
+    {
+        var path = Sandbox.Check(Path.GetFullPath(test.Source?.File ?? throw new FormatDefinitionException($"'{test.Name}' has no file"), Directory));
+        var text = File.ReadAllText(path);
+        CheckUnchanged(text, test);
+        var updated = TestFiles.Update(text, test.Index, update);
+        // An edit of the text that breaks the file is refused rather than written.
+        var diagnostics = new DiagnosticBag();
+        try
+        {
+            var cases = TestFiles.Load(updated, Relative(path), diagnostics);
+            if (diagnostics.HasErrors || test.Index >= cases.Count || cases[test.Index].Name != test.Name) throw new FormatDefinitionException("the case can't be read back");
+        }
+        catch (Exception e) when (e is YamlDotNet.Core.YamlException or FormatDefinitionException)
+        {
+            throw new FormatDefinitionException($"Not updating {test.Name}: the new text of {Relative(path)} would be broken ({e.Message})");
+        }
+
+        File.WriteAllText(path, updated);
+    }
+
     public string TestFilePath(TestCaseDef test)
     {
         var testFile = Path.GetFullPath(test.Source?.File ?? throw new FormatDefinitionException($"'{test.Name}' has no file"), Directory);
@@ -882,7 +904,7 @@ public sealed class FormatProject
 
     /// <summary>The bytes a test case gives, from its hex or its file; null when it gives none.</summary>
     public byte[]? TestBytes(TestCaseDef test) =>
-        test.Hex != null ? Simulation.Hex.Parse(test.Hex) : test.File != null ? File.ReadAllBytes(TestFilePath(test)) : null;
+        test.Hex != null && !test.HexAuto ? Simulation.Hex.Parse(test.Hex) : test.File != null ? File.ReadAllBytes(TestFilePath(test)) : null;
 
     /// <summary>Makes sure the test case is still at its index, so that a file changed since loading isn't overwritten blindly.</summary>
     private static void CheckUnchanged(string? text, TestCaseDef test)

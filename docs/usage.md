@@ -20,7 +20,7 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 | `encode <type> --json ... \| --random --seed 1` | Encode a value (or a random one) |
 | `roundtrip [types] --iterations 20` | Random values: encode, decode, encode again, compare |
 | `identify --hex ... [--protocol <name>]` | Try every packet (or struct, or the protocol's packets) and rank the matches |
-| `test [--filter ...] [--tag ...] [--format text\|json\|junit]` | Run the project's test cases (see [testing](testing.md)); `samples` is an alias |
+| `test [--filter ...] [--tag ...] [--format text\|json\|junit] [--update]` | Run the project's test cases (see [testing](testing.md)); `--update` writes what failed cases give into their files; `samples` is an alias |
 | `import <importer> [options] [--dry-run]` | Run an importer (see [importers](importers.md)) |
 | `generate [target] [--dry-run]` | Run the codegen targets (see [code generation](codegen.md)) |
 | `generators [--verbose]` | List the code generators and their options: built-in, and those the project and its libraries declare |
@@ -76,7 +76,8 @@ Validation runs on every change. Next to the editor, **sample data** (pasted hex
 view, value tree and JSON, so a packet can be built field by field against a capture.
 
 The [test cases](testing.md) of a project are listed on the overview with their suite and tags (long hex is cut; hover
-for all of it), where they can be run, deleted or opened. A case's page edits its name, type, file, value and hex, and
+for all of it), where they can be run, deleted or opened; after a run, **Accept actual** writes what a failed case
+gives into its file (**Accept all actual** for all of them, as `test --update` does). A case's page edits its name, type, file, value and hex, and
 decodes the hex (or, without hex, encodes the value) into the annotated hex view and value tree, so a failing case can
 be debugged byte by byte; Encode, Decode and Round trip work as on the Simulate page, and their results are what Save
 writes. Its other keys (a bytes file, expectations, a packet header, fuzzing, skip, tags) are listed and kept; a packet

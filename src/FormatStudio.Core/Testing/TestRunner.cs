@@ -29,6 +29,8 @@ public enum CaseFailureKind
     ExpectedFailure,
     /// <summary>Random values of a type don't round-trip.</summary>
     Fuzz,
+    /// <summary>The hex or the expected value is still <c>auto</c>, to be filled in by <c>test --update</c>.</summary>
+    Snapshot,
 }
 
 public enum CaseStatus
@@ -63,6 +65,12 @@ public sealed record CaseResult(TestCaseDef Case, IReadOnlyList<CaseFailure> Fai
 {
     public bool Skipped { get; init; }
     public TimeSpan Duration { get; init; }
+    /// <summary>The value <see cref="Bytes"/> decoded to, when they did.</summary>
+    public JsonNode? Decoded { get; init; }
+    /// <summary>The warnings of encoding and decoding.</summary>
+    public IReadOnlyList<Diagnostic> Warnings { get; init; } = [];
+    /// <summary>The bytes decoding took up, for a case that expects a number of them.</summary>
+    public int? Consumed { get; init; }
 
     public CaseStatus Status => Skipped ? CaseStatus.Skipped : Failures.Count == 0 ? CaseStatus.Passed : CaseStatus.Failed;
     public bool Passed => Status == CaseStatus.Passed;
@@ -164,6 +172,8 @@ public static class TestRunner
         var failures = new List<CaseFailure>();
         var warnings = new List<Diagnostic>();
         byte[]? bytes = null;
+        JsonNode? decodedValue = null;
+        int? actualConsumed = null;
         if (test.Value != null)
         {
             var encoded = subject.Encode(subject.Type!, test.Value);
@@ -193,20 +203,26 @@ public static class TestRunner
             if (expect.Consumed is { } consumed)
             {
                 var decoded = subject.Decode(bytes);
+                if (decoded.Success) actualConsumed = decoded.Consumed;
                 if (decoded.Success && decoded.Consumed != consumed)
                     failures.Add(new CaseFailure(CaseFailureKind.Consumed, $"decoding takes up {decoded.Consumed} bytes, expected {consumed}"));
-                bytes = bytes[..Math.Min(consumed, bytes.Length)];
+                // The rest of the checks are of the bytes the type takes up, also when that isn't the expected number.
+                bytes = bytes[..Math.Min(decoded.Success ? decoded.Consumed : consumed, bytes.Length)];
             }
 
             var roundTrip = subject.RoundTrip(bytes);
             failures.AddRange(Errors(roundTrip.Diagnostics, CaseFailureKind.RoundTrip));
             warnings.AddRange(roundTrip.Diagnostics.Where(d => d.Severity == Severity.Warning));
-            if (expect.HasValue && roundTrip.Success)
+            if (roundTrip.Success) decodedValue = roundTrip.Value;
+            if (expect.ValueAuto) failures.Add(new CaseFailure(CaseFailureKind.Snapshot, "the expected value is auto; format-studio test --update fills it in"));
+            else if (expect.HasValue && roundTrip.Success)
                 failures.AddRange(Differences(expect.Value, roundTrip.Value, expect.Match == MatchMode.Subset));
         }
 
+        if (test.HexAuto && bytes != null)
+            failures.Add(new CaseFailure(CaseFailureKind.Snapshot, "the hex is auto; format-studio test --update fills it in") { Actual = bytes });
         if (expect.Warnings is { } patterns) failures.AddRange(CheckWarnings(warnings, patterns));
-        return new CaseResult(test, failures, bytes);
+        return new CaseResult(test, failures, bytes) { Decoded = decodedValue, Warnings = warnings, Consumed = actualConsumed };
     }
 
     private static CaseResult RunFailing(TestCaseDef test, Subject subject, byte[]? given, TestExpectation expect)
@@ -370,7 +386,9 @@ public static class TestRunner
         return JsonNode.DeepEquals(expected, actual);
     }
 
-    private sealed record Decoded(TypeRef? Type, JsonNode? Value, int Consumed, DiagnosticBag Diagnostics)
+    /// <param name="Root">The decoded spans, after the packet id of a packet case.</param>
+    /// <param name="HeaderLength">The length of a packet case's id.</param>
+    internal sealed record Decoded(TypeRef? Type, JsonNode? Value, int Consumed, DiagnosticBag Diagnostics, SpanNode? Root = null, int HeaderLength = 0)
     {
         public bool Success => !Diagnostics.HasErrors;
     }
@@ -379,7 +397,7 @@ public static class TestRunner
     /// What a case encodes and decodes: its type, or for a packet case a packet id and the packet with that id. A packet
     /// case without a type takes the packet its bytes say.
     /// </summary>
-    private sealed class Subject
+    internal sealed class Subject
     {
         private readonly Codec _codec;
         private readonly PacketHeader? _header;
@@ -432,7 +450,7 @@ public static class TestRunner
             if (_header == null)
             {
                 var result = _codec.Decode(type ?? throw new InvalidOperationException("A case without a frame has a type"), bytes);
-                return new Decoded(type, result.Value, result.Consumed, result.Diagnostics);
+                return new Decoded(type, result.Value, result.Consumed, result.Diagnostics, result.Root);
             }
 
             var diagnostics = new DiagnosticBag();
@@ -452,7 +470,7 @@ public static class TestRunner
                     return new Decoded(actual, null, headerLength, diagnostics);
                 }
 
-                return new Decoded(actual, decoded.Value, headerLength + decoded.Consumed, decoded.Diagnostics);
+                return new Decoded(actual, decoded.Value, headerLength + decoded.Consumed, decoded.Diagnostics, decoded.Root, headerLength);
             }
             catch (DecodeException e)
             {

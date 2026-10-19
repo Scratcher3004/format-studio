@@ -45,7 +45,7 @@ other diagnostics.
 | `name` | The case's name; unique in its file (`sample` is the old name) |
 | `type` | A type expression, e.g. `Handshake`, `Slot[]` or `zlib(Slot)`; the suite's type when left out |
 | `value` | A value as JSON/YAML, as on the Simulate page |
-| `hex` | The expected bytes in hex; spaces, `0x`, `:` and `-` are ignored |
+| `hex` | The expected bytes in hex; spaces, `0x`, `:` and `-` are ignored. `auto` to have them filled in ([below](#updating-expected-results)) |
 | `file` | A file with the expected bytes instead of `hex`, relative to the test file |
 | `expect` | More checks, or a failure the case must end in (below) |
 | `packet` | The bytes start with a packet id ([below](#packet-cases)) |
@@ -62,7 +62,7 @@ Without `expect`, a case checks what samples always did:
 
 | Key | Meaning |
 | --- | --- |
-| `value` | The value the bytes decode to |
+| `value` | The value the bytes decode to; `auto` to have it filled in |
 | `match` | `exact` (the default): the decoded value has exactly these fields; `subset`: the fields given must match, others are ignored |
 | `warnings` | Texts of the warnings the case must give, and no others; `[]` for none. Without the key warnings don't matter |
 | `consumed` | How many bytes the type takes up; the bytes after them may be anything (a capture with more in it) |
@@ -143,16 +143,46 @@ the same values on every machine, so a failure in CI happens locally as well. A 
 many of its values failed and the first one, which `format-studio encode <type> --json` repeats. A fuzz case has no
 `value`, `hex`, `file` or `expect`.
 
+## Updating expected results
+
+When a format changes on purpose, its cases' expected bytes and values change with it. `format-studio test --update`
+writes what the failed cases actually give into their files, then runs them again:
+
+- the hex a value encodes to, when it differs from the case's hex, and in place of `hex: auto`;
+- the value the bytes decode to, in place of `expect.value` (for `match: subset` only the fields given) or of
+  `value: auto`;
+- the warnings the case gives, in place of `expect.warnings`, and the bytes it takes up, in place of `expect.consumed`.
+
+The value is taken as right and the bytes as what follows from it. Only these keys are rewritten, where they stand:
+comments and the rest of the file stay as they are, and new hex has a space between the top-level fields (and after
+a packet id). A case that fails to encode, decode or round-trip, or must fail and doesn't, is left as it is and listed
+with the reason, as is one whose bytes come from a `file`. `auto` is a placeholder for writing a case before knowing
+its bytes, e.g. a capture's decoded value; until it is filled in the case fails.
+
+```yaml
+- name: login
+  value: {protocolVersion: 765, serverAddress: localhost, serverPort: 25565, nextState: login}
+  hex: auto                      # becomes: hex: fd05 096c6f63616c686f7374 63dd 02
+- name: capture
+  file: fixtures/handshake-login.bin
+  expect: {value: auto}          # becomes: expect: {value: {protocolVersion: 765, ...}}
+```
+
+Check the changed files (e.g. with `git diff`) before committing them: an update accepts whatever the definitions
+give now, including a bug. In the web UI, **Accept actual** on a failed case does the same for that case (on its
+page, once its edits are saved), and **Accept all actual** on the overview for all of them.
+
 ## Running tests
 
 ```
-format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>]
+format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>] [--update]
 ```
 
 - `--filter` matches a case's name or `suite/name` (`*` and `?`), `--file` the test file relative to the project;
   each filter may be given several times, and a case runs when it matches every kind of filter given.
 - `--format json` lists every case with its status, file, line and failures (kind, message, path, and for bytes that
   differ the offset and both byte strings). `--format junit` writes one `testsuite` per suite.
+- `--update` first accepts what the failed cases (of the filters) give, as above; the report is of the cases after it.
 - `--output` writes the report to a file and prints the text summary to the console, e.g. for CI:
   `format-studio test --format junit --output test-results.xml`.
 - The exit code is 1 when a case fails or the project has errors, so CI needs no `validate` or `roundtrip` step

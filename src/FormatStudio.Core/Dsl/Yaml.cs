@@ -164,6 +164,14 @@ public static class YamlEmitter
         return builder.ToString();
     }
 
+    /// <summary>The value on one line in flow style, e.g. <c>{x: 1, tags: [a, b]}</c>.</summary>
+    public static string WriteFlow(object? value) => Normalize(value) switch
+    {
+        YMap map => "{" + string.Join(", ", map.Select(pair => $"{Key(pair.Key)}: {WriteFlow(pair.Value)}")) + "}",
+        List<object?> list => "[" + string.Join(", ", list.Select(WriteFlow)) + "]",
+        var scalar => Scalar(scalar, true),
+    };
+
     private static void WriteBlock(StringBuilder builder, object? value, int indent)
     {
         switch (Normalize(value))

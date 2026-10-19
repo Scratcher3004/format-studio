@@ -10,6 +10,9 @@ namespace FormatStudio.Projects;
 /// </summary>
 public sealed class TestCaseDef
 {
+    /// <summary>The placeholder for a hex or an expected value that <c>test --update</c> fills in.</summary>
+    public const string Auto = "auto";
+
     public required string Name { get; set; }
     /// <summary>
     /// A type expression; the suite's type when the case has none. Only packet cases (whose bytes say which packet they
@@ -17,7 +20,7 @@ public sealed class TestCaseDef
     /// </summary>
     public string? Type { get; set; }
     public JsonNode? Value { get; set; }
-    /// <summary>The expected encoding, if known.</summary>
+    /// <summary>The expected encoding, if known; <see cref="Auto"/> to have it filled in from the value.</summary>
     public string? Hex { get; set; }
     /// <summary>A file with the expected encoding instead of <see cref="Hex"/>, relative to the test file.</summary>
     public string? File { get; set; }
@@ -41,10 +44,33 @@ public sealed class TestCaseDef
     public JsonObject? Entry { get; set; }
 
     /// <summary>The bytes the case starts from are given, by hex or file.</summary>
-    public bool HasBytes => Hex != null || File != null;
+    public bool HasBytes => Hex != null && !HexAuto || File != null;
+
+    /// <summary>The hex is the placeholder <c>auto</c>.</summary>
+    public bool HexAuto => Hex == Auto;
 
     /// <summary>What the case tests, for lists of cases: its type, else the packets it may be.</summary>
     public string Subject => Type ?? (Packet?.Protocol is { } protocol ? $"packet of {protocol}" : Packet != null ? "packet" : "all packets");
+}
+
+/// <summary>New expected results for a case, as <c>test --update</c> writes them; what is null stays as it is.</summary>
+public sealed record TestUpdate
+{
+    public string? Hex { get; init; }
+    /// <summary>Whether <see cref="Value"/> replaces the expected value; the value itself may be null.</summary>
+    public bool SetsValue { get; init; }
+    public JsonNode? Value { get; init; }
+    public IReadOnlyList<string>? Warnings { get; init; }
+    public int? Consumed { get; init; }
+
+    /// <summary>The keys it changes, e.g. <c>hex</c> and <c>expect.value</c>.</summary>
+    public IReadOnlyList<string> Keys => new[]
+    {
+        Hex != null ? "hex" : null,
+        SetsValue ? "expect.value" : null,
+        Warnings != null ? "expect.warnings" : null,
+        Consumed != null ? "expect.consumed" : null,
+    }.OfType<string>().ToList();
 }
 
 /// <summary>How a packet case's bytes start: a packet id, which picks the packet among those of a protocol.</summary>
@@ -98,6 +124,8 @@ public sealed class TestExpectation
     /// <summary>Whether a value is expected; the value itself may be null.</summary>
     public bool HasValue { get; set; }
     public JsonNode? Value { get; set; }
+    /// <summary>The value is the placeholder <c>auto</c>, which <c>test --update</c> replaces with the decoded value.</summary>
+    public bool ValueAuto { get; set; }
     public MatchMode Match { get; set; } = MatchMode.Exact;
     /// <summary>Text the error must contain.</summary>
     public string? Error { get; set; }

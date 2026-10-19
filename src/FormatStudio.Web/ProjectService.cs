@@ -113,6 +113,31 @@ public sealed class ProjectService
     /// <summary>Runs a test case against the simulator (see <see cref="TestRunner"/>).</summary>
     public CaseResult RunTest(TestCaseDef test) => TestRunner.Run(Project!, test);
 
+    /// <summary>Whether accepting what the case gives would make it pass (see <see cref="TestSnapshots.Accept"/>).</summary>
+    public bool CanAccept(CaseResult result) => result.Failed && TestSnapshots.Accept(Project!, result).Update != null;
+
+    /// <summary>Writes what the saved case gives into its file as what it expects, and reloads. Returns the keys written.</summary>
+    public IReadOnlyList<string> AcceptTest(TestCaseDef test)
+    {
+        var (update, reason) = TestSnapshots.Accept(Project!, RunTest(test));
+        if (update == null) throw new FormatDefinitionException($"Nothing to accept: {reason}");
+        Project!.UpdateTest(test, update);
+        Reload();
+        return update.Keys;
+    }
+
+    /// <summary>Accepts what every failed case gives, as <c>test --update</c> does, and reloads.</summary>
+    public IReadOnlyList<SnapshotOutcome> AcceptAll()
+    {
+        var outcomes = TestSnapshots.UpdateAll(Project!, () =>
+        {
+            Reload();
+            return Project!;
+        }, null, out _);
+        Reload();
+        return outcomes;
+    }
+
     /// <summary>
     /// Where an override of an imported definition goes: the folder of the last source pattern
     /// (e.g. <c>overrides/**/*.yaml</c> gives <c>overrides/&lt;kind&gt;s/Name.yaml</c>), or null if there is none.
