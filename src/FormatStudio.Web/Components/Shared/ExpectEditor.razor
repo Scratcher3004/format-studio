@@ -1,0 +1,107 @@
+@* Edits what a test case expects (its expect mapping): a round trip with a decoded value, warnings and length, or a failure. *@
+
+<MudPaper Outlined="@true" Class="pa-3 mb-3">
+    <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="@(2)" Class="@(_open ? "mb-2" : null)">
+        <MudIconButton Icon="@(_open ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)" Size="@Size.Small" OnClick="() => _open = !_open" />
+        <MudText Typo="@Typo.subtitle2">Expect</MudText>
+        @if (_open)
+        {
+            <MudRadioGroup T="bool" @bind-Value="Draft.MustFail">
+                <MudRadio T="bool" Value="@false" Color="@Color.Primary" Dense="@true">Round trip</MudRadio>
+                <MudRadio T="bool" Value="@true" Color="@Color.Primary" Dense="@true">Must fail</MudRadio>
+            </MudRadioGroup>
+        }
+        else
+        {
+            <MudText Typo="@Typo.body2" Class="mud-text-secondary" Style="cursor: pointer" @onclick="() => _open = true">@Summary()</MudText>
+        }
+    </MudStack>
+
+    @if (_open && Draft.MustFail)
+    {
+        <MudGrid Spacing="@(2)">
+            <MudItem xs="12" md="3">
+                <MudSelect T="ExpectedFailure?" @bind-Value="Draft.Fails" Label="Step that fails" Variant="@Variant.Outlined" Margin="@Margin.Dense">
+                    <MudSelectItem T="ExpectedFailure?" Value="@((ExpectedFailure?)null)">decode with bytes, else encode</MudSelectItem>
+                    <MudSelectItem T="ExpectedFailure?" Value="@((ExpectedFailure?)ExpectedFailure.Decode)">decode</MudSelectItem>
+                    <MudSelectItem T="ExpectedFailure?" Value="@((ExpectedFailure?)ExpectedFailure.Encode)">encode</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="5">
+                <MudTextField T="string" @bind-Value="Draft.Error" Label="Error contains" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                              HelperText="@ErrorHint" />
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudTextField T="string" @bind-Value="Draft.Path" Label="At field" Placeholder="location.x" Variant="@Variant.Outlined" Margin="@Margin.Dense" Class="mono" />
+            </MudItem>
+        </MudGrid>
+    }
+    else if (_open)
+    {
+        <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="@(2)" Wrap="@Wrap.Wrap">
+            <MudSwitch T="bool" @bind-Value="Draft.CheckValue" Label="Decoded value" Color="@Color.Primary" />
+            @if (Draft.CheckValue)
+            {
+                <MudSwitch T="bool" @bind-Value="Draft.ValueAuto" Label="auto (filled in by Accept actual)" Color="@Color.Primary" />
+                <MudSwitch T="bool" @bind-Value="Draft.Subset" Label="Only the fields given (subset)" Color="@Color.Primary" />
+                @if (Decoded != null && !Draft.ValueAuto)
+                {
+                    <MudButton Size="@Size.Small" Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Input" OnClick="UseDecoded">Use decoded value</MudButton>
+                }
+            }
+        </MudStack>
+        @if (Draft is { CheckValue: true, ValueAuto: false })
+        {
+            <textarea class="code-editor" rows="8" spellcheck="false" @bind="Draft.ValueJson" @bind:event="oninput" placeholder="the value the bytes decode to (JSON)"></textarea>
+        }
+        <MudGrid Spacing="@(2)" Class="mt-1">
+            <MudItem xs="12" md="8">
+                <MudSwitch T="bool" @bind-Value="Draft.CheckWarnings" Label="Warnings (and no others)" Color="@Color.Primary" />
+                @if (Draft.CheckWarnings)
+                {
+                    <MudTextField T="string" @bind-Value="Draft.WarningsText" Lines="@(3)" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                                  Placeholder="text of a warning per line; none for no warnings" />
+                }
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudNumericField T="int?" @bind-Value="Draft.Consumed" Label="Bytes taken up" Min="0" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                                 HelperText="Blank: all of them; else the rest may be anything" Clearable="@true" />
+            </MudItem>
+        </MudGrid>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public ExpectDraft Draft { get; set; } = new();
+    /// <summary>The value the case's bytes decoded to on its last check, for Use decoded value.</summary>
+    [Parameter] public JsonNode? Decoded { get; set; }
+
+    /// <summary>Open when the case expects something; set by the first draft only, so that it stays as the user leaves it.</summary>
+    private bool _open;
+    private ExpectDraft? _shown;
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(_shown, Draft)) return;
+        _shown = Draft;
+        _open = Draft.MustFail || Draft.CheckValue || Draft.CheckWarnings || Draft.Consumed != null;
+    }
+
+    /// <summary>What the case expects, in a few words, for the closed editor.</summary>
+    private string Summary()
+    {
+        if (Draft.MustFail)
+            return "must fail" + (Draft.Error.Length > 0 ? $" with '{Draft.Error}'" : "") + (Draft.Path.Length > 0 ? $" at {Draft.Path}" : "");
+        var parts = new[]
+        {
+            Draft.CheckValue ? Draft.ValueAuto ? "value auto" : Draft.Subset ? "the fields given" : "the decoded value" : null,
+            Draft.CheckWarnings ? "warnings" : null,
+            Draft.Consumed is { } consumed ? $"{consumed} bytes taken up" : null,
+        }.OfType<string>().ToList();
+        return parts.Count == 0 ? "a round trip; open to expect a decoded value, warnings, a length or a failure" : "round trip, " + string.Join(", ", parts);
+    }
+
+    private string ErrorHint => string.IsNullOrWhiteSpace(Draft.Error) && string.IsNullOrWhiteSpace(Draft.Path) ? "Blank: any error of the step" : "";
+
+    private void UseDecoded() => Draft.ValueJson = JsonValues.ToText(Decoded);
+}

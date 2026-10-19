@@ -1,0 +1,58 @@
+@* The failures of a test result: each with its kind and field, bytes that differ side by side, and fuzz values to repeat. *@
+
+@if (Result.Skipped)
+{
+    <MudText Typo="@Typo.body2" Class="mud-text-secondary">@Result.Summary</MudText>
+}
+else if (Result.Passed)
+{
+    <MudText Typo="@Typo.body2" Class="mud-success-text">Passed.</MudText>
+}
+else
+{
+    @foreach (var failure in Result.Failures.DistinctBy(f => f.ToString()))
+    {
+        <div class="mb-3">
+            <MudStack Row="@true" Spacing="@(1)" AlignItems="@AlignItems.Center">
+                <MudChip T="string" Size="@Size.Small" Variant="@Variant.Outlined" Color="@Color.Error">@Kind(failure.Kind)</MudChip>
+                @if ((failure.Path ?? failure.Diagnostic?.Path) is { } path)
+                {
+                    <span class="mono mud-text-secondary">@path</span>
+                }
+            </MudStack>
+            <MudText Typo="@Typo.body2" Class="mono" Style="overflow-wrap: anywhere">@(failure.Diagnostic?.Message ?? failure.Message)</MudText>
+            @if (failure is { Expected: { } expected, Actual: { } actual })
+            {
+                <div class="mt-1">
+                    <HexDiff Expected="@expected" Actual="@actual" Field="@failure.Path" ActualLabel="@ActualLabel(failure.Kind)" />
+                </div>
+            }
+            @if (failure.Value != null)
+            {
+                <MudText Typo="@Typo.caption">Random value that fails:</MudText>
+                <pre class="code-block">@JsonValues.ToText(failure.Value)</pre>
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter, EditorRequired] public CaseResult Result { get; set; } = null!;
+
+    private static string Kind(CaseFailureKind kind) => kind switch
+    {
+        CaseFailureKind.Mismatch => "bytes differ",
+        CaseFailureKind.RoundTrip => "round trip",
+        CaseFailureKind.ExpectedFailure => "expected failure",
+        CaseFailureKind.Snapshot => "auto",
+        _ => kind.ToString().ToLowerInvariant(),
+    };
+
+    /// <summary>A mismatch compares the case's bytes with the encoded value; a round trip the bytes with their re-encoding.</summary>
+    private static string ActualLabel(CaseFailureKind kind) => kind switch
+    {
+        CaseFailureKind.Mismatch => "encoded",
+        CaseFailureKind.RoundTrip => "again",
+        _ => "actual",
+    };
+}

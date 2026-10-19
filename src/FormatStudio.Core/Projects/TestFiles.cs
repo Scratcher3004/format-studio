@@ -266,10 +266,13 @@ public static class TestFiles
         if (index is { } at && (at < 0 || at >= entries.Count)) throw new ArgumentOutOfRangeException(nameof(index));
 
         var suite = root is JsonObject obj && ListKey(obj) != null ? obj : null;
+        JsonObject? written = null;
         if (test == null && index is { } removed) entries.RemoveAt(removed);
-        else if (test != null && index is { } replaced) entries[replaced] = Entry(test, entries[replaced], suite);
-        else if (test != null) entries.Add(Entry(test, test.Entry, suite));
+        else if (test != null && index is { } replaced) entries[replaced] = written = Entry(test, entries[replaced], suite);
+        else if (test != null) entries.Add(written = Entry(test, test.Entry, suite));
         if (entries.Count == 0) return null;
+        // Where it can, only the case's own text changes, so that comments and the layout of the others stay.
+        if (text != null && InPlace(text, index, written) is { } edited) return edited;
 
         var list = new JsonArray(entries.Select(e => (JsonNode)(e.Parent == null ? e : e.DeepClone())).ToArray());
         JsonNode result = root switch
@@ -302,7 +305,49 @@ public static class TestFiles
         Set(entry, "value", test.Value?.DeepClone());
         Set(entry, "hex", test.Hex);
         Set(entry, "file", test.File);
+        // What the case says the same as its entry (or inherits from its suite) stays as written.
+        Keep(entry, "expect", test.Expect is { IsEmpty: false } expect ? expect.ToNode() : null, null,
+            node => node is JsonObject map ? ReadExpectation(map, test.Name, new SourceLocation(""), []).ToNode() : null);
+        Keep(entry, "packet", test.Packet?.ToNode(), suite?["packet"] is { } frame ? ReadPacket(frame, test.Name, new SourceLocation(""), [])?.ToNode() : null,
+            node => ReadPacket(node, test.Name, new SourceLocation(""), [])?.ToNode());
+        Keep(entry, "fuzz", test.Fuzz?.ToNode(), null, node => ReadFuzz(node, test.Name, new SourceLocation(""), [])?.ToNode());
+
+        var suiteTags = Strings(suite?["tags"]);
+        var tags = test.Tags.Where(t => !suiteTags.Contains(t)).ToList();
+        if (!Strings(entry["tags"]).Except(suiteTags).Order(StringComparer.Ordinal).SequenceEqual(tags.Order(StringComparer.Ordinal)))
+            Set(entry, "tags", tags.Count == 0 ? null : new JsonArray(tags.Select(t => (JsonNode)t).ToArray()));
+
+        if ((SkipReason(entry["skip"]) ?? SkipReason(suite?["skip"])) != test.Skip)
+            Set(entry, "skip", test.Skip == null ? null : test.Skip == "skipped" ? true : test.Skip);
         return entry;
+    }
+
+    /// <summary>
+    /// Writes <paramref name="value"/> as <paramref name="key"/> unless the entry's own node means the same (as
+    /// <paramref name="normalize"/> reads it) or, without one, the suite's <paramref name="inherited"/> does.
+    /// </summary>
+    private static void Keep(JsonObject entry, string key, JsonNode? value, JsonNode? inherited, Func<JsonNode?, JsonNode?> normalize)
+    {
+        if (entry.ContainsKey(key))
+        {
+            JsonNode? own;
+            try
+            {
+                own = normalize(entry[key]);
+            }
+            catch (FormatDefinitionException)
+            {
+                own = null;
+            }
+
+            if (own != null && JsonNode.DeepEquals(own, value)) return;
+        }
+        else if (JsonNode.DeepEquals(inherited, value))
+        {
+            return;
+        }
+
+        Set(entry, key, value?.DeepClone());
     }
 
     /// <summary>Lines that a new expected value may take up before it is written as a block instead of on one line.</summary>
@@ -336,6 +381,93 @@ public static class TestFiles
         foreach (var (start, end, replacement) in edits.OrderByDescending(e => e.Start))
             text = string.Concat(text.AsSpan(0, start), replacement, text.AsSpan(end));
         return text;
+    }
+
+    /// <summary>
+    /// The text with the case at <paramref name="index"/> replaced by <paramref name="entry"/> (or removed without one),
+    /// or with the entry added after the last case; null when that can't be done in place, e.g. in a flow list.
+    /// </summary>
+    private static string? InPlace(string text, int? index, JsonObject? entry)
+    {
+        var stream = new YamlStream();
+        stream.Load(new StringReader(text));
+        if (stream.Documents.Count == 0) return null;
+        var root = stream.Documents[0].RootNode;
+        var list = root as YamlSequenceNode ?? (root is YamlMappingNode mapping ? (Find(mapping, "cases") ?? Find(mapping, "samples"))?.Value as YamlSequenceNode : null);
+        if (list?.Style == YamlDotNet.Core.Events.SequenceStyle.Flow) return null;
+        var nodes = EntryNodes(root).ToList();
+        var newline = text.Contains("\r\n") ? "\r\n" : "\n";
+
+        if (index is { } at)
+        {
+            var node = nodes[at];
+            var start = (int)node.Start.Index;
+            var end = End(text, node);
+            if (entry != null) return string.Concat(text.AsSpan(0, start), Lines(entry, (int)node.Start.Column - 1, IsFlow(node), newline), text.AsSpan(end));
+            if (list == null) return null;
+
+            // The item's lines, from its dash to the end of its last line, and the comment lines right above it.
+            var from = text.LastIndexOf('\n', Math.Max(start - 1, 0)) + 1;
+            var to = text.IndexOf('\n', end) is var lineEnd and >= 0 ? lineEnd + 1 : text.Length;
+            var indent = from < text.Length ? text[from..].TakeWhile(c => c == ' ').Count() : 0;
+            while (from > 0)
+            {
+                var previous = text.LastIndexOf('\n', from - 2) + 1;
+                var line = text[previous..(from - 1)].TrimEnd('\r');
+                if (!line.TrimStart().StartsWith('#') || line.TakeWhile(c => c == ' ').Count() != indent) break;
+                from = previous;
+            }
+
+            return string.Concat(text.AsSpan(0, from), text.AsSpan(to));
+        }
+
+        if (entry == null || list == null || nodes.Count == 0) return null;
+        // After the last case's line, at its dash's column and in its style.
+        var last = nodes[^1];
+        var after = text.IndexOf('\n', End(text, last)) is var next and >= 0 ? next : text.Length;
+        if (after > 0 && text[after - 1] == '\r') after--;
+        var dash = (int)list.Children[^1].Start.Column - 1;
+        while (dash > 0 && text[text.LastIndexOf('\n', (int)last.Start.Index) + 1 + dash] != '-') dash--;
+        var item = newline + new string(' ', dash) + "- " + Lines(entry, dash + 2, nodes.All(IsFlow), newline);
+        return string.Concat(text.AsSpan(0, after), item, text.AsSpan(after));
+    }
+
+    /// <summary>A case as an item of a test file's list, as <see cref="Replace"/> adds it.</summary>
+    public static string Format(TestCaseDef test) => "- " + Lines(Entry(test, test.Entry, null), 2, false, "\n") + "\n";
+
+    private static bool IsFlow(YamlNode node) => node is YamlMappingNode { Style: YamlDotNet.Core.Events.MappingStyle.Flow };
+
+    /// <summary>
+    /// An entry written at <paramref name="column"/>: on one line in flow style when asked for and short enough, else a
+    /// key per line, each value on the key's line when it fits there, as cases are written by hand.
+    /// </summary>
+    private static string Lines(JsonObject entry, int column, bool flow, string newline)
+    {
+        var line = YamlEmitter.WriteFlow(entry);
+        if (flow && column + line.Length <= MaxWidth) return line;
+        var lines = Block(entry, column);
+        return lines[0] + string.Concat(lines.Skip(1).Select(l => newline + new string(' ', column) + l));
+    }
+
+    /// <summary>A mapping's lines, indented relative to <paramref name="column"/>: nested mappings the same way, lists as blocks.</summary>
+    private static List<string> Block(JsonObject map, int column)
+    {
+        var lines = new List<string>();
+        foreach (var (key, value) in map)
+        {
+            var text = YamlEmitter.WriteFlow(value);
+            if (value is not (JsonObject { Count: > 0 } or JsonArray { Count: > 0 }) || column + key.Length + 2 + text.Length <= MaxWidth)
+            {
+                lines.Add($"{key}: {text}");
+                continue;
+            }
+
+            lines.Add(key + ":");
+            var inner = value is JsonObject nested ? Block(nested, column + 2) : YamlEmitter.Write(value).TrimEnd('\n').Split('\n').ToList();
+            lines.AddRange(inner.Select(l => "  " + l));
+        }
+
+        return lines;
     }
 
     private static string? NameOf(YamlMappingNode entry) => (Find(entry, "name") ?? Find(entry, "sample"))?.Value is YamlScalarNode { Value: { } name } ? name : null;

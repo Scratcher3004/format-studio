@@ -1,0 +1,159 @@
+@*
+    "Save as test": turns what a page shows (a value, bytes, a decoded capture) into a test case. A panel under the button
+    picks the name, the file and what the case keeps, and shows the YAML before it is added to the file.
+*@
+@using System.Text.Json
+@inherits ProjectComponent
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+@if (Draft != null)
+{
+    <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.PlaylistAdd" Size="@ButtonSize" OnClick="Open">Save as test</MudButton>
+}
+
+@if (_draft != null && Projects.Project is { } project)
+{
+    <MudPaper Outlined="@true" Class="pa-3 my-2">
+        <MudText Typo="@Typo.subtitle2" Class="mb-2">Save as test: @_draft.Subject</MudText>
+        <MudGrid Spacing="@(2)">
+            <MudItem xs="12" md="4">
+                <MudTextField T="string" @bind-Value="_name" Label="Name" Variant="@Variant.Outlined" Margin="@Margin.Dense" Immediate="@true" />
+            </MudItem>
+            <MudItem xs="12" md="8">
+                <MudAutocomplete T="string" @bind-Value="_file" SearchFunc="SearchFile" CoerceValue="@true" Label="File" Variant="@Variant.Outlined"
+                                 Margin="@Margin.Dense" Dense="@true" HelperText="The case is added at the end of the file" />
+            </MudItem>
+        </MudGrid>
+        <MudStack Row="@true" Spacing="@(2)" Wrap="@Wrap.Wrap" Class="my-1">
+            @if (_draft.Value != null)
+            {
+                <MudSwitch T="bool" @bind-Value="_keepValue" Label="Value" Color="@Color.Primary" />
+            }
+            @if (_draft.Bytes != null)
+            {
+                <MudSwitch T="bool" @bind-Value="_keepHex" Label="Hex" Color="@Color.Primary" />
+            }
+            @if (_draft.Decoded != null)
+            {
+                <MudSwitch T="bool" @bind-Value="_expectDecoded" Label="Expect the decoded value" Color="@Color.Primary" />
+            }
+        </MudStack>
+        @if (Problem() is { } problem)
+        {
+            <MudAlert Severity="@MudBlazor.Severity.Warning" Dense="@true" Class="mb-2">@problem</MudAlert>
+        }
+        else
+        {
+            <pre class="code-block">@TestFiles.Format(Case(project))</pre>
+        }
+        <MudStack Row="@true" Spacing="@(2)">
+            <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.Save" OnClick="Save" Disabled="@(Problem() != null)">Save</MudButton>
+            <MudButton Variant="@Variant.Text" OnClick="() => _draft = null">Cancel</MudButton>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    /// <summary>
+    /// What to save, when the button is clicked; throws <see cref="FormatException"/> to say why there is nothing. Without
+    /// it there is no button, and the page opens the panel with <see cref="Show"/>.
+    /// </summary>
+    [Parameter] public Func<TestDraft>? Draft { get; set; }
+    [Parameter] public Size ButtonSize { get; set; } = Size.Medium;
+
+    private TestDraft? _draft;
+    private string _name = "";
+    private string _file = "";
+    private bool _keepValue, _keepHex, _expectDecoded;
+
+    private void Open()
+    {
+        try
+        {
+            Show(Draft!());
+        }
+        catch (Exception e) when (e is System.FormatException or JsonException)
+        {
+            Snackbar.Add($"Nothing to save: {e.Message}", MudBlazor.Severity.Warning);
+        }
+    }
+
+    /// <summary>Opens the panel for a draft, e.g. of a row of results.</summary>
+    public void Show(TestDraft draft)
+    {
+        if (Projects.Project is not { } project) return;
+        _draft = draft;
+        // Next to the cases of the same type (or packets of the same protocol).
+        _file = project.Tests.LastOrDefault(t => draft.Type != null ? t.Type == draft.Type : t.Packet != null && t.Packet.Protocol == draft.Packet?.Protocol)?.Source?.File
+                ?? project.DefaultTestFile() ?? "tests/tests.yaml";
+        _name = Projects.NewTestName(_file, draft.Name);
+        // A value with its bytes is a known encoding; bytes alone are a capture, which expects what it decodes to.
+        _keepValue = draft.Value != null;
+        _keepHex = draft.Bytes != null;
+        _expectDecoded = draft.Bytes != null && draft.Decoded != null && draft.Value == null;
+        StateHasChanged();
+    }
+
+    private Task<IEnumerable<string>> SearchFile(string? text, CancellationToken token) =>
+        Task.FromResult((Projects.Project?.Tests ?? []).Select(s => s.Source?.File).OfType<string>()
+            .Append(Projects.Project?.DefaultTestFile()).OfType<string>().Distinct()
+            .Where(file => string.IsNullOrWhiteSpace(text) || file.Contains(text, StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.Ordinal).AsEnumerable());
+
+    private string? Problem()
+    {
+        if (string.IsNullOrWhiteSpace(_name)) return "The case needs a name.";
+        if (Projects.Project!.Tests.Any(t => t.Source?.File == _file.Trim() && t.Name == _name.Trim())) return $"{_file} has a case '{_name.Trim()}' already.";
+        if (!(_keepValue && _draft!.Value != null) && !(_keepHex && _draft!.Bytes != null)) return "Keep the value, the hex or both.";
+        return null;
+    }
+
+    private TestCaseDef Case(FormatProject project)
+    {
+        var draft = _draft!;
+        var test = new TestCaseDef
+        {
+            Name = _name.Trim(),
+            Type = draft.Type,
+            Value = _keepValue ? draft.Value?.DeepClone() : null,
+            Packet = draft.Packet,
+            Expect = _keepHex && (_expectDecoded && draft.Decoded != null || draft.Consumed != null)
+                ? new TestExpectation { HasValue = _expectDecoded && draft.Decoded != null, Value = _expectDecoded ? draft.Decoded?.DeepClone() : null, Consumed = draft.Consumed }
+                : null,
+        };
+        if (_keepHex && draft.Bytes != null) test.Hex = TestSnapshots.FormatHex(project, test, draft.Bytes);
+        return test;
+    }
+
+    private void Save()
+    {
+        if (Projects.Project is not { } project || Problem() != null) return;
+        var test = Case(project);
+        string written;
+        try
+        {
+            written = Projects.SaveTest(test, _file.Trim(), null);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
+        {
+            Snackbar.Add($"Not saved: {e.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+
+        var tests = Projects.Project?.Tests ?? [];
+        var file = Projects.Project?.Relative(written);
+        var index = tests.FindLastIndex(t => t.Source?.File == file && t.Name == test.Name);
+        _draft = null;
+        Snackbar.Add($"Saved '{test.Name}' to {file}.", MudBlazor.Severity.Success, config =>
+        {
+            if (index < 0) return;
+            config.Action = "Open";
+            config.OnClick = _ =>
+            {
+                Navigation.NavigateTo(Link($"test/{index}"));
+                return Task.CompletedTask;
+            };
+        });
+    }
+}

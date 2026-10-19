@@ -26,8 +26,9 @@
     <MudAlert Severity="@(_failed.Count == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Error)" Dense="true" Class="mb-2">
         @(_results.Count - _failed.Count) of @_results.Count round trips passed.
     </MudAlert>
+    <SaveAsTest @ref="_save" />
     <MudSimpleTable Dense="true" Hover="true">
-        <thead><tr><th>Type</th><th>Problem</th><th>Value</th></tr></thead>
+        <thead><tr><th>Type</th><th>Problem</th><th>Value</th><th></th></tr></thead>
         <tbody>
             @foreach (var result in _failed.Take(200))
             {
@@ -35,6 +36,12 @@
                     <td><MudLink Href="@Link($"type/{result.Type}")">@result.Type</MudLink></td>
                     <td>@string.Join("; ", result.Diagnostics.Where(d => d.Severity == Severity.Error).Select(d => d.ToString()))</td>
                     <td class="mono" style="max-width: 480px; overflow-wrap: anywhere">@JsonValues.ToText(result.Value, false)</td>
+                    <td class="row-buttons">
+                        <MudTooltip Text="Save the value as a test case, which fails until the definitions are fixed">
+                            <MudIconButton Icon="@Icons.Material.Filled.PlaylistAdd" Size="@Size.Small"
+                                           OnClick="() => _save?.Show(new TestDraft(TestDraft.NameFor(result.Type), result.Type, result.Value, null))" />
+                        </MudTooltip>
+                    </td>
                 </tr>
             }
         </tbody>
@@ -49,6 +56,7 @@
     private bool _running;
     private List<RoundTripResult>? _results;
     private List<RoundTripResult> _failed = [];
+    private SaveAsTest? _save;
 
     private async Task Run()
     {

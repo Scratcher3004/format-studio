@@ -205,11 +205,13 @@ public static class TestRunner
                 var expected = given != null && expect.Consumed is { } length && length <= given.Length ? given[..length] : given;
                 if (expected != null && !expected.AsSpan().SequenceEqual(bytes))
                 {
+                    var offset = expected.AsSpan().CommonPrefixLength(bytes);
                     failures.Add(new CaseFailure(CaseFailureKind.Mismatch, $"encodes to {Hex.Format(bytes)}, expected {Hex.Format(expected)}")
                     {
                         Expected = expected,
                         Actual = bytes,
-                        Offset = expected.AsSpan().CommonPrefixLength(bytes),
+                        Offset = offset,
+                        Path = FieldAt(subject, expected, offset),
                     });
                 }
             }
@@ -230,7 +232,15 @@ public static class TestRunner
             }
 
             var roundTrip = subject.RoundTrip(bytes);
-            failures.AddRange(Errors(roundTrip.Diagnostics, CaseFailureKind.RoundTrip));
+            var roundTripFailures = Errors(roundTrip.Diagnostics, CaseFailureKind.RoundTrip).ToList();
+            if (roundTrip.Reencoded is { } again && !again.AsSpan().SequenceEqual(bytes) && roundTripFailures.FindIndex(f => f.Message.StartsWith("Re-encoding differs", StringComparison.Ordinal)) is >= 0 and var at)
+            {
+                // Both byte strings, for a side-by-side view of where they differ.
+                var offset = bytes.AsSpan().CommonPrefixLength(again);
+                roundTripFailures[at] = roundTripFailures[at] with { Expected = bytes, Actual = again, Offset = offset, Path = FieldAt(subject, bytes, offset) };
+            }
+
+            failures.AddRange(roundTripFailures);
             warnings.AddRange(roundTrip.Diagnostics.Where(d => d.Severity == Severity.Warning));
             if (roundTrip.Success) decodedValue = roundTrip.Value;
             if (expect.ValueAuto) failures.Add(new CaseFailure(CaseFailureKind.Snapshot, "the expected value is auto; format-studio test --update fills it in"));
@@ -308,6 +318,14 @@ public static class TestRunner
         }
 
         return new CaseResult(test, failures, null);
+    }
+
+    /// <summary>The field the byte at <paramref name="offset"/> of the bytes belongs to, or <c>packet id</c>; null when they don't get that far.</summary>
+    private static string? FieldAt(Subject subject, byte[] bytes, int offset)
+    {
+        var decoded = subject.Decode(bytes);
+        if (subject.Packets != null && offset < decoded.HeaderLength) return "packet id";
+        return decoded.Root?.At(offset - decoded.HeaderLength) is { } node && FieldPath(node.Path) is { Length: > 0 } path ? path : null;
     }
 
     private static bool ErrorMatches(Diagnostic error, TestExpectation expect) =>

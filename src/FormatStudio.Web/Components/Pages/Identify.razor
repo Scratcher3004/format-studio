@@ -39,11 +39,13 @@
         <DiagnosticList Items="result.Diagnostics" />
         <pre class="code-block">@JsonValues.ToText(result.Value)</pre>
     }
+    <SaveAsTest Draft="PacketDraft" />
 }
+<SaveAsTest @ref="_save" />
 @if (_matches.Count > 0)
 {
     <MudSimpleTable Dense="true" Hover="true">
-        <thead><tr><th>Score</th><th>Type</th><th>Result</th><th>Decoded</th><th>First problem</th></tr></thead>
+        <thead><tr><th>Score</th><th>Type</th><th>Result</th><th>Decoded</th><th>First problem</th><th></th></tr></thead>
         <tbody>
             @foreach (var match in _matches.Take(25))
             {
@@ -53,6 +55,11 @@
                     <td>@(match.Result.Success ? match.Result.Consumed == _length ? "complete" : "partial" : "error")</td>
                     <td>@match.Result.Consumed / @_length</td>
                     <td>@match.Result.Diagnostics.FirstOrDefault()?.Message</td>
+                    <td class="row-buttons">
+                        <MudTooltip Text="Save the bytes as a test case of this type">
+                            <MudIconButton Icon="@Icons.Material.Filled.PlaylistAdd" Size="@Size.Small" OnClick="() => _save?.Show(MatchDraft(match))" />
+                        </MudTooltip>
+                    </td>
                 </tr>
             }
         </tbody>
@@ -69,16 +76,38 @@
     private int _length;
     private List<IdentifyMatch> _matches = [];
     private (ulong Id, int HeaderLength, string? Name, DecodeResult? Result)? _packet;
+    /// <summary>The bytes, header and protocol of the last run, which Save as test saves.</summary>
+    private byte[] _bytes = [];
+    private PacketFrame? _frame;
+    private SaveAsTest? _save;
+
+    /// <summary>A packet case: the id picks the packet, which must decode to what it decodes to now.</summary>
+    private TestDraft PacketDraft()
+    {
+        if (_packet is not { } packet || _frame == null) throw new System.FormatException("identify the bytes first");
+        var result = packet.Result;
+        return new TestDraft(TestDraft.NameFor(packet.Name ?? "unknown-id"), null, null, _bytes, _frame,
+            Decoded: result is { Success: true } ? result.Value : null,
+            Consumed: result is { Success: true } && packet.HeaderLength + result.Consumed < _bytes.Length ? packet.HeaderLength + result.Consumed : null);
+    }
+
+    /// <summary>The bytes as the type of a match, with the value they decode to.</summary>
+    private TestDraft MatchDraft(IdentifyMatch match) =>
+        new(TestDraft.NameFor(match.Type.Name), match.Type.Name, null, _bytes,
+            Decoded: match.Result.Success ? match.Result.Value : null,
+            Consumed: match.Result.Success && match.Result.Consumed < _bytes.Length ? match.Result.Consumed : null);
 
     private void Run()
     {
         _error = null;
         _matches = [];
         _packet = null;
+        _frame = null;
         if (Projects.Project == null) return;
         try
         {
             var bytes = Hex.Parse(_hex);
+            _bytes = bytes;
             _length = bytes.Length;
             var codec = new Codec(Projects.Project);
             var candidates = _protocol != null && Projects.Project.FindProtocol(_protocol) is { } protocol ? Projects.Project.PacketsOf(protocol).ToList() : null;
@@ -93,6 +122,7 @@
                 : Convert.ToUInt64(_mask.Trim(), _mask.Trim().StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? 16 : 10);
             var (packet, id, headerLength, result) = Simulator.DecodePacket(codec, bytes, new PacketHeader(headerType, mask), candidates);
             _packet = (id, headerLength, packet?.Name, result);
+            _frame = new PacketFrame { Header = headerType, Protocol = candidates != null ? _protocol : null, IdMask = mask };
         }
         catch (Exception e) when (e is System.FormatException or DecodeException or OverflowException or ArgumentException)
         {

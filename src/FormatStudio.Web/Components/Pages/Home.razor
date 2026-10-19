@@ -1,7 +1,5 @@
 @page "/p/{ProjectId}"
 @inherits ProjectComponent
-@inject IDialogService Dialogs
-@inject ISnackbar Snackbar
 
 <PageTitle>Format Studio</PageTitle>
 
@@ -41,73 +39,42 @@
         </MudExpansionPanel>
         <MudExpansionPanel Text="@($"Tests ({project.Tests.Count})")" Expanded="@(project.Tests.Count > 0)">
             <MudStack Row="@true" Spacing="@(2)" Class="mb-2" AlignItems="@AlignItems.Center">
-                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => RunTests(project)">Run tests</MudButton>
+                <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => Projects.RunTests()"
+                           Disabled="@(project.Tests.Count == 0)">Run tests</MudButton>
+                <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Checklist" Href="@Link("tests")">Tests page</MudButton>
                 <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" Href="@Link("test/new")">New test</MudButton>
-                @if (_testResults.Count > 0)
-                {
-                    <MudText Typo="@Typo.body2">@_testResults.Values.Count(r => r.Passed) passed, @_testResults.Values.Count(r => r.Failed) failed, @_testResults.Values.Count(r => r.Skipped) skipped</MudText>
-                }
-                @if (_acceptable.Count > 0)
-                {
-                    <MudTooltip Text="Write what the failed cases give (hex, expected values, warnings, lengths) into their files, as test --update does">
-                        <MudButton Variant="@Variant.Outlined" Color="@Color.Warning" StartIcon="@Icons.Material.Filled.DoneAll" OnClick="AcceptAll">Accept all actual (@_acceptable.Count)</MudButton>
-                    </MudTooltip>
-                }
             </MudStack>
-            <MudSimpleTable Dense="true">
-                <thead><tr><th>Test</th><th>Type</th><th>Tags</th><th>Expected bytes</th><th>Result</th><th></th></tr></thead>
-                <tbody>
-                    @for (var i = 0; i < project.Tests.Count; i++)
-                    {
-                        var test = project.Tests[i];
-                        var index = i;
-                        var outcome = _testResults.GetValueOrDefault(test)?.Summary ?? (test.Skip != null ? "skipped: " + test.Skip : null);
-                        <tr>
-                            <td><MudLink Href="@Link($"test/{index}")">@test.Name</MudLink> <span class="mud-text-secondary">@test.Suite</span></td>
-                            <td>
-                                @if (test.Type != null)
-                                {
-                                    <MudLink Href="@Link($"type/{test.Type}")">@test.Type</MudLink>
-                                }
-                                else
-                                {
-                                    <span class="mud-text-secondary">@test.Subject</span>
-                                }
-                                @if (test.Fuzz != null)
-                                {
-                                    <span class="mud-text-secondary"> (fuzz)</span>
-                                }
-                            </td>
-                            <td>@string.Join(", ", test.Tags)</td>
-                            <td class="mono" title="@(test.Hex ?? test.File)">@Truncate(test.Hex ?? test.File)</td>
-                            <td title="@outcome" class="@(_testResults.GetValueOrDefault(test)?.Failed == true ? "mud-error-text" : null)">@Truncate(outcome)</td>
-                            <td class="row-buttons">
-                                @if (_acceptable.Contains(test))
-                                {
-                                    <MudTooltip Text="Accept actual: write what the case gives into its file">
-                                        <MudIconButton Icon="@Icons.Material.Filled.Done" Size="@Size.Small" Color="@Color.Warning" OnClick="() => Accept(test)" />
-                                    </MudTooltip>
-                                }
-                                <MudTooltip Text="View and debug">
-                                    <MudIconButton Icon="@Icons.Material.Filled.BugReport" Size="@Size.Small" Href="@Link($"test/{index}")" />
-                                </MudTooltip>
-                                <MudTooltip Text="Delete">
-                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="@Size.Small" OnClick="() => Delete(test)" />
-                                </MudTooltip>
-                            </td>
-                        </tr>
-                    }
-                </tbody>
-            </MudSimpleTable>
+            @if (Projects.TestResults.Count > 0)
+            {
+                var results = Projects.TestResults.Values.ToList();
+                var failed = results.Where(r => r.Failed).ToList();
+                <MudAlert Severity="@(failed.Count > 0 ? MudBlazor.Severity.Error : MudBlazor.Severity.Success)" Dense="@true" Class="mb-2">
+                    @results.Count(r => r.Passed) passed, @failed.Count failed, @results.Count(r => r.Skipped) skipped.
+                </MudAlert>
+                @foreach (var result in failed.Take(MaxFailures))
+                {
+                    <MudText Typo="@Typo.body2">
+                        <MudLink Href="@Link($"test/{project.Tests.IndexOf(result.Case)}")">@result.Id</MudLink>
+                        <span class="mud-error-text ml-2">@Truncate(result.Summary)</span>
+                    </MudText>
+                }
+                @if (failed.Count > MaxFailures)
+                {
+                    <MudLink Href="@Link("tests?status=failed")">All @failed.Count failures</MudLink>
+                }
+            }
+            else
+            {
+                <MudText Typo="@Typo.body2">
+                    @project.Tests.Count cases in @string.Join(", ", project.Tests.GroupBy(t => t.Suite).Select(g => $"{g.Key} ({g.Count()})")).
+                </MudText>
+            }
         </MudExpansionPanel>
     </MudExpansionPanels>
 }
 
 @code {
     private bool _showInfo;
-    private readonly Dictionary<TestCaseDef, CaseResult> _testResults = [];
-    /// <summary>Failed cases whose actual results can be accepted.</summary>
-    private readonly HashSet<TestCaseDef> _acceptable = [];
 
     /// <summary>The page a diagnostic is fixed on, as a link inside this project.</summary>
     private DiagnosticLink? FixLink(FormatProject project, Diagnostic diagnostic) =>
@@ -123,57 +90,11 @@
         ("bitfields", project.Types.Values.Count(t => t is BitfieldDef)),
     ];
 
-    /// <summary>Hex and results longer than this are cut in the table; the full text is in the tooltip.</summary>
-    private const int MaxShown = 48;
+    /// <summary>Results longer than this are cut; the Tests page has them in full.</summary>
+    private const int MaxShown = 80;
+
+    /// <summary>Failures listed on the overview; the Tests page has all.</summary>
+    private const int MaxFailures = 5;
 
     private static string? Truncate(string? text) => text is { Length: > MaxShown } ? text[..MaxShown] + "\u2026" : text;
-
-    private void RunTests(FormatProject project)
-    {
-        _testResults.Clear();
-        foreach (var result in TestRunner.Run(project)) _testResults[result.Case] = result;
-        _acceptable.Clear();
-        foreach (var result in _testResults.Values.Where(Projects.CanAccept)) _acceptable.Add(result.Case);
-    }
-
-    private void Accept(TestCaseDef test)
-    {
-        try
-        {
-            var keys = Projects.AcceptTest(test);
-            Snackbar.Add($"Updated {string.Join(", ", keys)} of '{test.Name}'.", MudBlazor.Severity.Success);
-        }
-        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
-        {
-            Snackbar.Add($"Not updated: {e.Message}", MudBlazor.Severity.Error);
-        }
-
-        // The cases are read again with the project, so their results are of the new ones.
-        if (Projects.Project is { } project) RunTests(project);
-    }
-
-    private void AcceptAll()
-    {
-        var outcomes = Projects.AcceptAll();
-        var updated = outcomes.Count(o => o.Updated.Count > 0);
-        var kept = outcomes.Where(o => o.Reason != null).ToList();
-        Snackbar.Add($"Updated {updated} {(updated == 1 ? "case" : "cases")}" + (kept.Count > 0 ? $"; {kept.Count} still fail, e.g. {kept[0].Case.Name}: {kept[0].Reason}" : "."),
-            kept.Count > 0 ? MudBlazor.Severity.Warning : MudBlazor.Severity.Success);
-        if (Projects.Project is { } project) RunTests(project);
-    }
-
-    private async Task Delete(TestCaseDef test)
-    {
-        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete test", $"Delete '{test.Name}' from {test.Source?.File}?", yesText: "Delete", cancelText: "Cancel");
-        if (confirmed != true) return;
-        try
-        {
-            Projects.DeleteTest(test);
-            Snackbar.Add($"Deleted '{test.Name}'.", MudBlazor.Severity.Success);
-        }
-        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
-        {
-            Snackbar.Add($"Not deleted: {e.Message}", MudBlazor.Severity.Error);
-        }
-    }
 }

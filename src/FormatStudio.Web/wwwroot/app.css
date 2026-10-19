@@ -80,6 +80,39 @@
     text-decoration: underline wavy var(--mud-palette-error);
 }
 
+/* Expected and actual bytes of a failed test (HexDiff). */
+.hex-diff .hex-byte {
+    cursor: default;
+}
+
+.hex-side {
+    display: inline-block;
+    width: 9ch;
+    opacity: 0.6;
+}
+
+.hex-pair-end {
+    margin-bottom: 6px;
+}
+
+.hex-diff-byte {
+    background: color-mix(in srgb, var(--mud-palette-error) 25%, transparent);
+}
+
+.hex-first-diff {
+    background: var(--mud-palette-error);
+    color: var(--mud-palette-error-text);
+}
+
+.hex-missing {
+    opacity: 0.3;
+}
+
+.hex-hidden {
+    opacity: 0.6;
+    font-style: italic;
+}
+
 .hex-ascii {
     margin-left: 12px;
     opacity: 0.6;

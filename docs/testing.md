@@ -2,7 +2,7 @@
 
 A project's test cases pin down how values and bytes of its types look: a value with its known encoding, bytes from a
 capture, a whole packet with its id, input that must be rejected, random values that must round-trip. `format-studio test` runs them against the simulator
-and, with `--target`, against the generated C# and Java; the web UI lists and runs them on the overview, and CI can read
+and, with `--target`, against the generated C# and Java; the web UI's Tests page lists, runs and edits them, and CI can read
 the results as JUnit XML.
 
 ## Test files
@@ -171,8 +171,8 @@ its bytes, e.g. a capture's decoded value; until it is filled in the case fails.
 ```
 
 Check the changed files (e.g. with `git diff`) before committing them: an update accepts whatever the definitions
-give now, including a bug. In the web UI, **Accept actual** on a failed case does the same for that case (on its
-page, once its edits are saved), and **Accept all actual** on the overview for all of them.
+give now, including a bug. In the web UI, **Accept actual** on a failed case does the same for that case (on the Tests
+page, or on its page once its edits are saved), and **Accept all actual** on the Tests page for all of them.
 
 ## Generated code
 
@@ -239,6 +239,7 @@ format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob
 - The exit code is 1 when a case fails or the project has errors, so CI needs no `validate` or `roundtrip` step
   besides it. `format-studio samples` is the same command.
 
-Without `--target` the cases run against the simulator only. In the web UI, the overview's **Tests** panel runs them
-(against the simulator) and shows each result; a case's page edits its name, type, value and hex and keeps its other
-keys.
+Without `--target` the cases run against the simulator only. In the web UI, the **Tests** page runs them (against the
+simulator) and shows each failure, with bytes that differ side by side; a case's page edits the case and what it
+expects, and **Save as test** on the Simulate, Identify and Round trip pages adds a case from what they show (see
+[usage](usage.md)).

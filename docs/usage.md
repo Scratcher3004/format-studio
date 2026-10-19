@@ -75,14 +75,26 @@ Validation runs on every change. Next to the editor, **sample data** (pasted hex
 64 KiB, optionally skipping a header) is decoded with the definition as it is being edited, with the annotated hex
 view, value tree and JSON, so a packet can be built field by field against a capture.
 
-The [test cases](testing.md) of a project are listed on the overview with their suite and tags (long hex is cut; hover
-for all of it), where they can be run, deleted or opened; after a run, **Accept actual** writes what a failed case
-gives into its file (**Accept all actual** for all of them, as `test --update` does). A case's page edits its name, type, file, value and hex, and
-decodes the hex (or, without hex, encodes the value) into the annotated hex view and value tree, so a failing case can
-be debugged byte by byte; Encode, Decode and Round trip work as on the Simulate page, and their results are what Save
-writes. Its other keys (a bytes file, expectations, a packet header, fuzzing, skip, tags) are listed and kept; a packet
-case's value and hex are plain text fields, since its bytes start with the packet id. New cases go to a file matched by
-the project's `tests` patterns (by default the first file with cases). Saving or deleting rewrites the test file,
-keeping its shape and the other cases but not comments.
+The **Tests** page lists the [test cases](testing.md) of a project grouped by suite, tag or file, filtered by name,
+tag and status, with the number passed, failed, skipped and not run. **Run all** or **Run shown** runs them against the
+simulator; a failed case's result opens its failures: bytes that differ are shown expected above actual with the
+first difference marked and the field it is in, and a fuzz failure has the random value to repeat it with. **Accept
+actual** writes what a failed case gives into its file (**Accept all actual** for all of them, as `test --update`
+does). The overview sums up the last run and links to the failures.
+
+A case's page edits its name, type, file, tags, skip, value and hex, and what it expects: a decoded value (**Use
+decoded value** takes the one of the last Check, or `auto`), exactly or only the fields given, the warnings, the bytes
+taken up, or a failure with its step, error text and field. It decodes the hex (or, without hex, encodes the value)
+into the annotated hex view and value tree, so a failing case can be debugged byte by byte; Encode, Decode and Round
+trip work as on the Simulate page, and their results are what Save writes. Check shows the failures as the Tests page
+does. A bytes file, a packet header, fuzzing and `skip-targets` are listed and kept; a packet case's value and hex are
+plain text fields, since its bytes start with the packet id.
+
+**Save as test** on the Simulate page (the value and hex shown), on Identify (the bytes as the packet their id picks,
+or as one of the ranked types) and on Round trip (a value that fails) turns what the page shows into a case: bytes
+without a value expect what they decode to, so a capture becomes a regression case. It previews the case before adding
+it to a file next to cases of the same type. Saving, adding or deleting a case changes only that case's text in its
+file: comments and the layout of the other cases stay.
+
 Test files are checked when the project loads: an unknown type, key or protocol, invalid hex, a missing bytes file, a
 case with nothing to test, a packet case whose type isn't one of the packets it may be, or a repeated name shows up with the other diagnostics, at the case's line.

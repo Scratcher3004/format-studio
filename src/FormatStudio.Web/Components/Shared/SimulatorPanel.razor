@@ -25,6 +25,10 @@
     </MudItem>
 </MudGrid>
 
+@if (CanSave)
+{
+    <div class="mt-2"><SaveAsTest Draft="Draft" /></div>
+}
 @if (_message != null)
 {
     <MudAlert Severity="@_messageSeverity" Class="my-2" Dense="true">@_message</MudAlert>
@@ -60,6 +64,8 @@
     /// <summary>The bytes as hex, when bound.</summary>
     [Parameter] public string? HexText { get; set; }
     [Parameter] public EventCallback<string> HexTextChanged { get; set; }
+    /// <summary>Offers Save as test for the value and bytes.</summary>
+    [Parameter] public bool CanSave { get; set; }
 
     private string _json = "";
     private string _hex = "";
@@ -265,6 +271,19 @@
         _diagnostics.AddRange(result.Diagnostics);
         if (updateJson && result.Value != null) _json = JsonValues.ToText(result.Value);
         return result;
+    }
+
+    /// <summary>The value and bytes as they are now, with what the bytes decode to.</summary>
+    private TestDraft Draft()
+    {
+        var type = Codec.ParseType(Type);
+        var value = string.IsNullOrWhiteSpace(_json) ? null : JsonNode.Parse(_json);
+        var bytes = string.IsNullOrWhiteSpace(_hex) ? null : Hex.Parse(_hex);
+        if (value == null && bytes == null) throw new System.FormatException("there is no value or hex");
+        var decoded = bytes != null && Codec is { } codec ? codec.Decode(type, bytes) : null;
+        return new TestDraft(TestDraft.NameFor(Type), Type.Trim(), value, bytes,
+            Decoded: decoded is { Success: true } ? decoded.Value : null,
+            Consumed: decoded is { Success: true } && decoded.Consumed < bytes!.Length ? decoded.Consumed : null);
     }
 
     private void RoundTrip()

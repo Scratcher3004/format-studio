@@ -1,0 +1,330 @@
+@page "/p/{ProjectId}/tests"
+@inherits ProjectComponent
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+@*
+    The project's test cases grouped by suite, tag or file, with filters, runs of all or the shown cases, and each
+    failure in detail: the bytes that differ side by side, the field they are in, fuzz values.
+*@
+
+<PageTitle>Tests - Format Studio</PageTitle>
+
+@if (Projects.Project is { } project)
+{
+    <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="@(2)" Class="mb-2">
+        <MudText Typo="@Typo.h5">Tests</MudText>
+        <MudSpacer />
+        <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" Href="@Link("test/new")">New test</MudButton>
+    </MudStack>
+    <MudText Typo="@Typo.body2" Class="mb-3">
+        The cases of the test files (@string.Join(", ", project.Settings.Tests.DefaultIfEmpty("none"))), run against the
+        simulator as <span class="mono">format-studio test</span> does. Click a case's result for its failures.
+    </MudText>
+
+    <MudStack Row="@true" Spacing="@(2)" AlignItems="@AlignItems.Center" Class="mb-2" Wrap="@Wrap.Wrap">
+        <MudTextField T="string" @bind-Value="_search" Immediate="@true" Placeholder="Name, suite or type" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                      Adornment="@Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="@true" Style="max-width: 260px" />
+        @if (AllTags(project) is { Count: > 0 } tags)
+        {
+            <MudSelect T="string" @bind-SelectedValues="_tags" MultiSelection="@true" Label="Tags" Variant="@Variant.Outlined" Margin="@Margin.Dense"
+                       Clearable="@true" Style="max-width: 220px">
+                @foreach (var tag in tags)
+                {
+                    <MudSelectItem T="string" Value="@tag">@tag</MudSelectItem>
+                }
+            </MudSelect>
+        }
+        <MudSelect T="StatusFilter" @bind-Value="_status" Label="Status" Variant="@Variant.Outlined" Margin="@Margin.Dense" Style="max-width: 160px">
+            @foreach (var status in Enum.GetValues<StatusFilter>())
+            {
+                <MudSelectItem T="StatusFilter" Value="@status">@StatusText(status)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="Grouping" @bind-Value="_grouping" Label="Group by" Variant="@Variant.Outlined" Margin="@Margin.Dense" Style="max-width: 140px">
+            @foreach (var grouping in Enum.GetValues<Grouping>())
+            {
+                <MudSelectItem T="Grouping" Value="@grouping">@grouping.ToString().ToLowerInvariant()</MudSelectItem>
+            }
+        </MudSelect>
+    </MudStack>
+
+    var shown = Shown(project).ToList();
+    <MudStack Row="@true" Spacing="@(2)" AlignItems="@AlignItems.Center" Class="mb-3" Wrap="@Wrap.Wrap">
+        <MudButton Variant="@Variant.Filled" Color="@Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => Run(project.Tests)"
+                   Disabled="@(project.Tests.Count == 0)">Run all (@project.Tests.Count)</MudButton>
+        @if (shown.Count < project.Tests.Count)
+        {
+            <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => Run(shown)" Disabled="@(shown.Count == 0)">
+                Run shown (@shown.Count)
+            </MudButton>
+        }
+        @if (Acceptable().Count is > 0 and var acceptable)
+        {
+            <MudTooltip Text="Write what the failed cases give (hex, expected values, warnings, lengths) into their files, as test --update does">
+                <MudButton Variant="@Variant.Outlined" Color="@Color.Warning" StartIcon="@Icons.Material.Filled.DoneAll" OnClick="AcceptAll">Accept all actual (@acceptable)</MudButton>
+            </MudTooltip>
+        }
+        <MudSpacer />
+        @foreach (var (status, count) in Counts(project.Tests))
+        {
+            <MudChip T="string" Size="@Size.Small" Variant="@Variant.Outlined" Color="@StatusColor(status)"
+                     OnClick="() => _status = _status == status ? StatusFilter.All : status">@count @StatusText(status).ToLowerInvariant()</MudChip>
+        }
+    </MudStack>
+
+    @if (project.Tests.Count == 0)
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true">
+            The project has no test cases yet. Add one with New test, or with Save as test on the Simulate, Identify and Round trip pages.
+        </MudAlert>
+    }
+    else if (shown.Count == 0)
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true">No case matches the filters.</MudAlert>
+    }
+
+    <MudExpansionPanels MultiExpansion="@true">
+        @foreach (var (group, cases) in Groups(shown))
+        {
+            <MudExpansionPanel @key="@($"{_grouping}/{group}")" Expanded="@true">
+                <TitleContent>
+                    <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="@(2)">
+                        <MudText Typo="@Typo.subtitle1">@group</MudText>
+                        <MudText Typo="@Typo.body2" Class="mud-text-secondary">@GroupCounts(cases)</MudText>
+                    </MudStack>
+                </TitleContent>
+                <ChildContent>
+                    <MudSimpleTable Dense="@true" Hover="@true" Style="table-layout: fixed">
+                        @* The same columns in every group. *@
+                        <colgroup><col style="width: 40px" /><col style="width: 24%" /><col style="width: 20%" /><col style="width: 14%" /><col /><col style="width: 156px" /></colgroup>
+                        <thead><tr><th></th><th>Case</th><th>Type</th><th>Tags</th><th>Result</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var test in cases)
+                            {
+                                var result = Projects.TestResults.GetValueOrDefault(test);
+                                var status = StatusOf(test);
+                                var index = project.Tests.IndexOf(test);
+                                <tr>
+                                    <td style="width: 32px"><MudIcon Icon="@StatusIcon(status)" Color="@StatusColor(status)" Size="@Size.Small" /></td>
+                                    <td>
+                                        <MudLink Href="@Link($"test/{index}")">@test.Name</MudLink>
+                                        @if (_grouping != Grouping.Suite)
+                                        {
+                                            <span class="mud-text-secondary ml-1">@test.Suite</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (test.Type != null && project.Find(test.Type) != null)
+                                        {
+                                            <MudLink Href="@Link($"type/{test.Type}")">@test.Type</MudLink>
+                                        }
+                                        else
+                                        {
+                                            <span class="@(test.Type == null ? "mud-text-secondary" : "mono")">@test.Subject</span>
+                                        }
+                                        @if (test.Fuzz != null)
+                                        {
+                                            <span class="mud-text-secondary"> (fuzz)</span>
+                                        }
+                                    </td>
+                                    <td style="overflow-wrap: anywhere">@string.Join(", ", test.Tags)</td>
+                                    <td class="@(status == StatusFilter.Failed ? "mud-error-text" : null)" style="@(result?.Failed == true ? "cursor: pointer" : null)"
+                                        title="@(result?.Summary ?? "Not run")" @onclick="() => Toggle(test)">
+                                        @if (result?.Failed == true)
+                                        {
+                                            <MudIcon Icon="@(_open.Contains(test) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)" Size="@Size.Small" Style="vertical-align: middle" />
+                                        }
+                                        @Truncate(result?.Summary ?? (test.Skip != null ? "skipped: " + test.Skip : "not run"))
+                                    </td>
+                                    <td class="row-buttons">
+                                        @if (result != null && Projects.CanAccept(result))
+                                        {
+                                            <MudTooltip Text="Accept actual: write what the case gives into its file">
+                                                <MudIconButton Icon="@Icons.Material.Filled.Done" Size="@Size.Small" Color="@Color.Warning" OnClick="() => Accept(test)" />
+                                            </MudTooltip>
+                                        }
+                                        <MudTooltip Text="Run">
+                                            <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Size="@Size.Small" OnClick="() => Run([test], open: true)" />
+                                        </MudTooltip>
+                                        <MudTooltip Text="View and debug">
+                                            <MudIconButton Icon="@Icons.Material.Filled.BugReport" Size="@Size.Small" Href="@Link($"test/{index}")" />
+                                        </MudTooltip>
+                                        <MudTooltip Text="Delete">
+                                            <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="@Size.Small" OnClick="() => Delete(test)" />
+                                        </MudTooltip>
+                                    </td>
+                                </tr>
+                                @if (result?.Failed == true && _open.Contains(test))
+                                {
+                                    <tr>
+                                        <td></td>
+                                        <td colspan="5">
+                                            <MudText Typo="@Typo.caption" Class="mud-text-secondary">@test.Source</MudText>
+                                            <FailureList Result="@result" />
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                </ChildContent>
+            </MudExpansionPanel>
+        }
+    </MudExpansionPanels>
+}
+
+@code {
+    private enum StatusFilter
+    {
+        All,
+        Failed,
+        Passed,
+        Skipped,
+        NotRun,
+    }
+
+    private enum Grouping
+    {
+        Suite,
+        Tag,
+        File,
+    }
+
+    [SupplyParameterFromQuery(Name = "status")] public string? InitialStatus { get; set; }
+
+    private string? _search;
+    private IReadOnlyCollection<string> _tags = [];
+    private StatusFilter _status;
+    private Grouping _grouping;
+    /// <summary>Cases whose failures are shown.</summary>
+    private readonly HashSet<TestCaseDef> _open = [];
+
+    protected override void OnInitialized()
+    {
+        if (Enum.TryParse<StatusFilter>(InitialStatus, ignoreCase: true, out var status)) _status = status;
+    }
+
+    private const int MaxShown = 80;
+
+    private static string Truncate(string text) => text.Length > MaxShown ? text[..MaxShown] + "…" : text;
+
+    private static List<string> AllTags(FormatProject project) => project.Tests.SelectMany(t => t.Tags).Distinct().Order(StringComparer.Ordinal).ToList();
+
+    private StatusFilter StatusOf(TestCaseDef test) => Projects.TestResults.GetValueOrDefault(test)?.Status switch
+    {
+        CaseStatus.Passed => StatusFilter.Passed,
+        CaseStatus.Failed => StatusFilter.Failed,
+        CaseStatus.Skipped => StatusFilter.Skipped,
+        _ => test.Skip != null ? StatusFilter.Skipped : StatusFilter.NotRun,
+    };
+
+    private static string StatusText(StatusFilter status) => status == StatusFilter.NotRun ? "Not run" : status.ToString();
+
+    private static Color StatusColor(StatusFilter status) => status switch
+    {
+        StatusFilter.Passed => Color.Success,
+        StatusFilter.Failed => Color.Error,
+        StatusFilter.Skipped => Color.Warning,
+        _ => Color.Default,
+    };
+
+    private static string StatusIcon(StatusFilter status) => status switch
+    {
+        StatusFilter.Passed => Icons.Material.Filled.CheckCircle,
+        StatusFilter.Failed => Icons.Material.Filled.Cancel,
+        StatusFilter.Skipped => Icons.Material.Filled.RemoveCircleOutline,
+        _ => Icons.Material.Outlined.Circle,
+    };
+
+    private IEnumerable<(StatusFilter, int)> Counts(IEnumerable<TestCaseDef> tests) =>
+        tests.GroupBy(StatusOf).OrderBy(g => g.Key).Select(g => (g.Key, g.Count()));
+
+    private string GroupCounts(IReadOnlyList<TestCaseDef> cases) =>
+        $"{cases.Count} {(cases.Count == 1 ? "case" : "cases")}" + string.Concat(Counts(cases).Select(c => $", {c.Item2} {StatusText(c.Item1).ToLowerInvariant()}"));
+
+    private IEnumerable<TestCaseDef> Shown(FormatProject project) => project.Tests.Where(test =>
+        (string.IsNullOrWhiteSpace(_search) || new[] { test.Name, test.Suite, test.Subject }.Any(text => text.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)))
+        && (!_tags.Any() || _tags.Any(test.Tags.Contains))
+        && (_status == StatusFilter.All || StatusOf(test) == _status));
+
+    private IEnumerable<(string Group, IReadOnlyList<TestCaseDef> Cases)> Groups(IReadOnlyList<TestCaseDef> tests)
+    {
+        var pairs = _grouping switch
+        {
+            Grouping.Tag => tests.SelectMany(t => t.Tags.Count == 0 ? new[] { ("(no tags)", t) } : t.Tags.Select(tag => (tag, t))),
+            Grouping.File => tests.Select(t => (t.Source?.File ?? "(no file)", t)),
+            _ => tests.Select(t => (t.Suite, t)),
+        };
+        return pairs.GroupBy(p => p.Item1)
+            .Select(g => (g.Key, (IReadOnlyList<TestCaseDef>)g.Select(p => p.Item2).ToList()));
+    }
+
+    private void Toggle(TestCaseDef test)
+    {
+        if (Projects.TestResults.GetValueOrDefault(test)?.Failed == true && !_open.Remove(test)) _open.Add(test);
+    }
+
+    private void Run(IEnumerable<TestCaseDef> tests, bool open = false)
+    {
+        var results = Projects.RunTests(tests);
+        // A single case that fails opens; so do the failures of a run of all when there are only a few.
+        foreach (var result in results.Where(r => r.Failed && (open || results.Count(f => f.Failed) <= 3))) _open.Add(result.Case);
+    }
+
+    private List<CaseResult> Acceptable() => Projects.TestResults.Values.Where(Projects.CanAccept).ToList();
+
+    /// <summary>Which cases had results, to run them again after a change reloads the project.</summary>
+    private HashSet<(string?, string)> Ran() => Projects.TestResults.Keys.Select(t => (t.Source?.File, t.Name)).ToHashSet();
+
+    private void RunAgain(HashSet<(string?, string)> ran)
+    {
+        if (Projects.Project is not { } project || ran.Count == 0) return;
+        _open.Clear();
+        Run(project.Tests.Where(t => ran.Contains((t.Source?.File, t.Name))));
+    }
+
+    private void Accept(TestCaseDef test)
+    {
+        var ran = Ran();
+        try
+        {
+            var keys = Projects.AcceptTest(test);
+            Snackbar.Add($"Updated {string.Join(", ", keys)} of '{test.Name}'.", MudBlazor.Severity.Success);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
+        {
+            Snackbar.Add($"Not updated: {e.Message}", MudBlazor.Severity.Error);
+        }
+
+        RunAgain(ran);
+    }
+
+    private void AcceptAll()
+    {
+        var ran = Ran();
+        var outcomes = Projects.AcceptAll();
+        var updated = outcomes.Count(o => o.Updated.Count > 0);
+        var kept = outcomes.Where(o => o.Reason != null).ToList();
+        Snackbar.Add($"Updated {updated} {(updated == 1 ? "case" : "cases")}" + (kept.Count > 0 ? $"; {kept.Count} still fail, e.g. {kept[0].Case.Name}: {kept[0].Reason}" : "."),
+            kept.Count > 0 ? MudBlazor.Severity.Warning : MudBlazor.Severity.Success);
+        RunAgain(ran);
+    }
+
+    private async Task Delete(TestCaseDef test)
+    {
+        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete test", $"Delete '{test.Name}' from {test.Source?.File}?", yesText: "Delete", cancelText: "Cancel");
+        if (confirmed != true) return;
+        var ran = Ran();
+        try
+        {
+            Projects.DeleteTest(test);
+            Snackbar.Add($"Deleted '{test.Name}'.", MudBlazor.Severity.Success);
+        }
+        catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
+        {
+            Snackbar.Add($"Not deleted: {e.Message}", MudBlazor.Severity.Error);
+        }
+
+        RunAgain(ran);
+    }
+}

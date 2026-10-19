@@ -1,0 +1,67 @@
+@*
+    Expected and actual bytes in rows of 16, each row of expected bytes above the same row of actual ones. Bytes that
+    differ are marked, the first difference most; bytes one side doesn't have are blank. Long data is shown from a few
+    rows before the first difference.
+*@
+
+<MudText Typo="@Typo.body2" Class="mb-1">@Summary()</MudText>
+<div class="hex-view hex-diff">
+    @if (FirstRow > 0)
+    {
+        <div class="hex-row hex-hidden">@FirstRow rows (@(FirstRow * 16) bytes) that are the same</div>
+    }
+    @for (var row = FirstRow * 16; row < LastRow * 16; row += 16)
+    {
+        var start = row;
+        @foreach (var (label, bytes, other) in new[] { (ExpectedLabel, Expected, Actual), (ActualLabel, Actual, Expected) })
+        {
+            <div class="@(ReferenceEquals(bytes, Actual) ? "hex-row hex-pair-end" : "hex-row")">
+                <span class="hex-offset">@start.ToString("x6")</span>
+                <span class="hex-side">@label</span>
+                @for (var i = start; i < start + 16 && i < Length; i++)
+                {
+                    <span class="@ByteClass(i, bytes, other)">@(i < bytes.Length ? bytes[i].ToString("x2") : "\u00a0\u00a0")</span>
+                }
+            </div>
+        }
+    }
+    @if (LastRow * 16 < Length)
+    {
+        <div class="hex-row hex-hidden">@((Length - LastRow * 16 + 15) / 16) more rows</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public byte[] Expected { get; set; } = [];
+    [Parameter, EditorRequired] public byte[] Actual { get; set; } = [];
+    /// <summary>The field the first difference is in, if known.</summary>
+    [Parameter] public string? Field { get; set; }
+    [Parameter] public string ExpectedLabel { get; set; } = "expected";
+    [Parameter] public string ActualLabel { get; set; } = "actual";
+
+    /// <summary>Rows shown before the first difference, and at most in all.</summary>
+    private const int RowsBefore = 2, MaxRows = 24;
+
+    private int Length => Math.Max(Expected.Length, Actual.Length);
+    private int FirstDifference => Expected.AsSpan().CommonPrefixLength(Actual);
+    private int FirstRow => Math.Max(0, FirstDifference / 16 - RowsBefore);
+    private int LastRow => Math.Min((Length + 15) / 16, FirstRow + MaxRows);
+
+    private string Summary()
+    {
+        var offset = FirstDifference;
+        var where = offset >= Math.Min(Expected.Length, Actual.Length)
+            ? $"The bytes are the same up to byte {offset}, where the {(Expected.Length < Actual.Length ? ExpectedLabel : ActualLabel)} ones end"
+            : $"First difference at byte {offset} (0x{offset:x})";
+        var field = Field != null ? $", in {Field}" : "";
+        return $"{where}{field}; {Expected.Length} {ExpectedLabel} bytes, {Actual.Length} {ActualLabel}.";
+    }
+
+    private string ByteClass(int offset, byte[] bytes, byte[] other)
+    {
+        var classes = "hex-byte";
+        if (offset >= bytes.Length) return classes + " hex-missing";
+        if (offset >= other.Length || bytes[offset] != other[offset]) classes += offset == FirstDifference ? " hex-first-diff" : " hex-diff-byte";
+        return classes;
+    }
+}

@@ -92,6 +92,17 @@ public sealed class PacketFrame
     public string? Group { get; set; }
     /// <summary>The bits of the header that are the id, e.g. Bedrock's 10-bit id.</summary>
     public ulong IdMask { get; set; } = ulong.MaxValue;
+
+    /// <summary>The frame as a test file writes it: just the header, or a mapping.</summary>
+    public JsonNode ToNode()
+    {
+        if (Protocol == null && Group == null && IdMask == ulong.MaxValue) return Header.ToString();
+        var map = new JsonObject { ["header"] = Header.ToString() };
+        if (Protocol != null) map["protocol"] = Protocol;
+        if (Group != null) map["group"] = Group;
+        if (IdMask != ulong.MaxValue) map["id-mask"] = "0x" + IdMask.ToString("x");
+        return map;
+    }
 }
 
 /// <summary>A fuzz case: random values of its type, or of all packets (of its frame's protocol), must round-trip.</summary>
@@ -104,6 +115,17 @@ public sealed class FuzzOptions
     public int Iterations { get; set; } = 20;
     /// <summary>The same seed gives the same values, on every machine.</summary>
     public int Seed { get; set; } = 1;
+
+    /// <summary>The options as a test file writes them: <c>true</c> for the defaults, else a mapping.</summary>
+    public JsonNode ToNode()
+    {
+        var defaults = new FuzzOptions();
+        if (Iterations == defaults.Iterations && Seed == defaults.Seed) return true;
+        var map = new JsonObject();
+        if (Iterations != defaults.Iterations) map["iterations"] = Iterations;
+        if (Seed != defaults.Seed) map["seed"] = Seed;
+        return map;
+    }
 }
 
 public enum MatchMode
@@ -145,4 +167,21 @@ public sealed class TestExpectation
 
     /// <summary>The case must fail rather than round-trip.</summary>
     public bool ExpectsFailure => Fails != null || Error != null || Path != null;
+
+    /// <summary>Nothing is expected beyond a round trip.</summary>
+    public bool IsEmpty => !HasValue && Warnings == null && Consumed == null && !ExpectsFailure;
+
+    /// <summary>The expectations as a test file's <c>expect</c> mapping writes them.</summary>
+    public JsonObject ToNode()
+    {
+        var map = new JsonObject();
+        if (HasValue) map["value"] = ValueAuto ? TestCaseDef.Auto : Value?.DeepClone();
+        if (Match == MatchMode.Subset) map["match"] = "subset";
+        if (Error != null) map["error"] = Error;
+        if (Path != null) map["path"] = Path;
+        if (Fails is { } fails) map["fails"] = fails == ExpectedFailure.Encode ? "encode" : "decode";
+        if (Warnings != null) map["warnings"] = new JsonArray(Warnings.Select(w => (JsonNode)w).ToArray());
+        if (Consumed is { } consumed) map["consumed"] = consumed;
+        return map;
+    }
 }

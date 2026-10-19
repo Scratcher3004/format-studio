@@ -15,6 +15,7 @@ public sealed class ProjectService
 {
     private readonly Lock _lock = new();
     private readonly Dictionary<string, GeneratedOutput> _generated = new(StringComparer.Ordinal);
+    private readonly Dictionary<TestCaseDef, CaseResult> _testResults = [];
 
     public ProjectService(string path, FileSandbox? sandbox = null, PluginPolicy? plugins = null)
     {
@@ -51,6 +52,8 @@ public sealed class ProjectService
             }
 
             _generated.Clear();
+            // The cases are read again, so their results are of the old ones.
+            _testResults.Clear();
             Version++;
         }
 
@@ -112,6 +115,34 @@ public sealed class ProjectService
 
     /// <summary>Runs a test case against the simulator (see <see cref="TestRunner"/>).</summary>
     public CaseResult RunTest(TestCaseDef test) => TestRunner.Run(Project!, test);
+
+    /// <summary>The last results of the project's cases (<see cref="RunTests"/>), until the project is reloaded.</summary>
+    public IReadOnlyDictionary<TestCaseDef, CaseResult> TestResults => _testResults;
+
+    /// <summary>Runs the cases (all of the project's by default) and keeps their results in <see cref="TestResults"/>.</summary>
+    public IReadOnlyList<CaseResult> RunTests(IEnumerable<TestCaseDef>? tests = null)
+    {
+        var project = Project!;
+        var codec = new Codec(project);
+        var results = (tests ?? project.Tests).Select(t => TestRunner.Run(codec, t)).ToList();
+        lock (_lock)
+        {
+            foreach (var result in results) _testResults[result.Case] = result;
+        }
+
+        Changed?.Invoke();
+        return results;
+    }
+
+    /// <summary>A name for a new case in <paramref name="file"/>: <paramref name="name"/>, or with a number when it is taken.</summary>
+    public string NewTestName(string file, string name)
+    {
+        var taken = Project!.Tests.Where(t => t.Source?.File == file).Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+        if (!taken.Contains(name)) return name;
+        var number = 2;
+        while (taken.Contains($"{name}-{number}")) number++;
+        return $"{name}-{number}";
+    }
 
     /// <summary>Whether accepting what the case gives would make it pass (see <see cref="TestSnapshots.Accept"/>).</summary>
     public bool CanAccept(CaseResult result) => result.Failed && TestSnapshots.Accept(Project!, result).Update != null;
