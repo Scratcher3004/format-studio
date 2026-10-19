@@ -48,7 +48,7 @@ public class ProjectSettingsTests
         settings.Defaults.Endian = Endian.Big;
         settings.Defaults.Inherit.Add("endian");
         settings.Dependencies.Add(new LibraryDependency { Library = "units", Alias = "u", SkipCodegen = true });
-        settings.Samples = ["samples/*.yaml"];
+        settings.Tests = ["samples/*.yaml"];
 
         project.SaveSettings(settings);
         var text = File.ReadAllText(file);
@@ -66,9 +66,25 @@ public class ProjectSettingsTests
         Assert.True(reloaded.Defaults.Inherits("endian"));
         Assert.Equal("u", reloaded.Dependencies.Single().Alias);
         Assert.True(reloaded.Dependencies.Single().SkipCodegen);
-        Assert.Equal(["samples/*.yaml"], reloaded.Samples);
+        Assert.Equal(["samples/*.yaml"], reloaded.Tests);
         Assert.Equal("Login", reloaded.Protocols.Single().Name);
         Assert.Equal("cs", reloaded.Codegen.Single().Name);
+    }
+
+    [Fact]
+    public void SamplesIsTheOldNameOfTests()
+    {
+        var (directory, file) = Write("name: p\nsources:\n  - types/**/*.yaml\nsamples:\n  - samples/**/*.yaml\n");
+        var project = FormatProject.Load(directory);
+        Assert.Equal(["samples/**/*.yaml"], project.Settings.Tests);
+
+        project.SaveSettings(ProjectSettings.Parse(project.Settings.ToYaml(), file));
+        var text = File.ReadAllText(file);
+        Assert.Contains("tests:\n  - samples/**/*.yaml", text);
+        Assert.DoesNotContain("samples:", text);
+
+        var both = Assert.Throws<FormatDefinitionException>(() => ProjectSettings.Parse("name: p\ntests: [a]\nsamples: [b]\n", file));
+        Assert.Contains("not both", both.Message);
     }
 
     [Fact]

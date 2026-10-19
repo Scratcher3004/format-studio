@@ -6,7 +6,7 @@ using FormatStudio.Testing;
 
 namespace FormatStudio.Tests;
 
-/// <summary>The projects in the repository: valid, samples with known encodings, random round trips.</summary>
+/// <summary>The projects in the repository: valid, test cases, random round trips.</summary>
 public class ProjectTests
 {
     public static TheoryData<string> Projects => [TestPaths.JavaSample];
@@ -24,9 +24,9 @@ public class ProjectTests
     public void SamplesEncodeAsExpected(string path)
     {
         var project = FormatProject.Load(path);
-        Assert.NotEmpty(project.Samples);
+        Assert.NotEmpty(project.Tests);
         foreach (var result in TestRunner.Run(project))
-            Assert.True(result.Passed, $"{result.Sample.Name}: {string.Join("\n", result.Failures.Select(f => f.Message))}");
+            Assert.True(result.Passed, $"{result.Case.Name}: {string.Join("\n", result.Failures.Select(f => f.Message))}");
     }
 
     [Theory]

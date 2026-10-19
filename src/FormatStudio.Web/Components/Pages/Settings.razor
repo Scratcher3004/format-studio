@@ -192,9 +192,9 @@
                               HelperText="Globs of definition files, one per line; !pattern excludes. A type in a later glob replaces one of the same name." />
             </MudItem>
             <MudItem xs="12" md="4">
-                <MudTextField T="string" Value="@_samples" ValueChanged="@(v => Change(() => _samples = v ?? ""))" Label="Samples"
+                <MudTextField T="string" Value="@_tests" ValueChanged="@(v => Change(() => _tests = v ?? ""))" Label="Tests"
                               Variant="@Variant.Outlined" Margin="@Margin.Dense" Lines="4" Sizing="@InputSizing.Auto" Immediate="@true" Class="mono"
-                              HelperText="Globs of sample files, one per line" />
+                              HelperText="Globs of test files, one per line" />
             </MudItem>
             <MudItem xs="12" md="4">
                 <MudTextField T="string" Value="@_libraries" ValueChanged="@(v => Change(() => _libraries = v ?? ""))" Label="Library folders"
@@ -218,7 +218,7 @@
     private ProjectSettings? _draft;
     private string _length = "";
     private string _sources = "";
-    private string _samples = "";
+    private string _tests = "";
     private string _libraries = "";
     private IReadOnlyList<LibraryPackage> _available = [];
     private bool _dirty;
@@ -245,7 +245,7 @@
         _draft = ProjectSettings.Parse(project.Settings.ToYaml(), project.FilePath ?? "project" + ProjectSettings.Extension);
         _length = _draft.Defaults.Length.ToString();
         _sources = string.Join("\n", _draft.Sources);
-        _samples = string.Join("\n", _draft.Samples);
+        _tests = string.Join("\n", _draft.Tests);
         _libraries = string.Join("\n", _draft.Libraries);
         try
         {
@@ -333,7 +333,7 @@
         Primitives.TryParse(_length, out var length);
         draft.Defaults.Length = length;
         draft.Sources = Lines(_sources);
-        draft.Samples = Lines(_samples);
+        draft.Tests = Lines(_tests);
         draft.Libraries = Lines(_libraries);
         if (draft.Kind != ProjectKind.Library)
         {

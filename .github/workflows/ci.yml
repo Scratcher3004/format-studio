@@ -23,5 +23,5 @@ jobs:
         run: |
           cli="dotnet run --project src/FormatStudio.Cli -c Release --no-build --"
           $cli validate --project samples/java-protocol
-          $cli samples --project samples/java-protocol
+          $cli test --project samples/java-protocol
           $cli roundtrip --project samples/java-protocol --iterations 50

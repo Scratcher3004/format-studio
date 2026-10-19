@@ -20,7 +20,7 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 | `encode <type> --json ... \| --random --seed 1` | Encode a value (or a random one) |
 | `roundtrip [types] --iterations 20` | Random values: encode, decode, encode again, compare |
 | `identify --hex ... [--protocol <name>]` | Try every packet (or struct, or the protocol's packets) and rank the matches |
-| `samples` | Check the project's samples |
+| `test [--filter ...] [--tag ...] [--format text\|json\|junit]` | Run the project's test cases (see [testing](testing.md)); `samples` is an alias |
 | `import <importer> [options] [--dry-run]` | Run an importer (see [importers](importers.md)) |
 | `generate [target] [--dry-run]` | Run the codegen targets (see [code generation](codegen.md)) |
 | `generators [--verbose]` | List the code generators and their options: built-in, and those the project and its libraries declare |
@@ -54,7 +54,7 @@ remove targets, preview and write), imports (dry run and report), new definition
 
 The start page's New form creates projects and libraries (kind, version and the defaults a library takes from the
 projects using it). **Settings** edits the project file: name, kind, version, description, defaults (those a library
-inherits are greyed out), dependencies (picked from the packages in the library folders), sources, samples and
+inherits are greyed out), dependencies (picked from the packages in the library folders), sources, tests and
 library folders. Only those sections are rewritten; imports, protocols and codegen targets and the comments between
 sections stay. In a library, new definitions start from a struct and packets can't be picked; the Packet switch
 appears only when editing a struct, and is greyed out in libraries.
@@ -75,11 +75,12 @@ Validation runs on every change. Next to the editor, **sample data** (pasted hex
 64 KiB, optionally skipping a header) is decoded with the definition as it is being edited, with the annotated hex
 view, value tree and JSON, so a packet can be built field by field against a capture.
 
-The **samples** of a project are listed on the overview (long hex is cut; hover for all of it), where they can be
-checked, deleted or opened. A sample's page edits its name, type, file, value and hex, and decodes the hex (or, without
-hex, encodes the value) into the annotated hex view and value tree, so a failing sample can be debugged byte by byte;
-Encode, Decode and Round trip work as on the Simulate page, and their results are what Save writes. New samples go to
-a file matched by the project's `samples` patterns (by default the first file with samples). Saving or deleting
-rewrites the sample file, keeping its shape and the other samples but not comments.
-Sample files are checked when the project loads: an unknown type, invalid hex, a sample with neither value nor
-hex, an unknown key or a repeated name shows up with the other diagnostics, at the sample's line.
+The [test cases](testing.md) of a project are listed on the overview with their suite and tags (long hex is cut; hover
+for all of it), where they can be run, deleted or opened. A case's page edits its name, type, file, value and hex, and
+decodes the hex (or, without hex, encodes the value) into the annotated hex view and value tree, so a failing case can
+be debugged byte by byte; Encode, Decode and Round trip work as on the Simulate page, and their results are what Save
+writes. Its other keys (a bytes file, expectations, skip, tags) are listed and kept. New cases go to a file matched by
+the project's `tests` patterns (by default the first file with cases). Saving or deleting rewrites the test file,
+keeping its shape and the other cases but not comments.
+Test files are checked when the project loads: an unknown type or key, invalid hex, a missing bytes file, a case with
+nothing to test or a repeated name shows up with the other diagnostics, at the case's line.

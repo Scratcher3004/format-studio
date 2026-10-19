@@ -4,7 +4,7 @@ A tool for describing, analysing and simulating binary data formats, and for gen
 
 Formats are written in a small YAML DSL, one file per type, grouped into projects. Format Studio validates them,
 encodes and decodes arbitrary values with an annotated byte view, fuzzes round trips, guesses which packet some bytes
-are, checks samples with known encodings, imports external schemas and generates C# (spans or streams) and Java. It handles little- and big-endian
+are, runs test cases (known encodings, captures, expected errors), imports external schemas and generates C# (spans or streams) and Java. It handles little- and big-endian
 formats, LEB128 and zigzag varints, length prefixes of any width, conditional and computed fields, tagged unions with
 inline or external tags, bit fields, fixed-point numbers and NBT. Very custom bit-level formats are out of scope.
 
@@ -51,6 +51,7 @@ dotnet run --project src/FormatStudio.Web -- --workspace samples --urls http://l
 
 - [Projects and DSL](docs/dsl.md): project files, definitions, types, expressions, JSON values
 - [Command line and web UI](docs/usage.md)
+- [Testing a format](docs/testing.md): test cases, expectations, suites, reports for CI
 - [Projects in the web UI](docs/web-projects.md): start page, project URLs, planned hosted mode
 - [Libraries](docs/libraries.md): library projects, `.fslib` packages, dependencies
 - [Native types of your own](docs/natives.md): declarations, .NET plugins, which plugins are loaded
@@ -62,7 +63,7 @@ dotnet run --project src/FormatStudio.Web -- --workspace samples --urls http://l
 ## Tests
 
 `dotnet test FormatStudio.slnx`: DSL round trips and errors, expressions, the codec (varints, byte orders, variants,
-bit fields, sized sections, NBT in all four flavors), the importer on a synthetic schema, the sample project's samples
+bit fields, sized sections, NBT in all four flavors), the importer on a synthetic schema, the sample project's test cases
 and random round trips, and the generated code of every generator (C# compiled with Roslyn, Java with `javac` when a
 JDK is found via `FORMAT_STUDIO_JDK`, `JAVA_HOME` or the PATH) checked byte for byte against the simulator.
 

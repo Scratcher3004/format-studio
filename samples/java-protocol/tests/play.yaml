@@ -1,19 +1,13 @@
-samples:
-  - sample: handshake-status
-    type: Handshake
-    value:
-      protocolVersion: 765
-      serverAddress: localhost
-      serverPort: 25565
-      nextState: status
-    hex: fd05 09 6c6f63616c686f7374 63dd 01
-  - sample: block-update-wiki-position
+suite: play
+tags: [play]
+cases:
+  - name: block-update-wiki-position
     type: BlockUpdate
     value:
       location: {x: 18357644, z: -20882616, y: 831}
       blockState: 1
     hex: 4607632c15b4833f 01
-  - sample: particle-dust
+  - name: particle-dust
     type: Particle
     value:
       particleId: 14
@@ -27,18 +21,18 @@ samples:
       maxSpeed: 0
       particleCount: 1
       data: {dust: {red: 1, green: 0, blue: 0, scale: 1}}
-  - sample: set-slot-with-nbt
+  - name: set-slot-with-nbt
     type: SetSlot
     value:
       windowId: 0
       stateId: 3
       slot: 36
       item: {itemId: 1, count: 64, tag: '{display:{Name:"Stone"}}'}
-  - sample: set-slot-empty
+  - name: set-slot-empty
     type: SetSlot
     value: {windowId: 0, stateId: 4, slot: 36, item: {}}
     hex: 00 04 0024 00
-  - sample: command-suggestions
+  - name: command-suggestions
     type: CommandSuggestions
     value:
       id: 1

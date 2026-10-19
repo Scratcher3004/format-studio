@@ -39,29 +39,35 @@
             <DiagnosticList Items="project.Diagnostics.Where(d => _showInfo || d.Severity != Severity.Info)" Links="@(d => FixLink(project, d))" />
             <MudSwitch T="bool" @bind-Value="_showInfo" Label="Show overrides and other infos" Color="Color.Primary" />
         </MudExpansionPanel>
-        <MudExpansionPanel Text="@($"Samples ({project.Samples.Count})")" Expanded="@(project.Samples.Count > 0)">
-            <MudStack Row="@true" Spacing="@(2)" Class="mb-2">
-                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => RunSamples(project)">Run samples</MudButton>
-                <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" Href="@Link("sample/new")">New sample</MudButton>
+        <MudExpansionPanel Text="@($"Tests ({project.Tests.Count})")" Expanded="@(project.Tests.Count > 0)">
+            <MudStack Row="@true" Spacing="@(2)" Class="mb-2" AlignItems="@AlignItems.Center">
+                <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => RunTests(project)">Run tests</MudButton>
+                <MudButton Variant="@Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" Href="@Link("test/new")">New test</MudButton>
+                @if (_testResults.Count > 0)
+                {
+                    <MudText Typo="@Typo.body2">@_testResults.Values.Count(r => r.Passed) passed, @_testResults.Values.Count(r => r.Failed) failed, @_testResults.Values.Count(r => r.Skipped) skipped</MudText>
+                }
             </MudStack>
             <MudSimpleTable Dense="true">
-                <thead><tr><th>Sample</th><th>Type</th><th>Expected hex</th><th>Result</th><th></th></tr></thead>
+                <thead><tr><th>Test</th><th>Type</th><th>Tags</th><th>Expected bytes</th><th>Result</th><th></th></tr></thead>
                 <tbody>
-                    @for (var i = 0; i < project.Samples.Count; i++)
+                    @for (var i = 0; i < project.Tests.Count; i++)
                     {
-                        var sample = project.Samples[i];
+                        var test = project.Tests[i];
                         var index = i;
+                        var outcome = _testResults.GetValueOrDefault(test)?.Summary ?? (test.Skip != null ? "skipped: " + test.Skip : null);
                         <tr>
-                            <td><MudLink Href="@Link($"sample/{index}")">@sample.Name</MudLink></td>
-                            <td><MudLink Href="@Link($"type/{sample.Type}")">@sample.Type</MudLink></td>
-                            <td class="mono" title="@sample.Hex">@Truncate(sample.Hex)</td>
-                            <td title="@_sampleResults.GetValueOrDefault(sample)?.Summary">@Truncate(_sampleResults.GetValueOrDefault(sample)?.Summary)</td>
+                            <td><MudLink Href="@Link($"test/{index}")">@test.Name</MudLink> <span class="mud-text-secondary">@test.Suite</span></td>
+                            <td><MudLink Href="@Link($"type/{test.Type}")">@test.Type</MudLink></td>
+                            <td>@string.Join(", ", test.Tags)</td>
+                            <td class="mono" title="@(test.Hex ?? test.File)">@Truncate(test.Hex ?? test.File)</td>
+                            <td title="@outcome" class="@(_testResults.GetValueOrDefault(test)?.Failed == true ? "mud-error-text" : null)">@Truncate(outcome)</td>
                             <td class="row-buttons">
                                 <MudTooltip Text="View and debug">
-                                    <MudIconButton Icon="@Icons.Material.Filled.BugReport" Size="@Size.Small" Href="@Link($"sample/{index}")" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.BugReport" Size="@Size.Small" Href="@Link($"test/{index}")" />
                                 </MudTooltip>
                                 <MudTooltip Text="Delete">
-                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="@Size.Small" OnClick="() => Delete(sample)" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="@Size.Small" OnClick="() => Delete(test)" />
                                 </MudTooltip>
                             </td>
                         </tr>
@@ -74,7 +80,7 @@
 
 @code {
     private bool _showInfo;
-    private readonly Dictionary<SampleDef, CaseResult> _sampleResults = [];
+    private readonly Dictionary<TestCaseDef, CaseResult> _testResults = [];
 
     /// <summary>The page a diagnostic is fixed on, as a link inside this project.</summary>
     private DiagnosticLink? FixLink(FormatProject project, Diagnostic diagnostic) =>
@@ -95,20 +101,20 @@
 
     private static string? Truncate(string? text) => text is { Length: > MaxShown } ? text[..MaxShown] + "\u2026" : text;
 
-    private void RunSamples(FormatProject project)
+    private void RunTests(FormatProject project)
     {
-        _sampleResults.Clear();
-        foreach (var result in TestRunner.Run(project)) _sampleResults[result.Sample] = result;
+        _testResults.Clear();
+        foreach (var result in TestRunner.Run(project)) _testResults[result.Case] = result;
     }
 
-    private async Task Delete(SampleDef sample)
+    private async Task Delete(TestCaseDef test)
     {
-        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete sample", $"Delete '{sample.Name}' from {sample.Source?.File}?", yesText: "Delete", cancelText: "Cancel");
+        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete test", $"Delete '{test.Name}' from {test.Source?.File}?", yesText: "Delete", cancelText: "Cancel");
         if (confirmed != true) return;
         try
         {
-            Projects.DeleteSample(sample);
-            Snackbar.Add($"Deleted '{sample.Name}'.", MudBlazor.Severity.Success);
+            Projects.DeleteTest(test);
+            Snackbar.Add($"Deleted '{test.Name}'.", MudBlazor.Severity.Success);
         }
         catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException)
         {

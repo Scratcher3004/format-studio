@@ -18,8 +18,8 @@ defaults:
 sources:                 # globs; a type in a later glob replaces the one with the same name in an earlier glob
   - imported/**/*.yaml
   - overrides/**/*.yaml
-samples:                 # values with known encodings, checked by "format-studio samples"
-  - samples/**/*.yaml
+tests:                   # test cases, run by "format-studio test" (see testing.md; 'samples' is the old name)
+  - tests/**/*.yaml
 import:                  # importer settings, see "Mojang importer"
   mojang: { schema: ..., output: imported }
 dependencies:            # libraries the project uses, see libraries.md

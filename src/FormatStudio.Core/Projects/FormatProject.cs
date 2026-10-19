@@ -86,20 +86,6 @@ public sealed class ProtocolDef
     public bool Contains(StructDef packet) => packet.IsPacket && Groups.All(packet.Groups.Contains);
 }
 
-public sealed class SampleDef
-{
-    public required string Name { get; set; }
-    public required string Type { get; set; }
-    public JsonNode? Value { get; set; }
-    /// <summary>The expected encoding, if known.</summary>
-    public string? Hex { get; set; }
-    public SourceLocation? Source { get; set; }
-    /// <summary>The position of the sample among the samples of its file.</summary>
-    public int Index { get; set; }
-    /// <summary>Keys of the sample's entry that samples don't have, e.g. misspelled ones; reported as warnings.</summary>
-    public IReadOnlyList<string> UnknownKeys { get; set; } = [];
-}
-
 /// <summary>The contents of a <c>*.fstudio.yaml</c> project file.</summary>
 public sealed class ProjectSettings
 {
@@ -115,7 +101,7 @@ public sealed class ProjectSettings
     public List<string> Libraries { get; set; } = ["libraries"];
     /// <summary>Globs of definition files. A type in a later glob replaces one with the same name in an earlier glob.</summary>
     public List<string> Sources { get; set; } = ["**/*.yaml", $"!**/*{Extension}"];
-    public List<string> Samples { get; set; } = [];
+    public List<string> Tests { get; set; } = [];
     /// <summary>Importer settings, keyed by importer name.</summary>
     public JsonObject Import { get; set; } = [];
     /// <summary>Separate packet id spaces; empty when all packets share one.</summary>
@@ -212,7 +198,9 @@ public sealed class ProjectSettings
         if (root["libraries"] is JsonArray libraries) settings.Libraries = libraries.Select(l => l!.GetValue<string>()).ToList();
 
         if (root["sources"] is JsonArray sources) settings.Sources = sources.Select(s => s!.GetValue<string>()).ToList();
-        if (root["samples"] is JsonArray samples) settings.Samples = samples.Select(s => s!.GetValue<string>()).ToList();
+        if (root["tests"] != null && root["samples"] != null)
+            throw new FormatDefinitionException("Use 'tests' for the test patterns ('samples' is its old name), not both", new SourceLocation(file));
+        if ((root["tests"] ?? root["samples"]) is JsonArray tests) settings.Tests = tests.Select(s => s!.GetValue<string>()).ToList();
         if (root["import"] is JsonObject import) settings.Import = (JsonObject)import.DeepClone();
         if (root["protocols"] is JsonArray protocols)
         {
@@ -269,7 +257,7 @@ public sealed class ProjectSettings
     /// The top-level keys of the project file that the settings page edits (<see cref="ReplaceGeneral"/>), in the
     /// order <see cref="ToYaml"/> writes them. Imports, protocols and codegen targets have pages of their own.
     /// </summary>
-    public static IReadOnlyList<string> GeneralKeys { get; } = ["name", "description", "version", "kind", "defaults", "dependencies", "libraries", "sources", "samples"];
+    public static IReadOnlyList<string> GeneralKeys { get; } = ["name", "description", "version", "kind", "defaults", "dependencies", "libraries", "sources", "tests"];
 
     public string ToYaml()
     {
@@ -318,7 +306,7 @@ public sealed class ProjectSettings
         }).ToList());
         if (Libraries is not ["libraries"]) map.Add("libraries", Libraries.Cast<object?>().ToList());
         map.Add("sources", Sources.Cast<object?>().ToList());
-        map.AddIf("samples", Samples.Cast<object?>().ToList());
+        map.AddIf("tests", Tests.Cast<object?>().ToList());
         return map;
     }
 
@@ -357,7 +345,8 @@ public sealed class ProjectSettings
         var values = settings.GeneralYaml().ToDictionary(e => e.Key, e => e.Value);
         for (var i = 0; i < GeneralKeys.Count; i++)
             text = ReplaceSection(text, GeneralKeys[i], values.GetValueOrDefault(GeneralKeys[i]), GeneralKeys.Take(i).ToList());
-        return text;
+        // The old name of 'tests', written as 'tests' from now on.
+        return ReplaceSection(text, "samples", null, null);
     }
 
     private static string ReplaceSection(string text, string key, List<object?> items) =>
@@ -427,7 +416,7 @@ public sealed class FormatProject
     /// <summary>Where the project may read and write files; definition files outside it are not loaded.</summary>
     public FileSandbox Sandbox { get; init; } = FileSandbox.Unrestricted;
     public DiagnosticBag Diagnostics { get; } = [];
-    public List<SampleDef> Samples { get; } = [];
+    public List<TestCaseDef> Tests { get; } = [];
     /// <summary>The native types the project's definitions can use: built-in, its own and its libraries'.</summary>
     public NativeTypes Natives { get; set; } = NativeTypes.BuiltIn;
     /// <summary>The native types the project declares itself (<c>native:</c> files among its sources).</summary>
@@ -687,7 +676,7 @@ public sealed class FormatProject
         // Libraries and native types first: they decide which names in the sources are native types.
         LibraryLoader.LoadDependencies(project);
         project.LoadSources();
-        project.LoadSamples();
+        project.LoadTests();
         Validation.Validator.Validate(project);
         return project;
     }
@@ -724,6 +713,8 @@ public sealed class FormatProject
     {
         var excludes = Settings.Sources.Where(s => s.StartsWith('!')).Select(s => s[1..]).ToList();
         excludes.Add("**/*" + ProjectSettings.Extension);
+        // Test files are never definitions, also when a source pattern like the default **/*.yaml takes them in.
+        excludes.AddRange(Settings.Tests);
         var origin = new Dictionary<string, int>(StringComparer.Ordinal);
         var seenFiles = new HashSet<string>(StringComparer.Ordinal);
         var sources = Settings.Sources.Where(s => !s.StartsWith('!'))
@@ -796,14 +787,14 @@ public sealed class FormatProject
     public static bool IsDeclaration(string text) =>
         DeclaredNative.IsDeclaration(text) || DeclaredGenerator.IsDeclaration(text) || NativeCodegenExtension.IsDeclaration(text);
 
-    private void LoadSamples()
+    private void LoadTests()
     {
-        foreach (var file in Glob(Directory, Settings.Samples, [], Sandbox))
+        foreach (var file in Glob(Directory, Settings.Tests, [], Sandbox))
         {
             var relative = Relative(file);
             try
             {
-                Samples.AddRange(SampleFiles.Load(File.ReadAllText(file), relative, Diagnostics));
+                Tests.AddRange(TestFiles.Load(File.ReadAllText(file), relative, Diagnostics));
             }
             catch (YamlDotNet.Core.YamlException e)
             {
@@ -816,77 +807,89 @@ public sealed class FormatProject
         }
     }
 
-    /// <summary>Whether the sample patterns include a file of the project, i.e. its samples are loaded when it exists.</summary>
-    public bool IsSampleFile(string file)
+    /// <summary>Whether the test patterns include a file of the project, i.e. its test cases are loaded when it exists.</summary>
+    public bool IsTestFile(string file)
     {
         var relative = Relative(Path.GetFullPath(file, Directory));
         if (relative.StartsWith("../", StringComparison.Ordinal) || relative == "..") return false;
         var matcher = new Matcher(StringComparison.Ordinal);
-        matcher.AddIncludePatterns(Settings.Samples);
+        matcher.AddIncludePatterns(Settings.Tests);
         return matcher.Match(relative).HasMatches;
     }
 
     /// <summary>
-    /// The file new samples go to by default: the first file with samples, or <c>samples.yaml</c> in the folder of the
-    /// first sample pattern. Null when the project has no sample patterns.
+    /// The file new test cases go to by default: the first file with test cases, or <c>tests.yaml</c> in the folder of
+    /// the first test pattern. Null when the project has no test patterns.
     /// </summary>
-    public string? DefaultSampleFile()
+    public string? DefaultTestFile()
     {
-        if (Samples.FirstOrDefault()?.Source?.File is { } existing) return existing;
-        foreach (var pattern in Settings.Samples)
+        if (Tests.FirstOrDefault()?.Source?.File is { } existing) return existing;
+        foreach (var pattern in Settings.Tests)
         {
             var wildcard = pattern.IndexOfAny(['*', '?', '[']);
             var folder = (wildcard < 0 ? Path.GetDirectoryName(pattern) ?? "" : pattern[..wildcard]).TrimEnd('/', '\\');
-            var file = folder.Length > 0 ? folder + "/samples.yaml" : "samples.yaml";
-            if (IsSampleFile(file)) return file;
+            var file = folder.Length > 0 ? folder + "/tests.yaml" : "tests.yaml";
+            if (IsTestFile(file)) return file;
         }
 
         return null;
     }
 
     /// <summary>
-    /// Writes a sample to <paramref name="file"/> (relative to the project), replacing <paramref name="original"/> when it
-    /// is in that file, or adding it at the end. An original in another file is removed from there.
+    /// Writes a test case to <paramref name="file"/> (relative to the project), replacing <paramref name="original"/> when
+    /// it is in that file, or adding it at the end. An original in another file is removed from there.
     /// </summary>
-    public string SaveSample(SampleDef sample, string file, SampleDef? original = null)
+    public string SaveTest(TestCaseDef test, string file, TestCaseDef? original = null)
     {
         var path = Sandbox.Check(Path.GetFullPath(file, Directory));
         if (!path.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".yml", StringComparison.OrdinalIgnoreCase))
             throw new FormatDefinitionException($"{file} isn't a .yaml file");
-        if (!IsSampleFile(path))
+        if (!IsTestFile(path))
         {
-            throw new FormatDefinitionException(Settings.Samples.Count == 0
-                ? "The project has no sample patterns; add e.g. 'samples: [samples/**/*.yaml]' to the project file"
-                : $"{Relative(path)} isn't matched by the project's sample patterns ({string.Join(", ", Settings.Samples)}), so it wouldn't be loaded");
+            throw new FormatDefinitionException(Settings.Tests.Count == 0
+                ? "The project has no test patterns; add e.g. 'tests: [tests/**/*.yaml]' to the project file"
+                : $"{Relative(path)} isn't matched by the project's test patterns ({string.Join(", ", Settings.Tests)}), so it wouldn't be loaded");
         }
 
         var sameFile = original?.Source?.File is { } originalFile && Path.GetFullPath(originalFile, Directory) == path;
         var text = File.Exists(path) ? File.ReadAllText(path) : null;
         if (sameFile) CheckUnchanged(text, original!);
-        var updated = SampleFiles.Replace(text, sameFile ? original!.Index : null, sample);
+        var updated = TestFiles.Replace(text, sameFile ? original!.Index : null, test);
         System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, updated);
-        if (original != null && !sameFile) DeleteSample(original);
+        if (original != null && !sameFile) DeleteTest(original);
         return path;
     }
 
-    /// <summary>Removes a sample from its file, and deletes the file when no sample is left.</summary>
-    public void DeleteSample(SampleDef sample)
+    /// <summary>Removes a test case from its file, and deletes the file when no test case is left.</summary>
+    public void DeleteTest(TestCaseDef test)
     {
-        var path = Sandbox.Check(Path.GetFullPath(sample.Source?.File ?? throw new FormatDefinitionException($"'{sample.Name}' has no file"), Directory));
+        var path = Sandbox.Check(Path.GetFullPath(test.Source?.File ?? throw new FormatDefinitionException($"'{test.Name}' has no file"), Directory));
         var text = File.Exists(path) ? File.ReadAllText(path) : null;
-        CheckUnchanged(text, sample);
-        var updated = SampleFiles.Replace(text, sample.Index, null);
+        CheckUnchanged(text, test);
+        var updated = TestFiles.Replace(text, test.Index, null);
         if (updated == null) File.Delete(path);
         else File.WriteAllText(path, updated);
     }
 
-    /// <summary>Makes sure the sample is still at its index, so that a file changed since loading isn't overwritten blindly.</summary>
-    private static void CheckUnchanged(string? text, SampleDef sample)
+    /// <summary>The full path of a test case's <c>file</c>, which is relative to the test file.</summary>
+    public string TestFilePath(TestCaseDef test)
     {
-        var entries = text == null ? [] : SampleFiles.Entries(YamlValues.ParseYaml(text));
-        if (sample.Index >= entries.Count || SampleFiles.NameOf(entries[sample.Index]) is { } name && name != sample.Name)
-            throw new FormatDefinitionException($"{sample.Source?.File} changed since it was loaded; reload the project and try again");
+        var testFile = Path.GetFullPath(test.Source?.File ?? throw new FormatDefinitionException($"'{test.Name}' has no file"), Directory);
+        return Sandbox.Check(Path.GetFullPath(test.File ?? throw new FormatDefinitionException($"'{test.Name}' has no 'file'"),
+            Path.GetDirectoryName(testFile)!));
+    }
+
+    /// <summary>The bytes a test case gives, from its hex or its file; null when it gives none.</summary>
+    public byte[]? TestBytes(TestCaseDef test) =>
+        test.Hex != null ? Simulation.Hex.Parse(test.Hex) : test.File != null ? File.ReadAllBytes(TestFilePath(test)) : null;
+
+    /// <summary>Makes sure the test case is still at its index, so that a file changed since loading isn't overwritten blindly.</summary>
+    private static void CheckUnchanged(string? text, TestCaseDef test)
+    {
+        var entries = text == null ? [] : TestFiles.Entries(YamlValues.ParseYaml(text));
+        if (test.Index >= entries.Count || TestFiles.NameOf(entries[test.Index]) is { } name && name != test.Name)
+            throw new FormatDefinitionException($"{test.Source?.File} changed since it was loaded; reload the project and try again");
     }
 
     /// <summary>

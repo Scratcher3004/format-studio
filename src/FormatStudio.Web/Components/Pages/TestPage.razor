@@ -1,3 +1,4 @@
+@page "/p/{ProjectId}/test/{Id}"
 @page "/p/{ProjectId}/sample/{Id}"
 @using System.Text.Json
 @using System.Text.RegularExpressions
@@ -6,21 +7,21 @@
 @inject IDialogService Dialogs
 @inject NavigationManager Navigation
 @*
-    Views, edits, adds and deletes one sample. The simulator below decodes the sample's hex (or encodes its value) into the
-    hex view, so that a sample that fails can be debugged byte by byte; its value and hex are what gets saved.
+    Views, edits, adds and deletes one test. The simulator below decodes the test's hex (or encodes its value) into the
+    hex view, so that a test that fails can be debugged byte by byte; its value and hex are what gets saved.
 *@
 
-<PageTitle>@(_original?.Name ?? "New sample") - Format Studio</PageTitle>
+<PageTitle>@(_original?.Name ?? "New test") - Format Studio</PageTitle>
 
 @if (_missing)
 {
-    <MudAlert Severity="@MudBlazor.Severity.Warning">There is no sample @Id. <MudLink Href="@Link("")">Back to the overview</MudLink></MudAlert>
+    <MudAlert Severity="@MudBlazor.Severity.Warning">There is no test @Id. <MudLink Href="@Link("")">Back to the overview</MudLink></MudAlert>
 }
 else
 {
     <MudStack Row="@true" AlignItems="@AlignItems.Center" Spacing="@(2)" Class="mb-1">
-        <MudChip T="string" Color="@Color.Primary" Size="@Size.Small">sample</MudChip>
-        <MudText Typo="@Typo.h5">@(_original?.Name ?? "New sample")</MudText>
+        <MudChip T="string" Color="@Color.Primary" Size="@Size.Small">test</MudChip>
+        <MudText Typo="@Typo.h5">@(_original?.Name ?? "New test")</MudText>
         @if (_check != null)
         {
             <MudChip T="string" Size="@Size.Small" Variant="@Variant.Outlined" Color="@(_check == "ok" ? Color.Success : Color.Error)"
@@ -30,6 +31,10 @@ else
     @if (_original != null)
     {
         <MudText Typo="@Typo.body2" Class="mud-text-secondary mono mb-3">@_original.Source?.File</MudText>
+    }
+    @if (Extras() is { Length: > 0 } extras)
+    {
+        <MudAlert Severity="@MudBlazor.Severity.Normal" Dense="@true" Class="mb-3">@extras. These are kept when saving; edit them in the test file.</MudAlert>
     }
 
     <MudGrid Spacing="@(2)" Class="mb-2">
@@ -43,7 +48,7 @@ else
         </MudItem>
         <MudItem xs="12" md="5">
             <MudAutocomplete T="string" @bind-Value="_file" SearchFunc="SearchFile" CoerceValue="@true" Label="File" Variant="@Variant.Outlined"
-                             Margin="@Margin.Dense" Dense="@true" HelperText="Relative to the project; other samples in the file are kept" />
+                             Margin="@Margin.Dense" Dense="@true" HelperText="Relative to the project; other tests in the file are kept" />
         </MudItem>
     </MudGrid>
 
@@ -65,17 +70,19 @@ else
     }
     else
     {
-        <MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true">Choose the type of the sample to edit its value and bytes.</MudAlert>
+        <MudAlert Severity="@MudBlazor.Severity.Info" Dense="@true">Choose the type of the test to edit its value and bytes.</MudAlert>
     }
 }
 
 @code {
-    /// <summary>The position in the project's samples, or <c>new</c>.</summary>
+    /// <summary>The position in the project's tests, or <c>new</c>.</summary>
     [Parameter] public string Id { get; set; } = "";
 
     private int? Index => int.TryParse(Id, out var index) ? index : null;
 
-    private SampleDef? _original;
+    private TestCaseDef? _original;
+    /// <summary>The case whose other keys (file, expect, skip, tags) the edited case keeps: the original, also after Duplicate.</summary>
+    private TestCaseDef? _base;
     private bool _missing;
     private string _name = "";
     private string _type = "";
@@ -93,14 +100,14 @@ else
     private void Load()
     {
         _loadedId = Id;
-        var samples = Projects.Project?.Samples ?? [];
-        _original = Index is { } index && index >= 0 && index < samples.Count ? samples[index] : null;
+        var tests = Projects.Project?.Tests ?? [];
+        _original = _base = Index is { } index && index >= 0 && index < tests.Count ? tests[index] : null;
         _missing = _original == null && Id != "new";
         _check = null;
         if (_original == null)
         {
             _name = _type = "";
-            _file = Projects.Project?.DefaultSampleFile() ?? "samples/samples.yaml";
+            _file = Projects.Project?.DefaultTestFile() ?? "tests/tests.yaml";
             _json = _hex = "";
             return;
         }
@@ -112,6 +119,29 @@ else
         _hex = _original.Hex ?? "";
     }
 
+    /// <summary>What the case has besides name, type, value and hex, in a few words.</summary>
+    private string Extras()
+    {
+        if (_base == null) return "";
+        var parts = new List<string>();
+        if (_base.File != null) parts.Add($"bytes from {_base.File}");
+        if (_base.Expect is { } expect)
+        {
+            parts.Add(expect.ExpectsFailure
+                ? $"must fail{(expect.Error != null ? $" with '{expect.Error}'" : "")}{(expect.Path != null ? $" at {expect.Path}" : "")}"
+                : "expectations: " + string.Join(", ", new[]
+                {
+                    expect.HasValue ? $"{expect.Match.ToString().ToLowerInvariant()} value" : null,
+                    expect.Warnings != null ? "warnings" : null,
+                    expect.Consumed is { } consumed ? $"{consumed} bytes consumed" : null,
+                }.OfType<string>()));
+        }
+
+        if (_base.Skip != null) parts.Add("skipped: " + _base.Skip);
+        if (_base.Tags.Count > 0) parts.Add("tags " + string.Join(", ", _base.Tags));
+        return string.Join("; ", parts);
+    }
+
     private static string Truncate(string text) => text.Length > 80 ? text[..80] + "…" : text;
 
     private Task<IEnumerable<string>> SearchType(string? text, CancellationToken token) =>
@@ -120,19 +150,19 @@ else
             .Order(StringComparer.Ordinal).AsEnumerable());
 
     private Task<IEnumerable<string>> SearchFile(string? text, CancellationToken token) =>
-        Task.FromResult((Projects.Project?.Samples ?? []).Select(s => s.Source?.File).OfType<string>()
-            .Append(Projects.Project?.DefaultSampleFile()).OfType<string>().Distinct()
+        Task.FromResult((Projects.Project?.Tests ?? []).Select(s => s.Source?.File).OfType<string>()
+            .Append(Projects.Project?.DefaultTestFile()).OfType<string>().Distinct()
             .Where(file => string.IsNullOrWhiteSpace(text) || file.Contains(text, StringComparison.OrdinalIgnoreCase))
             .Order(StringComparer.Ordinal).AsEnumerable());
 
-    /// <summary>The sample as edited, or null after showing what is wrong with it.</summary>
-    private SampleDef? Edited()
+    /// <summary>The test as edited, or null after showing what is wrong with it.</summary>
+    private TestCaseDef? Edited()
     {
         string? problem = null;
         JsonNode? value = null;
-        if (string.IsNullOrWhiteSpace(_name)) problem = "The sample needs a name.";
-        else if (string.IsNullOrWhiteSpace(_type)) problem = "The sample needs a type.";
-        else if (string.IsNullOrWhiteSpace(_json) && string.IsNullOrWhiteSpace(_hex)) problem = "The sample needs a value, hex or both.";
+        if (string.IsNullOrWhiteSpace(_name)) problem = "The test needs a name.";
+        else if (string.IsNullOrWhiteSpace(_type)) problem = "The test needs a type.";
+        else if (string.IsNullOrWhiteSpace(_json) && string.IsNullOrWhiteSpace(_hex) && _base?.File == null) problem = "The test needs a value, hex or both.";
         else
         {
             try
@@ -153,28 +183,37 @@ else
             return null;
         }
 
-        return new SampleDef
+        // Hex from the simulator comes in lines of 16 bytes; tests keep it on one line.
+        var hex = string.IsNullOrWhiteSpace(_hex) ? null : Regex.Replace(_hex.Trim(), @"\s+", " ");
+        return new TestCaseDef
         {
             Name = _name.Trim(),
             Type = _type.Trim(),
             Value = value,
-            // Hex from the simulator comes in lines of 16 bytes; samples keep it on one line.
-            Hex = string.IsNullOrWhiteSpace(_hex) ? null : Regex.Replace(_hex.Trim(), @"\s+", " "),
+            Hex = hex,
+            // Typed hex replaces the bytes of a file.
+            File = hex == null ? _base?.File : null,
+            Expect = _base?.Expect,
+            Skip = _base?.Skip,
+            Tags = _base?.Tags ?? [],
+            Suite = _base?.Suite ?? "",
+            Source = _base?.Source,
+            Entry = _base?.Entry,
         };
     }
 
     private void Check()
     {
-        if (Edited() is { } sample) _check = Projects.RunSample(sample).Summary;
+        if (Edited() is { } test) _check = Projects.RunTest(test).Summary;
     }
 
     private void Save()
     {
-        if (Edited() is not { } sample) return;
+        if (Edited() is not { } test) return;
         string written;
         try
         {
-            written = Projects.SaveSample(sample, _file.Trim(), _original);
+            written = Projects.SaveTest(test, _file.Trim(), _original);
         }
         catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
         {
@@ -182,12 +221,12 @@ else
             return;
         }
 
-        var samples = Projects.Project?.Samples ?? [];
+        var tests = Projects.Project?.Tests ?? [];
         var file = Projects.Project?.Relative(written);
-        var saved = samples.FindLastIndex(s => s.Source?.File == file && s.Name == sample.Name);
-        Snackbar.Add($"Saved '{sample.Name}' to {file}.", MudBlazor.Severity.Success);
+        var saved = tests.FindLastIndex(s => s.Source?.File == file && s.Name == test.Name);
+        Snackbar.Add($"Saved '{test.Name}' to {file}.", MudBlazor.Severity.Success);
         if (saved < 0) Navigation.NavigateTo(Link(""));
-        else if (saved != Index) Navigation.NavigateTo(Link($"sample/{saved}"));
+        else if (saved != Index) Navigation.NavigateTo(Link($"test/{saved}"));
         else Load();
     }
 
@@ -200,12 +239,12 @@ else
 
     private async Task Delete()
     {
-        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete sample", $"Delete '{_original!.Name}' from {_original.Source?.File}?",
+        var confirmed = await Dialogs.ShowMessageBoxAsync("Delete test", $"Delete '{_original!.Name}' from {_original.Source?.File}?",
             yesText: "Delete", cancelText: "Cancel");
         if (confirmed != true) return;
         try
         {
-            Projects.DeleteSample(_original);
+            Projects.DeleteTest(_original);
         }
         catch (Exception e) when (e is FormatDefinitionException or IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException)
         {

@@ -11,7 +11,7 @@ public static class DiagnosticLinks
 {
     /// <summary>
     /// The protocols page for findings about protocols, the Edit tab of the definition in the diagnostic's file, the
-    /// sample in it, or null.
+    /// test case in it, or null.
     /// </summary>
     /// <returns>A page relative to the project (see <see cref="ProjectContext.Link"/>).</returns>
     public static DiagnosticLink? For(FormatProject project, Diagnostic diagnostic)
@@ -23,12 +23,12 @@ public static class DiagnosticLinks
         if (project.Types.Values.FirstOrDefault(t => t.Source?.File == file) is { } definition)
             return new DiagnosticLink($"type/{Uri.EscapeDataString(definition.Name)}?tab=edit", "Edit", MudBlazor.Icons.Material.Filled.Edit);
 
-        // A sample file holds several samples: the last one starting at or before the diagnostic's line.
-        var samples = project.Samples.Select((sample, index) => (Sample: sample, Index: index)).Where(s => s.Sample.Source?.File == file).ToList();
-        if (samples.Count == 0) return null;
+        // A test file holds several cases: the last one starting at or before the diagnostic's line.
+        var tests = project.Tests.Select((test, index) => (Test: test, Index: index)).Where(t => t.Test.Source?.File == file).ToList();
+        if (tests.Count == 0) return null;
         var line = diagnostic.Source.Line;
-        var match = samples.LastOrDefault(s => line == 0 || s.Sample.Source!.Line <= line);
-        if (match.Sample == null) match = samples[0];
-        return new DiagnosticLink($"sample/{match.Index}", "Edit", MudBlazor.Icons.Material.Filled.Edit);
+        var match = tests.LastOrDefault(t => line == 0 || t.Test.Source!.Line <= line);
+        if (match.Test == null) match = tests[0];
+        return new DiagnosticLink($"test/{match.Index}", "Edit", MudBlazor.Icons.Material.Filled.Edit);
     }
 }

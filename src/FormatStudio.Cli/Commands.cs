@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json.Nodes;
 using FormatStudio.Codegen;
 using FormatStudio.Dsl;
@@ -150,7 +151,7 @@ internal static class Commands
         var project = LoadProject(line);
         var shown = project.Diagnostics.Where(d => line.Has("verbose") || d.Severity != Severity.Info).ToList();
         foreach (var diagnostic in shown.Where(d => d.Severity != Severity.Error)) Console.WriteLine(diagnostic);
-        Console.WriteLine($"{project.Types.Count} definitions, {project.Packets.Count()} packets, {project.Samples.Count} samples: " +
+        Console.WriteLine($"{project.Types.Count} definitions, {project.Packets.Count()} packets, {project.Tests.Count} tests: " +
                           $"{project.Diagnostics.Count(d => d.Severity == Severity.Error)} errors, " +
                           $"{project.Diagnostics.Count(d => d.Severity == Severity.Warning)} warnings.");
         return project.Diagnostics.HasErrors ? 1 : 0;
@@ -384,27 +385,60 @@ internal static class Commands
         return 0;
     }
 
-    public static int Samples(string[] args)
+    public static int Test(string[] args)
     {
-        var line = CommandLine.Parse(args, ["project"], NoFlags);
+        var line = CommandLine.Parse(args, ["project", "filter", "tag", "type", "file", "format", "output"], NoFlags);
+        line.MaxPositional(0, "format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>]");
+        var format = line.Single("format") ?? "text";
+        if (format is not ("text" or "json" or "junit")) throw new UsageException($"Unknown format '{format}' (text, json, junit).");
         var project = LoadProject(line);
-        var results = TestRunner.Run(project);
-        foreach (var result in results)
-        {
-            var sample = result.Sample;
-            if (result.Passed)
-            {
-                Console.WriteLine($"ok      {sample.Name} ({sample.Type})");
-                continue;
-            }
+        var filter = new TestFilter { Names = line.All("filter"), Tags = line.All("tag"), Types = line.All("type"), Files = line.All("file") };
+        var results = TestRunner.Run(project, filter);
 
-            Console.WriteLine($"FAILED  {sample.Name} ({sample.Type}) in {sample.Source}");
-            foreach (var problem in result.Failures.Select(f => f.Diagnostic?.ToString() ?? f.Message).Distinct())
-                Console.WriteLine($"        {problem}");
+        var report = format switch
+        {
+            "json" => TestReports.Json(project.Settings.Name, results),
+            "junit" => TestReports.JUnit(project.Settings.Name, results),
+            _ => TextReport(results, project.Tests.Count),
+        };
+        if (line.Single("output") is { } output)
+        {
+            File.WriteAllText(output, report);
+            // The file is for tools; the console still says what happened.
+            if (format != "text") Console.Write(TextReport(results, project.Tests.Count));
+        }
+        else
+        {
+            Console.Write(format == "text" ? report : report + "\n");
         }
 
-        Console.WriteLine($"{results.Count(r => r.Passed)} of {results.Count} samples passed.");
-        return results.All(r => r.Passed) ? 0 : 1;
+        return results.Any(r => r.Failed) ? 1 : 0;
+    }
+
+    private static string TextReport(IReadOnlyList<CaseResult> results, int total)
+    {
+        var text = new StringBuilder();
+        foreach (var result in results)
+        {
+            var test = result.Case;
+            switch (result.Status)
+            {
+                case CaseStatus.Passed:
+                    text.AppendLine($"ok      {test.Suite}/{test.Name} ({test.Type})");
+                    break;
+                case CaseStatus.Skipped:
+                    text.AppendLine($"skip    {test.Suite}/{test.Name} ({test.Type}): {test.Skip}");
+                    break;
+                default:
+                    text.AppendLine($"FAILED  {test.Suite}/{test.Name} ({test.Type}) in {test.Source}");
+                    foreach (var problem in result.Failures.Select(f => f.ToString()).Distinct()) text.AppendLine($"        {problem}");
+                    break;
+            }
+        }
+
+        var filtered = results.Count < total ? $" ({total - results.Count} filtered out)" : "";
+        text.AppendLine($"{results.Count(r => r.Passed)} passed, {results.Count(r => r.Failed)} failed, {results.Count(r => r.Skipped)} skipped{filtered}.");
+        return text.ToString();
     }
 
     // ------------------------------------------------------------------ codegen

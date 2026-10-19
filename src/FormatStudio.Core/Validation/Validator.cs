@@ -31,7 +31,7 @@ public sealed class Validator
         validator.CheckAliasCycles();
         validator.CheckNativeDefaults();
         validator.CheckLibrarySettings();
-        validator.CheckSamples();
+        validator.CheckTests();
     }
 
     /// <summary>Validates one definition against the project, e.g. while editing.</summary>
@@ -87,45 +87,73 @@ public sealed class Validator
         }
     }
 
-    /// <summary>Problems that would make a sample fail whatever the definitions: its type, its hex, missing data, unknown keys.</summary>
-    private void CheckSamples()
+    /// <summary>
+    /// Problems that make a test case fail whatever the definitions: its type, its hex or file, missing data, unknown keys,
+    /// expectations it can't meet. A skipped case's type isn't checked, as it may be one the project doesn't have yet.
+    /// </summary>
+    private void CheckTests()
     {
-        foreach (var sample in _project.Samples)
+        foreach (var test in _project.Tests)
         {
-            var source = sample.Source;
-            foreach (var key in sample.UnknownKeys)
-                _diagnostics.Warning($"Sample {sample.Name}: unknown key '{key}' ({string.Join(", ", SampleFiles.Keys)})", source);
-            if (sample.Value == null && sample.Hex == null)
-                _diagnostics.Error($"Sample {sample.Name} needs a 'value' or a 'hex'", source);
+            var source = test.Source;
+            var name = $"Test {test.Name}";
+            foreach (var key in test.UnknownKeys)
+            {
+                var keys = key.StartsWith("expect.", StringComparison.Ordinal) ? TestExpectation.Keys : TestFiles.Keys;
+                _diagnostics.Warning($"{name}: unknown key '{key}' ({string.Join(", ", keys)})", source);
+            }
 
-            if (sample.Hex != null)
+            if (test.Hex != null && test.File != null) _diagnostics.Error($"{name} has both a 'hex' and a 'file'; keep one", source);
+            else if (test.Value == null && !test.HasBytes) _diagnostics.Error($"{name} needs a 'value', 'hex' or 'file'", source);
+            if (test.Expect is { ExpectsFailure: true } expect)
+            {
+                if (expect.Fails == ExpectedFailure.Encode && test.Value == null) _diagnostics.Error($"{name}: 'fails: encode' needs a 'value'", source);
+                if (expect.Fails == ExpectedFailure.Decode && !test.HasBytes) _diagnostics.Error($"{name}: 'fails: decode' needs a 'hex' or 'file'", source);
+                if (expect.HasValue || expect.Warnings != null || expect.Consumed != null)
+                    _diagnostics.Warning($"{name}: a case that must fail only checks its error; 'value', 'warnings' and 'consumed' are ignored", source);
+            }
+
+            if (test.Hex != null)
             {
                 try
                 {
-                    Hex.Parse(sample.Hex);
+                    Hex.Parse(test.Hex);
                 }
                 catch (System.FormatException e)
                 {
-                    _diagnostics.Error($"Sample {sample.Name}: invalid hex: {e.Message}", source);
+                    _diagnostics.Error($"{name}: invalid hex: {e.Message}", source);
                 }
             }
 
+            if (test.File != null)
+            {
+                try
+                {
+                    if (!File.Exists(_project.TestFilePath(test))) _diagnostics.Error($"{name}: there is no file {test.File}", source);
+                }
+                catch (FormatDefinitionException e)
+                {
+                    _diagnostics.Error($"{name}: {e.Message}", source);
+                }
+            }
+
+            if (test.Skip != null) continue;
             TypeRef type;
             try
             {
-                type = _project.Normalize(TypeExpressions.Parse(sample.Type));
+                type = _project.Normalize(TypeExpressions.Parse(test.Type));
             }
             catch (System.FormatException e)
             {
-                _diagnostics.Error($"Sample {sample.Name}: {e.Message}", source);
+                _diagnostics.Error($"{name}: {e.Message}", source);
                 continue;
             }
 
-            CheckType(type, source, sample.Name, null);
+            CheckType(type, source, test.Name, null);
         }
 
-        foreach (var duplicate in _project.Samples.GroupBy(s => (s.Source?.File, s.Name)).Where(g => g.Count() > 1))
-            _diagnostics.Warning($"Several samples are named {duplicate.Key.Name}", duplicate.Skip(1).First().Source);
+        foreach (var duplicate in _project.Tests.GroupBy(t => (t.Source?.File, t.Name)).Where(g => g.Count() > 1))
+            _diagnostics.Warning($"Several tests are named {duplicate.Key.Name}", duplicate.Skip(1).First().Source);
     }
 
     private void CheckStruct(StructDef structDef)

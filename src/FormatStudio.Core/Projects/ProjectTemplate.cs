@@ -7,7 +7,7 @@ namespace FormatStudio.Projects;
 public static class ProjectTemplate
 {
     /// <summary>
-    /// Writes <c>&lt;name&gt;.fstudio.yaml</c> and the empty <c>types</c>, <c>packets</c> and <c>samples</c> folders into
+    /// Writes <c>&lt;name&gt;.fstudio.yaml</c> and the empty <c>types</c>, <c>packets</c> and <c>tests</c> folders into
     /// <paramref name="directory"/> (created if missing) and returns the project file. A <see cref="ProjectKind.Library"/>
     /// gets a <paramref name="version"/> (default 0.1.0), the defaults listed in <paramref name="inherit"/> come from the
     /// projects using it, and it has no <c>packets</c> folder.
@@ -41,8 +41,8 @@ public static class ProjectTemplate
                 string: utf8{(inherit is { Count: > 0 } ? $"\n  inherit: [{string.Join(", ", inherit)}]" : "")}
               sources:
                 - types/**/*.yaml
-              samples:
-                - samples/**/*.yaml
+              tests:
+                - tests/**/*.yaml
               """
             : $"""
               name: {name}
@@ -53,13 +53,13 @@ public static class ProjectTemplate
               sources:
                 - types/**/*.yaml
                 - packets/**/*.yaml
-              samples:
-                - samples/**/*.yaml
+              tests:
+                - tests/**/*.yaml
               """;
         ProjectSettings.Parse(yaml, file);
         Directory.CreateDirectory(Path.Combine(directory, "types"));
         if (!library) Directory.CreateDirectory(Path.Combine(directory, "packets"));
-        Directory.CreateDirectory(Path.Combine(directory, "samples"));
+        Directory.CreateDirectory(Path.Combine(directory, "tests"));
         File.WriteAllText(file, yaml + "\n");
         return file;
     }

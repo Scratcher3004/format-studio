@@ -45,8 +45,11 @@ const string usage = """
           Encodes random values (or decodes --hex), re-encodes and compares. Without types: all packets/structs.
       format-studio identify (--hex <hex> | --file <file>) [--top <n>] [--protocol <name>] [--group <group>]
           Tries the bytes against every packet (or struct, or those of the protocol or group) and ranks the matches.
-      format-studio samples
-          Runs the project's samples: encodes each value and compares with the expected hex.
+      format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit]
+                  [--output <file>]
+          Runs the project's test cases against the simulator (see docs/testing.md). Filters may be repeated; --filter
+          matches name or suite/name, --file the test file. --output writes the report to a file (and a text summary
+          to the console). Exit code 1 when a case fails. 'samples' is an alias.
       format-studio generate [<target>...] [--no-clean] [--dry-run]
           Runs the project's codegen targets. Output only goes to the target's output folder.
       format-studio generators [--verbose]
@@ -81,7 +84,7 @@ try
         "encode" => Commands.Encode(args[1..]),
         "roundtrip" => Commands.RoundTrip(args[1..]),
         "identify" => Commands.Identify(args[1..]),
-        "samples" => Commands.Samples(args[1..]),
+        "test" or "samples" => Commands.Test(args[1..]),
         "generate" => Commands.Generate(args[1..]),
         "generators" => Commands.Generators(args[1..]),
         "web" => Commands.Web(args[1..]),

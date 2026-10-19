@@ -1,0 +1,27 @@
+# The first packet of every connection. The suite's type and tags apply to all its cases.
+suite: handshake
+type: Handshake
+tags: [handshaking]
+cases:
+  - name: status
+    value:
+      protocolVersion: 765
+      serverAddress: localhost
+      serverPort: 25565
+      nextState: status
+    hex: fd05 09 6c6f63616c686f7374 63dd 01
+  # Bytes from a capture: decoded, re-encoded and compared.
+  - name: login-capture
+    file: fixtures/handshake-login.bin
+    expect:
+      value: {serverAddress: localhost, nextState: login}
+      match: subset
+  - name: unknown-next-state
+    hex: fd05 09 6c6f63616c686f7374 63dd 07
+    expect:
+      warnings: [not a member of NextState]
+  - name: truncated-address
+    hex: fd05 09 6c6f
+    expect:
+      error: remaining
+      path: serverAddress

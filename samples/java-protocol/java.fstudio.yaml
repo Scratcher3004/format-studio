@@ -11,8 +11,8 @@ defaults:
 sources:
   - types/**/*.yaml
   - packets/**/*.yaml
-samples:
-  - samples/**/*.yaml
+tests:
+  - tests/**/*.yaml
 # Packet ids are only unique within a state and direction; each protocol gets a registry of its own.
 protocols:
   - name: HandshakingServerbound

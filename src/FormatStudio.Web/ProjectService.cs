@@ -96,22 +96,22 @@ public sealed class ProjectService
         return file;
     }
 
-    /// <summary>Writes a sample (see <see cref="FormatProject.SaveSample"/>) and reloads.</summary>
-    public string SaveSample(SampleDef sample, string file, SampleDef? original)
+    /// <summary>Writes a test case (see <see cref="FormatProject.SaveTest"/>) and reloads.</summary>
+    public string SaveTest(TestCaseDef test, string file, TestCaseDef? original)
     {
-        var written = Project!.SaveSample(sample, file, original);
+        var written = Project!.SaveTest(test, file, original);
         Reload();
         return written;
     }
 
-    public void DeleteSample(SampleDef sample)
+    public void DeleteTest(TestCaseDef test)
     {
-        Project!.DeleteSample(sample);
+        Project!.DeleteTest(test);
         Reload();
     }
 
-    /// <summary>Runs a sample against the simulator (see <see cref="TestRunner"/>).</summary>
-    public CaseResult RunSample(SampleDef sample) => TestRunner.Run(Project!, sample);
+    /// <summary>Runs a test case against the simulator (see <see cref="TestRunner"/>).</summary>
+    public CaseResult RunTest(TestCaseDef test) => TestRunner.Run(Project!, test);
 
     /// <summary>
     /// Where an override of an imported definition goes: the folder of the last source pattern
