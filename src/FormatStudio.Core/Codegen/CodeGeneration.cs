@@ -57,6 +57,17 @@ public static class CodeGeneration
     public static CodegenTarget DefaultTarget(ICodeGenerator generator) =>
         new() { Name = generator.Name, Generator = generator.Name, Output = generator.DefaultOutput };
 
+    /// <summary>
+    /// The project's codegen target with this name, else its first one with this generator, else a target with the
+    /// generator's defaults; null when there is neither.
+    /// </summary>
+    public static CodegenTarget? FindTarget(FormatProject project, string name)
+    {
+        var targets = project.Settings.Codegen;
+        return targets.FirstOrDefault(t => t.Name == name) ?? targets.FirstOrDefault(t => t.Generator == name)
+            ?? (project.Generators.Find(name) is { } generator ? DefaultTarget(generator) : null);
+    }
+
     public static GeneratedOutput Generate(FormatProject project, CodegenTarget target)
     {
         var generator = project.Generators.Get(target.Generator);

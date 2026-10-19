@@ -71,13 +71,22 @@ public sealed record CaseResult(TestCaseDef Case, IReadOnlyList<CaseFailure> Fai
     public IReadOnlyList<Diagnostic> Warnings { get; init; } = [];
     /// <summary>The bytes decoding took up, for a case that expects a number of them.</summary>
     public int? Consumed { get; init; }
+    /// <summary>The codegen target whose generated code the case ran against; null for the simulator.</summary>
+    public string? Target { get; init; }
+    /// <summary>Why a skipped case didn't run, when that isn't its own <c>skip</c>, e.g. a type without generated code.</summary>
+    public string? SkipReason { get; init; }
+
+    /// <summary><c>suite/name</c>, and <c>suite/name [target]</c> against generated code.</summary>
+    public string Id => IdOf(Case, Target);
+
+    public static string IdOf(TestCaseDef test, string? target) => target == null ? $"{test.Suite}/{test.Name}" : $"{test.Suite}/{test.Name} [{target}]";
 
     public CaseStatus Status => Skipped ? CaseStatus.Skipped : Failures.Count == 0 ? CaseStatus.Passed : CaseStatus.Failed;
     public bool Passed => Status == CaseStatus.Passed;
     public bool Failed => Status == CaseStatus.Failed;
 
     /// <summary>"ok", "skipped: …" or the first failure in a few words, for lists of results.</summary>
-    public string Summary => Skipped ? "skipped: " + Case.Skip : Failures.FirstOrDefault() switch
+    public string Summary => Skipped ? "skipped: " + (SkipReason ?? Case.Skip) : Failures.FirstOrDefault() switch
     {
         null => "ok",
         { Kind: CaseFailureKind.Mismatch, Actual: { } actual } => $"differs: {Hex.Format(actual)}",
@@ -85,6 +94,16 @@ public sealed record CaseResult(TestCaseDef Case, IReadOnlyList<CaseFailure> Fai
         { Kind: CaseFailureKind.RoundTrip } failure => "round trip failed: " + failure.Message,
         var failure => failure.Path != null ? $"{failure.Path}: {failure.Message}" : failure.Message,
     };
+
+    /// <summary>The failures one per line, with the random values of fuzz failures to repeat them with; empty when it passed.</summary>
+    public string Describe()
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (var problem in Failures.Select(f => f.ToString()).Distinct()) text.AppendLine(problem);
+        foreach (var failure in Failures.Where(f => f.Value != null).Take(3))
+            text.AppendLine($"  value: {JsonValues.ToText(failure.Value, false)}");
+        return text.ToString();
+    }
 }
 
 /// <summary>Which test cases to run; a case runs when it matches every part that is given.</summary>

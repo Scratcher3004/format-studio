@@ -12,7 +12,7 @@ public static class TestReports
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
     /// <summary>
-    /// <c>{project, passed, failed, skipped, cases: [{suite, name, type, file, line, tags, status, durationMs, failures}]}</c>;
+    /// <c>{project, passed, failed, skipped, cases: [{suite, name, type, target, file, line, tags, status, durationMs, failures}]}</c>;
     /// a failure has its kind and message, and when known its path, offset and expected and actual hex.
     /// </summary>
     public static string Json(string project, IReadOnlyList<CaseResult> results)
@@ -28,11 +28,12 @@ public static class TestReports
                 ["suite"] = r.Case.Suite,
                 ["name"] = r.Case.Name,
                 ["type"] = r.Case.Type,
+                ["target"] = r.Target,
                 ["file"] = r.Case.Source?.File,
                 ["line"] = r.Case.Source?.Line,
                 ["tags"] = new JsonArray(r.Case.Tags.Select(t => (JsonNode)t).ToArray()),
                 ["status"] = r.Status.ToString().ToLowerInvariant(),
-                ["skip"] = r.Case.Skip,
+                ["skip"] = r.SkipReason ?? r.Case.Skip,
                 ["durationMs"] = Math.Round(r.Duration.TotalMilliseconds, 3),
                 ["failures"] = new JsonArray(r.Failures.Select(Failure).ToArray()),
             }).ToArray()),
@@ -61,12 +62,12 @@ public static class TestReports
         var suites = results.GroupBy(r => r.Case.Suite).Select(suite => new XElement("testsuite",
             Counts(suite.Key, suite.ToList()),
             suite.Select(r => new XElement("testcase",
-                new XAttribute("name", r.Case.Name),
+                new XAttribute("name", r.Target == null ? r.Case.Name : $"{r.Case.Name} [{r.Target}]"),
                 new XAttribute("classname", $"{project}.{r.Case.Suite}"),
                 new XAttribute("time", Seconds(r.Duration)),
                 r.Case.Source?.File is { } file ? new XAttribute("file", file) : null,
                 r.Case.Source is { Line: > 0 } source ? new XAttribute("line", source.Line) : null,
-                r.Skipped ? new XElement("skipped", new XAttribute("message", r.Case.Skip ?? "")) : null,
+                r.Skipped ? new XElement("skipped", new XAttribute("message", r.SkipReason ?? r.Case.Skip ?? "")) : null,
                 r.Failed
                     ? new XElement("failure",
                         new XAttribute("message", r.Summary),

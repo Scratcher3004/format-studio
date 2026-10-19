@@ -1,8 +1,9 @@
 # Testing a format
 
 A project's test cases pin down how values and bytes of its types look: a value with its known encoding, bytes from a
-capture, a whole packet with its id, input that must be rejected, random values that must round-trip. `format-studio test` runs them against the simulator, the web UI lists and runs
-them on the overview, and CI can read the results as JUnit XML.
+capture, a whole packet with its id, input that must be rejected, random values that must round-trip. `format-studio test` runs them against the simulator
+and, with `--target`, against the generated C# and Java; the web UI lists and runs them on the overview, and CI can read
+the results as JUnit XML.
 
 ## Test files
 
@@ -17,7 +18,7 @@ Test files are never read as definitions, also when a source pattern such as the
 `samples` is the old name of `tests` and is still read; the settings page writes `tests`.
 
 A test file holds a list of cases, a suite or a single case. A suite is a mapping with a `cases` list; its `type`,
-`packet`, `tags` and `skip` apply to all its cases, and `suite` names it (the file name without `.yaml` otherwise).
+`packet`, `tags`, `skip` and `skip-targets` apply to all its cases, and `suite` names it (the file name without `.yaml` otherwise).
 
 ```yaml
 suite: handshake
@@ -51,6 +52,7 @@ other diagnostics.
 | `packet` | The bytes start with a packet id ([below](#packet-cases)) |
 | `fuzz` | Round-trip random values instead ([below](#fuzz-cases)) |
 | `skip` | `true` or a reason: the case doesn't run, and its type isn't checked (it may not exist yet) |
+| `skip-targets` | Codegen targets or generators the case doesn't run against ([below](#generated-code)): a list, or names with a reason |
 | `tags` | Tags for `test --tag` |
 
 Without `expect`, a case checks what samples always did:
@@ -172,10 +174,57 @@ Check the changed files (e.g. with `git diff`) before committing them: an update
 give now, including a bug. In the web UI, **Accept actual** on a failed case does the same for that case (on its
 page, once its edits are saved), and **Accept all actual** on the overview for all of them.
 
+## Generated code
+
+`format-studio test --target csharp` runs the cases once more against the code a codegen target generates: the
+project's target of that name, else its first with that generator, else the generator's defaults. The code is compiled
+(C# with Roslyn against FormatStudio.Runtime, Java with a JDK: `FORMAT_STUDIO_JDK`, `JAVA_HOME` or the PATH), and in one
+run, for Java one JVM, it reads the bytes of each case and writes them back:
+
+- the case's bytes (as many as `consumed` says), else those the simulator encodes its value to, must come back the same;
+- a case that must fail to decode must make the generated code throw;
+- a packet case's id goes to the generated registry of its protocol (or the one registry of a project without
+  protocols), which must read the same packet; with a `group` the simulator picks the packet instead;
+- fuzz cases send the simulator's random values (the same seed gives the same ones) through the generated code.
+
+The decoded value and warnings are checked by the simulator only, and so is failing to encode: the generated code only
+gets bytes. Cases of types without a generated `Read` of their own, such as `Slot[]` or a `u8`, are skipped with the
+reason, as are types from libraries. Results are named `suite/name [target]` and counted per target.
+
+Generated code may be stricter than the simulator: a Java enum can't hold a value that isn't a member, so the generated
+Java throws where the simulator only warns. `skip-targets` leaves such a case out for the targets or generators it
+names, with the reason shown in the report:
+
+```yaml
+- name: unknown-next-state
+  hex: fd05 09 6c6f63616c686f7374 63dd 07
+  expect: {warnings: [not a member of NextState]}
+  skip-targets: {java-stream: Java enums reject values that aren't members}   # or a list: [java-stream]
+```
+
+In a unit test project, `ProjectSuite` from FormatStudio.Testing makes each case a test of its own, for the simulator
+and each target:
+
+```csharp
+static readonly ProjectSuite Suite = ProjectSuite.Get("path/to/project", "csharp", "java-stream");
+public static IEnumerable<object[]> Cases => Suite.Cases();
+
+[Theory, MemberData(nameof(Cases))]
+public void Case(string id)
+{
+    var result = Suite.Run(id);
+    if (result.Skipped) Assert.Skip(result.Summary);
+    Assert.True(result.Passed, result.Describe());
+}
+```
+
+A target is compiled once, when its first case runs. Without a JDK the Java cases are skipped; code that doesn't
+compile fails each of the target's cases with the compiler's errors.
+
 ## Running tests
 
 ```
-format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>] [--update]
+format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>] [--update] [--target <target|generator>]
 ```
 
 - `--filter` matches a case's name or `suite/name` (`*` and `?`), `--file` the test file relative to the project;
@@ -183,10 +232,13 @@ format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob
 - `--format json` lists every case with its status, file, line and failures (kind, message, path, and for bytes that
   differ the offset and both byte strings). `--format junit` writes one `testsuite` per suite.
 - `--update` first accepts what the failed cases (of the filters) give, as above; the report is of the cases after it.
+- `--target` (may be given several times) runs the cases against generated code as well, [above](#generated-code).
+  Code that doesn't compile, or a Java target without a JDK, is an error of the run.
 - `--output` writes the report to a file and prints the text summary to the console, e.g. for CI:
   `format-studio test --format junit --output test-results.xml`.
 - The exit code is 1 when a case fails or the project has errors, so CI needs no `validate` or `roundtrip` step
   besides it. `format-studio samples` is the same command.
 
-The cases run against the simulator only. In the web UI, the overview's **Tests** panel runs them and shows each
-result; a case's page edits its name, type, value and hex and keeps its other keys.
+Without `--target` the cases run against the simulator only. In the web UI, the overview's **Tests** panel runs them
+(against the simulator) and shows each result; a case's page edits its name, type, value and hex and keeps its other
+keys.

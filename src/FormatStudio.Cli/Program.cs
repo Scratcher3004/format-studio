@@ -46,12 +46,12 @@ const string usage = """
       format-studio identify (--hex <hex> | --file <file>) [--top <n>] [--protocol <name>] [--group <group>]
           Tries the bytes against every packet (or struct, or those of the protocol or group) and ranks the matches.
       format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit]
-                  [--output <file>] [--update]
+                  [--output <file>] [--update] [--target <target|generator>...]
           Runs the project's test cases against the simulator (see docs/testing.md). Filters may be repeated; --filter
           matches name or suite/name, --file the test file. --output writes the report to a file (and a text summary
           to the console). --update first writes what failed cases give (hex, expected value, warnings, length) into
-          their files, and fills in 'auto'. Exit code 1 when a case fails or the project has errors. 'samples' is an
-          alias.
+          their files, and fills in 'auto'. --target also runs the cases against the generated C# or Java of a codegen
+          target (Java needs a JDK). Exit code 1 when a case fails or the project has errors. 'samples' is an alias.
       format-studio generate [<target>...] [--no-clean] [--dry-run]
           Runs the project's codegen targets. Output only goes to the target's output folder.
       format-studio generators [--verbose]

@@ -14,10 +14,10 @@ namespace FormatStudio.Projects;
 public static class TestFiles
 {
     /// <summary>The keys of a case.</summary>
-    public static IReadOnlyList<string> Keys { get; } = ["name", "sample", "type", "value", "hex", "file", "expect", "packet", "fuzz", "skip", "tags"];
+    public static IReadOnlyList<string> Keys { get; } = ["name", "sample", "type", "value", "hex", "file", "expect", "packet", "fuzz", "skip", "skip-targets", "tags"];
 
     /// <summary>The keys of a suite besides its cases: defaults for the cases of the file.</summary>
-    public static IReadOnlyList<string> SuiteKeys { get; } = ["suite", "type", "packet", "tags", "skip"];
+    public static IReadOnlyList<string> SuiteKeys { get; } = ["suite", "type", "packet", "tags", "skip", "skip-targets"];
 
     /// <summary>The list of cases of a suite: its <c>cases</c>, or its <c>samples</c> in older files.</summary>
     private static string? ListKey(JsonObject root) =>
@@ -128,6 +128,9 @@ public static class TestFiles
             Packet = packet,
             Fuzz = fuzz,
             Skip = SkipReason(entry["skip"]) ?? SkipReason(suite["skip"]),
+            // The case's names override the suite's, also with false.
+            SkipTargets = SkipTargets(suite["skip-targets"]).Concat(SkipTargets(entry["skip-targets"]))
+                .GroupBy(p => p.Key).Select(g => g.Last()).Where(p => p.Value != null).ToDictionary(p => p.Key, p => p.Value!),
             Tags = Strings(suite["tags"]).Concat(Strings(entry["tags"])).Distinct().ToList(),
             Suite = suiteName,
             Source = source,
@@ -239,6 +242,11 @@ public static class TestFiles
         JsonValue value when value.GetValueKind() == JsonValueKind.True => "skipped",
         _ => skip.ToString(),
     };
+
+    /// <summary>A list of names, or a mapping of names to why ("" when no reason is given, null for <c>false</c>).</summary>
+    private static IEnumerable<KeyValuePair<string, string?>> SkipTargets(JsonNode? node) => node is JsonObject map
+        ? map.Select(p => new KeyValuePair<string, string?>(p.Key, p.Value is JsonValue v && v.GetValueKind() == JsonValueKind.True || p.Value == null ? "" : SkipReason(p.Value)))
+        : Strings(node).Select(name => new KeyValuePair<string, string?>(name, ""));
 
     private static List<string> Strings(JsonNode? node) => node switch
     {

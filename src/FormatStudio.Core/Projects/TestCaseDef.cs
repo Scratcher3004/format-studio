@@ -31,6 +31,11 @@ public sealed class TestCaseDef
     public FuzzOptions? Fuzz { get; set; }
     /// <summary>Why the case is skipped, or null when it runs.</summary>
     public string? Skip { get; set; }
+    /// <summary>
+    /// The codegen targets or generators whose code the case doesn't run against, with why (<c>skip-targets</c>), e.g.
+    /// because Java enums reject values that aren't members ("" without a reason); its suite's as well.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> SkipTargets { get; set; } = new Dictionary<string, string>();
     /// <summary>The tags of the case and of its suite.</summary>
     public IReadOnlyList<string> Tags { get; set; } = [];
     /// <summary>The suite of the case: its file's <c>suite</c>, else the file name without extension.</summary>

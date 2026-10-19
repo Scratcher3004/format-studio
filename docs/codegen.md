@@ -107,4 +107,6 @@ var java = project.Settings.Codegen.Single(t => t.Name == "java");
 Assert.Empty(GeneratedCodeVerifier.CheckJavaAgainstSimulator(project, java, JavaToolchain.Find()!, iterations: 5));
 ```
 
-The repository's tests run every generator this way; the Java tests are skipped when no JDK is found.
+The repository's tests run every generator this way; the Java tests are skipped when no JDK is found. A project's own
+test cases run against its targets with `format-studio test --target <target>`, or as unit tests with `ProjectSuite`
+(see [testing](testing.md#generated-code)).

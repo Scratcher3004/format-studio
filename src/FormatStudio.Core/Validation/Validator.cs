@@ -123,6 +123,8 @@ public sealed class Validator
                     _diagnostics.Warning($"{name}: a case that must fail only checks its error; 'value', 'warnings' and 'consumed' are ignored", source);
             }
 
+            foreach (var target in test.SkipTargets.Keys.Where(t => _project.Settings.Codegen.All(c => c.Name != t) && _project.Generators.Find(t) == null))
+                _diagnostics.Warning($"{name}: 'skip-targets' names '{target}', which is neither a codegen target nor a generator", source);
             if (test.HexAuto && test.Value == null)
                 _diagnostics.Error($"{name}: 'hex: auto' is filled in from the value's encoding, so the case needs a 'value'", source);
             if (test.Hex != null && !test.HexAuto)

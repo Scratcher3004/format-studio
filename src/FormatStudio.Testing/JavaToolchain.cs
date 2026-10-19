@@ -9,6 +9,9 @@ public sealed class JavaToolchain(string javac, string java)
     public string Javac { get; } = javac;
     public string Java { get; } = java;
 
+    /// <summary>What to do when <see cref="Find"/> finds no JDK.</summary>
+    public const string Missing = "No JDK: set JAVA_HOME or FORMAT_STUDIO_JDK, or put javac on the PATH";
+
     /// <summary>
     /// The JDK in <paramref name="home"/>, <c>FORMAT_STUDIO_JDK</c>, <c>JAVA_HOME</c> or on the PATH, or null when
     /// there is none.

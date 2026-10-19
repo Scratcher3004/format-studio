@@ -20,7 +20,7 @@ dotnet run --project src/FormatStudio.Cli -- <command> --project <file|folder> .
 | `encode <type> --json ... \| --random --seed 1` | Encode a value (or a random one) |
 | `roundtrip [types] --iterations 20` | Random values: encode, decode, encode again, compare |
 | `identify --hex ... [--protocol <name>]` | Try every packet (or struct, or the protocol's packets) and rank the matches |
-| `test [--filter ...] [--tag ...] [--format text\|json\|junit] [--update]` | Run the project's test cases (see [testing](testing.md)); `--update` writes what failed cases give into their files; `samples` is an alias |
+| `test [--filter ...] [--tag ...] [--format text\|json\|junit] [--update] [--target ...]` | Run the project's test cases (see [testing](testing.md)); `--update` writes what failed cases give into their files; `--target` runs them against generated C# or Java too; `samples` is an alias |
 | `import <importer> [options] [--dry-run]` | Run an importer (see [importers](importers.md)) |
 | `generate [target] [--dry-run]` | Run the codegen targets (see [code generation](codegen.md)) |
 | `generators [--verbose]` | List the code generators and their options: built-in, and those the project and its libraries declare |

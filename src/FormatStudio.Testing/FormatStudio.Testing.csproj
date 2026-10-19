@@ -11,6 +11,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\FormatStudio.Core\FormatStudio.Core.csproj" />
+        <!-- The runtime generated C# is compiled against by default. -->
+        <ProjectReference Include="..\FormatStudio.Runtime\FormatStudio.Runtime.csproj" />
     </ItemGroup>
 
 </Project>

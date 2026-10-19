@@ -43,7 +43,7 @@ dotnet run --project src/FormatStudio.Web -- --workspace samples --urls http://l
 | `src/FormatStudio.Importers.Mojang` | Importer for [Mojang/bedrock-protocol-docs](https://github.com/Mojang/bedrock-protocol-docs) |
 | `src/FormatStudio.Runtime` | Runtime for the generated C# (spans and streams) |
 | `src/FormatStudio.Runtime.Java` | Runtime for the generated Java (written into the output by default) |
-| `src/FormatStudio.Testing` | Checks generated C# and Java against the simulator (for your own tests) |
+| `src/FormatStudio.Testing` | Runs test cases and random values against generated C# and Java (`test --target`, `ProjectSuite` for your own tests) |
 | `tests/FormatStudio.Tests` | Tests |
 | `samples/java-protocol` | Part of the Minecraft Java protocol as a sample project |
 

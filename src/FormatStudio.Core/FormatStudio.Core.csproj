@@ -11,6 +11,7 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="FormatStudio.Tests" />
+        <InternalsVisibleTo Include="FormatStudio.Testing" />
     </ItemGroup>
 
     <ItemGroup>

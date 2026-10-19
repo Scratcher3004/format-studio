@@ -20,6 +20,8 @@ cases:
     hex: fd05 09 6c6f63616c686f7374 63dd 07
     expect:
       warnings: [not a member of NextState]
+    # A Java enum can't hold a value that isn't a member, so the generated Java rejects it.
+    skip-targets: {java-stream: Java enums reject values that aren't members}
   - name: truncated-address
     hex: fd05 09 6c6f
     expect:

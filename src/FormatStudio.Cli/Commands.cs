@@ -223,11 +223,9 @@ internal static class Commands
     private static CodegenTarget FindTarget(FormatProject project, string name)
     {
         var targets = project.Settings.Codegen;
-        if ((targets.FirstOrDefault(t => t.Name == name) ?? targets.FirstOrDefault(t => t.Generator == name)) is { } target) return target;
-        var generator = project.Generators.Find(name)
+        return CodeGeneration.FindTarget(project, name)
             ?? throw new UsageException($"No codegen target or generator '{name}' (targets: {string.Join(", ", targets.Select(t => t.Name).DefaultIfEmpty("none"))}; " +
                                         $"generators: {string.Join(", ", project.Generators.All.Select(g => g.Name))}).");
-        return CodeGeneration.DefaultTarget(generator);
     }
 
     // ------------------------------------------------------------------ simulation
@@ -390,12 +388,15 @@ internal static class Commands
 
     public static int Test(string[] args)
     {
-        var line = CommandLine.Parse(args, ["project", "filter", "tag", "type", "file", "format", "output"], ["update"]);
-        line.MaxPositional(0, "format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>] [--update]");
+        var line = CommandLine.Parse(args, ["project", "filter", "tag", "type", "file", "format", "output", "target"], ["update"]);
+        line.MaxPositional(0, "format-studio test [--filter <glob>] [--tag <tag>] [--type <type>] [--file <glob>] [--format text|json|junit] [--output <file>] [--update] [--target <target|generator>...]");
         var format = line.Single("format") ?? "text";
         if (format is not ("text" or "json" or "junit")) throw new UsageException($"Unknown format '{format}' (text, json, junit).");
         var project = LoadProject(line);
         var filter = new TestFilter { Names = line.All("filter"), Tags = line.All("tag"), Types = line.All("type"), Files = line.All("file") };
+        var targets = line.All("target").Distinct().Select(name => FindTarget(project, name)).ToList();
+        foreach (var target in targets.Where(t => !TargetRunner.Supports(project, t)))
+            throw new UsageException($"Target '{target.Name}' generates {target.Generator}; tests run against C# and Java targets.");
         if (line.Has("update"))
         {
             var path = project.FilePath!;
@@ -410,7 +411,22 @@ internal static class Commands
             log.WriteLine($"{count} {(count == 1 ? "case" : "cases")} updated.");
         }
 
-        var results = TestRunner.Run(project, filter);
+        var results = TestRunner.Run(project, filter).ToList();
+        // The targets' errors (code that doesn't compile, no JDK) fail the run, but the other targets still run.
+        var targetErrors = 0;
+        var tools = targets.Count > 0 ? TargetTools.Find() : null;
+        foreach (var target in targets)
+        {
+            try
+            {
+                results.AddRange(TargetRunner.Run(project, target, tools!, filter));
+            }
+            catch (GeneratedCodeException e)
+            {
+                Console.Error.WriteLine($"error: target {target.Name}: {e.Message}");
+                targetErrors++;
+            }
+        }
 
         var report = format switch
         {
@@ -432,7 +448,7 @@ internal static class Commands
         // The errors are printed when the project loads; with them the project isn't fine even when its tests pass.
         var errors = project.Diagnostics.Count(d => d.Severity == Severity.Error);
         if (errors > 0) Console.WriteLine($"The project has {errors} errors (format-studio validate).");
-        return results.Any(r => r.Failed) || errors > 0 ? 1 : 0;
+        return results.Any(r => r.Failed) || errors > 0 || targetErrors > 0 ? 1 : 0;
     }
 
     private static string TextReport(IReadOnlyList<CaseResult> results, int total)
@@ -444,23 +460,30 @@ internal static class Commands
             switch (result.Status)
             {
                 case CaseStatus.Passed:
-                    text.AppendLine($"ok      {test.Suite}/{test.Name} ({test.Subject})");
+                    text.AppendLine($"ok      {result.Id} ({test.Subject})");
                     break;
                 case CaseStatus.Skipped:
-                    text.AppendLine($"skip    {test.Suite}/{test.Name} ({test.Subject}): {test.Skip}");
+                    text.AppendLine($"skip    {result.Id} ({test.Subject}): {result.SkipReason ?? test.Skip}");
                     break;
                 default:
-                    text.AppendLine($"FAILED  {test.Suite}/{test.Name} ({test.Subject}) in {test.Source}");
-                    foreach (var problem in result.Failures.Select(f => f.ToString()).Distinct()) text.AppendLine($"        {problem}");
-                    // A random value that fails, to repeat it with encode --json.
-                    foreach (var failure in result.Failures.Where(f => f.Value != null).Take(3))
-                        text.AppendLine($"          value: {JsonValues.ToText(failure.Value, false)}");
+                    text.AppendLine($"FAILED  {result.Id} ({test.Subject}) in {test.Source}");
+                    // With the random values of fuzz failures, to repeat them with encode --json.
+                    foreach (var problem in result.Describe().Split('\n', StringSplitOptions.RemoveEmptyEntries)) text.AppendLine($"        {problem.TrimEnd('\r')}");
                     break;
             }
         }
 
-        var filtered = results.Count < total ? $" ({total - results.Count} filtered out)" : "";
-        text.AppendLine($"{results.Count(r => r.Passed)} passed, {results.Count(r => r.Failed)} failed, {results.Count(r => r.Skipped)} skipped{filtered}.");
+        // A line per run when cases ran against targets as well.
+        var runs = results.GroupBy(r => r.Target).ToList();
+        foreach (var run in runs)
+        {
+            var count = run.Count();
+            var filtered = count < total ? $" ({total - count} filtered out)" : "";
+            var name = runs.Count > 1 ? $"{run.Key ?? "simulator"}: " : "";
+            text.AppendLine($"{name}{run.Count(r => r.Passed)} passed, {run.Count(r => r.Failed)} failed, {run.Count(r => r.Skipped)} skipped{filtered}.");
+        }
+
+        if (runs.Count == 0) text.AppendLine($"0 passed, 0 failed, 0 skipped ({total} filtered out).");
         return text.ToString();
     }
 

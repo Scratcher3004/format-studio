@@ -19,6 +19,9 @@ jobs:
           java-version: "21"
       - run: dotnet build FormatStudio.slnx -c Release
       - run: dotnet test FormatStudio.slnx -c Release --no-build
-      # Fails on errors in the project too; the project's fuzz cases replace a roundtrip step.
+      # Fails on errors in the project too; the project's fuzz cases replace a roundtrip step. The cases also run
+      # against the generated C# and Java.
       - name: Sample project
-        run: dotnet run --project src/FormatStudio.Cli -c Release --no-build -- test --project samples/java-protocol
+        run: >-
+          dotnet run --project src/FormatStudio.Cli -c Release --no-build --
+          test --project samples/java-protocol --target csharp --target csharp-stream --target java-stream
