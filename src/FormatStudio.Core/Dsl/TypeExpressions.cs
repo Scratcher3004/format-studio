@@ -194,6 +194,45 @@ public static partial class TypeExpressions
         _ => throw new System.FormatException($"Unknown pad '{text}' (none, zero, terminated or a single pad character)"),
     };
 
+    /// <summary>A fill pattern as written: <c>zero</c>, or <c>0x</c> and its hex digits.</summary>
+    public static string FormatFill(string hex) => hex == "00" ? "zero" : "0x" + hex;
+
+    /// <summary>
+    /// A fill pattern as lowercase hex: <c>zero</c>, a byte (<c>255</c>, <c>0xff</c>), or <c>0x</c> and an even number of
+    /// hex digits for a pattern of several bytes (<c>0xdead</c>).
+    /// </summary>
+    public static string ParseFill(string text)
+    {
+        if (text == "zero") return "00";
+        if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) && text.Length > 2 && text[2..].All(char.IsAsciiHexDigit))
+        {
+            var digits = text[2..].ToLowerInvariant();
+            if (digits.Length <= 2) return digits.PadLeft(2, '0');
+            if (digits.Length % 2 == 0) return digits;
+        }
+        else if (byte.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+        {
+            return value.ToString("x2", CultureInfo.InvariantCulture);
+        }
+
+        throw new System.FormatException($"Invalid fill '{text}' (zero, a byte such as 255 or 0xff, or a pattern such as 0xdead)");
+    }
+
+    public static string CheckName(PaddingCheck check) => check switch
+    {
+        PaddingCheck.Ignore => "ignore",
+        PaddingCheck.Warn => "warn",
+        _ => "strict",
+    };
+
+    public static PaddingCheck ParseCheck(string text) => text switch
+    {
+        "ignore" => PaddingCheck.Ignore,
+        "warn" => PaddingCheck.Warn,
+        "strict" => PaddingCheck.Strict,
+        _ => throw new System.FormatException($"Unknown check '{text}' (ignore, warn, strict)"),
+    };
+
     public static string EncodingName(StringEncoding encoding) => encoding switch
     {
         StringEncoding.Utf8 => "utf8",

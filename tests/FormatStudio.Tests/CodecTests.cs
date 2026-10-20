@@ -111,6 +111,156 @@ public class CodecTests
     }
 
     [Fact]
+    public void PaddingIsAChildOfTheString()
+    {
+        var project = Project(Endian.Little, "struct: A\nfields:\n  - {name: name, type: {string: ascii, length: 6, pad: terminated}}\n");
+        var result = new Codec(project).Decode("A", Hex.Parse("616200ffff00"));
+        Assert.True(result.Success, string.Join("\n", result.Diagnostics));
+        var padding = Assert.Single(result.Root.Children.Single(c => c.Name == "name").Children);
+        Assert.Equal(("padding", "name.padding", 2, 4, "00ffff00"), (padding.Name, padding.Path, padding.Offset, padding.Length, padding.Display));
+        Assert.Empty(new Codec(project).Decode("A", Hex.Parse("616263646566")).Root.Children.Single().Children);
+    }
+
+    [Theory]
+    [InlineData("", "warn")]
+    [InlineData("\n  check: strict", "")]
+    [InlineData(", check: ignore", "ignore")]
+    [InlineData(", check: warn", "warn")]
+    [InlineData(", check: strict", "strict")]
+    public void TerminatedPaddingChecks(string defaults, string check)
+    {
+        var settings = defaults.StartsWith('\n') ? defaults[1..] : null;
+        var type = check == "" ? "{string: ascii, length: 4, pad: terminated}" : $"{{string: ascii, length: 4, pad: terminated, check: {check}}}";
+        var parsed = DslReader.Read($"struct: A\nfields:\n  - name: name\n    type: {type}\n", "test.yaml", []) ?? throw new InvalidOperationException();
+        var project = FormatProject.InMemory([parsed], new ProjectSettings
+        {
+            Defaults = { Check = settings != null ? TypeExpressions.ParseCheck(settings.Split(": ")[1]) : PaddingCheck.Warn },
+        });
+        var effective = check == "" ? "strict" : check;
+        var codec = new Codec(project);
+
+        var garbage = codec.Decode("A", Hex.Parse("6100ff00"));
+        Assert.Equal(effective != "strict", garbage.Success);
+        Assert.Equal(effective == "warn", garbage.Diagnostics.Any(d => d.Severity == Severity.Warning && d.Message.Contains("Padding byte 0xff at offset 2")));
+        if (effective == "strict") Assert.Contains(garbage.Diagnostics, d => d.Message.Contains("At offset 2: Padding byte 0xff") && d.Path == "name");
+        Assert.True(codec.Decode("A", Hex.Parse("61000000")).Diagnostics.Count == 0);
+    }
+
+    [Fact]
+    public void StrictPaddedStringsRejectATrailingPadCharacter()
+    {
+        var project = Project(Endian.Little, "alias: Code\ntype: {string: ascii, length: 4, pad: \" \", check: strict}\n");
+        var result = new Codec(project).Encode("Code", JsonValue.Create("ab "));
+        Assert.False(result.Success);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("would be dropped when read"));
+        Assert.Equal("61622020", Encode(project, "Code", "\"ab\""));
+    }
+
+    [Fact]
+    public void CheckNeedsPadding()
+    {
+        var project = FormatProject.InMemory([DslReader.Read("alias: P\ntype: {string: utf8, length: 4, check: strict}\n", "test.yaml", [])!]);
+        Validation.Validator.Validate(project);
+        Assert.Contains(project.Diagnostics, d => d.Severity == Severity.Error && d.Message.Contains("'check' only applies to padded strings"));
+    }
+
+    [Fact]
+    public void FilledRegions()
+    {
+        var project = Project(Endian.Little,
+            "alias: Mccs\ntype: {sized: {string: ascii, length: u8}, length: 8, fill: zero}\n",
+            "alias: StrictMccs\ntype: {sized: {string: ascii, length: u8}, length: 8, fill: zero, check: strict}\n",
+            "alias: Pattern\ntype: {sized: u8, length: 5, fill: 0xdead}\n",
+            "struct: Block\nfields:\n  - size: u8\n  - {name: data, type: {sized: u16be, length: size, fill: 0xff}}\n");
+        Assert.Equal("0361626300000000", Encode(project, "Mccs", "\"abc\""));
+        Assert.Equal("0761626364656667", Encode(project, "Mccs", "\"abcdefg\""));
+        Assert.Equal("\"abc\"", Decode(project, "Mccs", "0361626300000000")!.ToJsonString());
+        Assert.Equal("01deaddead", Encode(project, "Pattern", "1"));
+        Assert.Equal("040001ffff", Encode(project, "Block", """{"size": 4, "data": 1}"""));
+        Assert.Equal("""{"size":2,"data":1}""", Decode(project, "Block", "020001")!.ToJsonString());
+
+        var codec = new Codec(project);
+        var tooLong = codec.Encode("Mccs", JsonValue.Create("abcdefgh"));
+        Assert.Contains(tooLong.Diagnostics, d => d.Message.Contains("The value takes 9 bytes, more than the 8 of its region"));
+
+        var decoded = codec.Decode("Mccs", Hex.Parse("03616263ff000000"));
+        Assert.True(decoded.Success);
+        Assert.Contains(decoded.Diagnostics, d => d.Severity == Severity.Warning && d.Message.Contains("Byte 0xff at offset 4 in the fill"));
+        var padding = Assert.Single(decoded.Root.Children, c => c.Name == "padding");
+        Assert.Equal((4, 4, "ff000000"), (padding.Offset, padding.Length, padding.Display));
+        var strict = codec.Decode("StrictMccs", Hex.Parse("03616263ff000000"));
+        Assert.Contains(strict.Diagnostics, d => d.Severity == Severity.Error && d.Message.Contains("At offset 4: Byte 0xff in the fill"));
+        Assert.Contains(codec.Decode("Pattern", Hex.Parse("01deadbeef")).Diagnostics, d => d.Message.Contains("Byte 0xbe at offset 3"));
+    }
+
+    [Theory]
+    [InlineData("zero", "00")]
+    [InlineData("255", "ff")]
+    [InlineData("0xFF", "ff")]
+    [InlineData("0x7", "07")]
+    [InlineData("0xdead", "dead")]
+    [InlineData("0xabc", null)]
+    [InlineData("256", null)]
+    [InlineData("ff", null)]
+    public void FillPatterns(string text, string? hex)
+    {
+        if (hex == null) Assert.Throws<System.FormatException>(() => TypeExpressions.ParseFill(text));
+        else Assert.Equal(hex, TypeExpressions.ParseFill(text));
+    }
+
+    [Theory]
+    [InlineData("{sized: u8, length: u8, fill: zero}", "'fill' needs a fixed length")]
+    [InlineData("{sized: u8, length: 4, check: strict}", "'check' on a sized value needs 'fill'")]
+    [InlineData("{sized: \"bytes[eof]\", length: 4, fill: zero}", "never any fill")]
+    public void FillChecks(string type, string message)
+    {
+        var project = FormatProject.InMemory([DslReader.Read($"alias: P\ntype: {type}\n", "test.yaml", [])!]);
+        Validation.Validator.Validate(project);
+        Assert.Contains(project.Diagnostics, d => d.Message.Contains(message));
+    }
+
+    [Fact]
+    public void AsciiAndLatin1AreStrict()
+    {
+        var project = Project(Endian.Little, "alias: A\ntype: {string: ascii, length: u8}\n", "alias: L\ntype: {string: latin1, length: u8}\n");
+        var codec = new Codec(project);
+        Assert.Contains(codec.Decode("A", Hex.Parse("0180")).Diagnostics, d => d.Severity == Severity.Error);
+        Assert.Contains(codec.Encode("A", JsonValue.Create("\u00e9")).Diagnostics, d => d.Message.Contains("can't be written as ascii"));
+        Assert.Equal("01e9", Encode(project, "L", "\"\u00e9\""));
+        Assert.Equal("\u00e9", Decode(project, "L", "01e9")!.GetValue<string>());
+        Assert.Contains(codec.Encode("L", JsonValue.Create("\u20ac")).Diagnostics, d => d.Message.Contains("can't be written as latin1"));
+    }
+
+    [Fact]
+    public void PaddedWritesStayWithinTheLimit()
+    {
+        var project = Project(Endian.Little, "struct: A\nfields:\n  - size: u32\n  - {name: name, type: {string: utf8, length: size, pad: zero}}\n");
+        var result = new Codec(project) { MaxCount = 1000 }.Encode("A", JsonNode.Parse("""{"size": 4000000000, "name": "a"}"""));
+        Assert.False(result.Success);
+        Assert.Contains(result.Diagnostics, d => d.Message.Contains("exceeds the limit of 1000"));
+    }
+
+    [Theory]
+    [InlineData("{string: utf16le, length: 5}", true, true)]
+    [InlineData("{string: utf16be, length: 6, pad: terminated}", false, true)]
+    [InlineData("{string: ascii, length: 4}", false, false)]
+    [InlineData("{string: mutf8, length: 4}", false, true)]
+    [InlineData("{string: latin1, length: 4, pad: \"\u00e9\"}", false, false)]
+    [InlineData("{string: utf8, length: 4, pad: \"\u00e9\"}", false, true)]
+    [InlineData("{string: utf8, length: 4, pad: \" \"}", false, false)]
+    public void StringChecks(string type, bool error, bool codegenWarning)
+    {
+        var directory = TestPaths.NewTempDirectory();
+        File.WriteAllText(Path.Combine(directory, "p.fstudio.yaml"),
+            "name: p\nsources: [types/*.yaml]\ncodegen:\n  - {name: cs, generator: csharp, output: gen}\n");
+        Directory.CreateDirectory(Path.Combine(directory, "types"));
+        File.WriteAllText(Path.Combine(directory, "types", "A.yaml"), $"alias: A\ntype: {type}\n");
+        var project = FormatProject.Load(directory);
+        Assert.Equal(error, project.Diagnostics.Any(d => d.Severity == Severity.Error && d.Message.Contains("even number of bytes")));
+        Assert.Equal(codegenWarning, project.Diagnostics.Any(d => d.Severity == Severity.Warning && d.Message.Contains("Code generation (cs)")));
+    }
+
+    [Fact]
     public void PaddedStringsNeedAFieldSize()
     {
         var project = FormatProject.InMemory([DslReader.Read("alias: P\ntype: {string: utf8, length: u8, pad: zero}\n", "test.yaml", [])!]);

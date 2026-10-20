@@ -111,6 +111,169 @@ public class CodegenTests
         AssertMatchesSimulator(project, generator, 60);
     }
 
+    private static FormatProject CheckedStrings() => Project("name: p\ndefaults:\n  check: strict\nsources: [types/*.yaml]\n",
+        ("S.yaml", "struct: S\nfields:\n  - {name: name, type: {string: utf8, length: 4, pad: terminated}}\n" +
+                   "  - {name: loose, type: {string: utf8, length: 4, pad: terminated, check: ignore}}\n  - {name: code, type: string, length: 3, pad: \" \"}\n" +
+                   "  - {name: region, type: {sized: u8, length: 3, fill: 0xff}}\n"));
+
+    [Theory]
+    [InlineData(true, "a|b|ab", "Padding byte 0xff at offset 2 after the string terminator", "Invalid UTF-8 in the string at offset 0",
+        "code must not end with its pad character", "Byte 0x00 at offset 2 of the region is not its fill")]
+    [InlineData(false, "a|b|ab", "a|b|ab", "\ufffd|b|ab", "6100000062000000616220" + "01ffff", "a|b|ab")]
+    public void GeneratedCSharpChecksStrings(bool validate, string clean, string garbage, string invalid, string trailing, string badFill)
+    {
+        var project = CheckedStrings();
+        Assert.Equal(PaddingCheck.Strict, project.Defaults.Check);
+        Assert.Contains("check: strict", project.Settings.ToYaml());
+        Assert.DoesNotContain("check:", FormatProject.InMemory([]).Settings.ToYaml());
+        var output = CodeGeneration.Generate(project, Target("csharp", new JsonObject { ["validateStrings"] = validate }));
+        Assert.False(output.Diagnostics.HasErrors, string.Join("\n", output.Diagnostics));
+        var assembly = GeneratedCodeVerifier.Compile(output, """
+            using FormatStudio.Runtime;
+            public static class Harness {
+              public static string Read(string hex) {
+                try {
+                  var reader = new FormatReader(System.Convert.FromHexString(hex));
+                  var s = global::Generated.Test.S.Read(ref reader);
+                  return s.name + "|" + s.loose + "|" + s.code;
+                } catch (FormatDataException e) { return e.Message; }
+              }
+              public static string Write(string code) {
+                try {
+                  var s = new global::Generated.Test.S { name = "a", loose = "b", code = code, region = 1 };
+                  var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+                  var writer = new FormatWriter(buffer);
+                  s.Write(ref writer);
+                  return System.Convert.ToHexStringLower(buffer.WrittenSpan);
+                } catch (FormatDataException e) { return e.Message; }
+              }
+            }
+            """, typeof(FormatReader).Assembly);
+        var harness = assembly.GetType("Harness")!;
+        string Read(string hex) => (string)harness.GetMethod("Read")!.Invoke(null, [hex])!;
+        Assert.Equal(clean, Read("6100000062000000616220" + "01ffff"));
+        Assert.Equal("a|b|ab", Read("610000006200ff00616220" + "01ffff"));
+        Assert.Equal(garbage, Read("6100ff0062000000616220" + "01ffff"));
+        Assert.Equal(invalid, Read("ff00000062000000616220" + "01ffff"));
+        Assert.Equal(badFill, Read("6100000062000000616220" + "01ff00"));
+        Assert.Equal(trailing, (string)harness.GetMethod("Write")!.Invoke(null, ["ab "])!);
+        Assert.Equal("6100000062000000616220" + "01ffff", (string)harness.GetMethod("Write")!.Invoke(null, ["ab"])!);
+    }
+
+    [Fact]
+    public void GeneratedJavaChecksStrings()
+    {
+        var java = Java();
+        var output = CodeGeneration.Generate(CheckedStrings(), Target("java-stream"));
+        Assert.False(output.Diagnostics.HasErrors, string.Join("\n", output.Diagnostics));
+        var classes = java.Compile(output, """
+            import formatstudio.runtime.*;
+            import generated.test.*;
+
+            public final class Harness {
+                static String read(int... data) {
+                    byte[] bytes = new byte[data.length];
+                    for (int i = 0; i < data.length; i++) bytes[i] = (byte) data[i];
+                    try {
+                        S s = S.read(new FormatReader(bytes));
+                        return s.name + "|" + s.loose + "|" + s.code;
+                    } catch (Exception e) {
+                        return e.getMessage();
+                    }
+                }
+
+                static String write(String code) {
+                    S s = new S();
+                    s.name = "a";
+                    s.loose = "b";
+                    s.code = code;
+                    s.region = 1;
+                    try {
+                        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                        s.write(new FormatWriter(out));
+                        return out.size() + " bytes";
+                    } catch (Exception e) {
+                        return e.getMessage();
+                    }
+                }
+
+                public static void main(String[] args) throws Exception {
+                    System.out.println(read(0x61, 0, 0, 0, 0x62, 0, 0xff, 0, 0x61, 0x62, 0x20, 1, 0xff, 0xff));
+                    System.out.println(read(0x61, 0, 0xff, 0, 0x62, 0, 0, 0, 0x61, 0x62, 0x20, 1, 0xff, 0xff));
+                    System.out.println(read(0xff, 0, 0, 0, 0x62, 0, 0, 0, 0x61, 0x62, 0x20, 1, 0xff, 0xff));
+                    System.out.println(read(0x61, 0, 0, 0, 0x62, 0, 0, 0, 0x61, 0x62, 0x20, 1, 0xff, 0));
+                    System.out.println(write("ab "));
+                    System.out.println(write("ab"));
+                }
+            }
+            """, TestPaths.NewTempDirectory());
+        Assert.Equal("a|b|ab\nPadding byte 0xff at offset 2 after the string terminator\nInvalid UTF-8 in the string at offset 0\n" +
+                     "Byte 0x00 at offset 2 of the region is not its fill\ncode must not end with its pad character\n14 bytes\n", java.Run(classes, "Harness", "").Replace("\r\n", "\n"));
+    }
+
+    [Theory]
+    [MemberData(nameof(Generators))]
+    public void FilledRegionsMatchTheSimulator(string generator)
+    {
+        var project = Project("name: p\ndefaults:\n  endian: little\n  check: strict\nsources: [types/*.yaml]\n",
+            ("A.yaml", "struct: A\nfields:\n  - {name: name, type: {sized: {string: utf8, length: u8}, length: 8, fill: zero}}\n" +
+                       "  - {name: marked, type: {sized: u16, length: 5, fill: 0xdead}}\n  - size: u8\n" +
+                       "  - {name: block, type: {sized: i32be, length: \"size % 8 + 4\", fill: 0xff}}\n  - after: u8\n"));
+        AssertMatchesSimulator(project, generator, 60);
+    }
+
+    [Theory]
+    [MemberData(nameof(Generators))]
+    public void AsciiAndLatin1MatchTheSimulator(string generator)
+    {
+        var project = Project("name: p\ndefaults:\n  string: ascii\n  length: u8\nsources: [types/*.yaml]\n",
+            ("Mark.yaml", "variant: Mark\ntag: string\ncases:\n  - {name: a, tag: alpha, type: u8}\n  - {name: b, tag: beta}\n"),
+            ("A.yaml", "struct: A\nfields:\n  - plain: string\n  - {name: wide, type: {string: latin1, length: u16}}\n" +
+                       "  - {name: zero, type: {string: ascii, length: zero}}\n  - {name: padded, type: {string: latin1, length: 6, pad: \" \"}}\n" +
+                       "  - {name: cName, type: {string: ascii, length: 6, pad: terminated}}\n" +
+                       "  - {name: mccs, type: {sized: {string: ascii, length: u8}, length: 8, fill: zero, check: strict}}\n" +
+                       "  - mark: Mark\n  - {name: rest, type: {string: latin1, length: eof}}\n"));
+        AssertMatchesSimulator(project, generator, 60);
+    }
+
+    [Fact]
+    public void GeneratedCodeWritesOnlyWhatTheEncodingHas()
+    {
+        var project = Project("name: p\nsources: [types/*.yaml]\n",
+            ("T.yaml", "struct: T\nfields:\n  - {name: a, type: {string: ascii, length: u8}}\n  - {name: l, type: {string: latin1, length: u8}}\n"));
+        var output = CodeGeneration.Generate(project, Target("csharp"));
+        Assert.False(output.Diagnostics.HasErrors, string.Join("\n", output.Diagnostics));
+        var assembly = GeneratedCodeVerifier.Compile(output, """
+            using FormatStudio.Runtime;
+            public static class Harness {
+              public static string Write(string a, string l) {
+                try {
+                  var t = new global::Generated.Test.T { a = a, l = l };
+                  var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+                  var writer = new FormatWriter(buffer);
+                  t.Write(ref writer);
+                  return System.Convert.ToHexStringLower(buffer.WrittenSpan);
+                } catch (FormatDataException e) { return e.Message; }
+              }
+              public static string Read(string hex) {
+                try {
+                  var reader = new FormatReader(System.Convert.FromHexString(hex));
+                  var t = global::Generated.Test.T.Read(ref reader);
+                  return t.a + "|" + t.l;
+                } catch (FormatDataException e) { return e.Message; }
+              }
+            }
+            """, typeof(FormatReader).Assembly);
+        var harness = assembly.GetType("Harness")!;
+        string Write(string a, string l) => (string)harness.GetMethod("Write")!.Invoke(null, [a, l])!;
+        string Read(string hex) => (string)harness.GetMethod("Read")!.Invoke(null, [hex])!;
+        Assert.Equal("01610 1e9".Replace(" ", ""), Write("a", "\u00e9"));
+        Assert.Equal("'\u00e9' can't be written as ASCII", Write("\u00e9", "e"));
+        Assert.Equal("'\u20ac' can't be written as Latin-1", Write("a", "\u20ac"));
+        Assert.Equal("a|\u00e9", Read("016101e9"));
+        Assert.Equal("Invalid ASCII in the string at offset 1", Read("018001e9"));
+    }
+
     /// <summary>Most of the DSL in one project: every primitive, enums of all sorts, bit fields, variants, collections, expressions.</summary>
     private static FormatProject KitchenSink() => Project("name: p\ndefaults:\n  endian: little\n  length: varuint32\nsources: [types/*.yaml]\n",
         ("Color.yaml", "enum: Color\ntype: u8\nvalues:\n  red: 0\n  green: 1\n  value: 2\n"),

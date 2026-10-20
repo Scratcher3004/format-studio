@@ -197,7 +197,7 @@ public sealed class DslReader
     private static readonly string[] FieldKeys =
     [
         "name", "type", "if", "const", "computed", "default", "min", "max", "minLength", "maxLength", "minItems", "maxItems",
-        "pattern", "length", "as", "tag", "encoding", "pad",
+        "pattern", "length", "as", "tag", "encoding", "pad", "check",
     ];
 
     private FieldDef ReadField(YamlNode node)
@@ -249,7 +249,7 @@ public sealed class DslReader
         return field;
     }
 
-    /// <summary>Applies the field-level shortcuts <c>length</c>, <c>as</c>, <c>tag</c>, <c>encoding</c> and <c>pad</c> to the type.</summary>
+    /// <summary>Applies the field-level shortcuts <c>length</c>, <c>as</c>, <c>tag</c>, <c>encoding</c>, <c>pad</c> and <c>check</c> to the type.</summary>
     private TypeRef ApplyModifiers(TypeRef type, YamlMappingNode map)
     {
         var length = Get(map, "length");
@@ -257,7 +257,8 @@ public sealed class DslReader
         var tag = Get(map, "tag");
         var encoding = Get(map, "encoding");
         var pad = Get(map, "pad");
-        if (length == null && asNode == null && tag == null && encoding == null && pad == null) return type;
+        var check = Get(map, "check");
+        if (length == null && asNode == null && tag == null && encoding == null && pad == null && check == null) return type;
         return Apply(type);
 
         TypeRef Apply(TypeRef current)
@@ -272,10 +273,10 @@ public sealed class DslReader
                     return mapRef with { Length = ParseLength(length) };
                 case SizedRef sized when length != null:
                     return sized with { Length = ParseLength(length) };
-                case StringRef str when length != null || encoding != null || pad != null:
+                case StringRef str when length != null || encoding != null || pad != null || check != null:
                     var (padding, padChar) = pad != null ? ParsePad(pad) : (str.Padding, str.Pad);
                     return new StringRef(encoding != null ? ParseEncoding(encoding) : str.Encoding,
-                        length != null ? ParseLength(length) : str.Length, padding, padChar);
+                        length != null ? ParseLength(length) : str.Length, padding, padChar, check != null ? ParseCheck(check) : str.Check);
                 case BytesRef when length != null:
                     return new BytesRef(ParseLength(length));
                 case NamedRef named when asNode != null || tag != null:
@@ -285,7 +286,7 @@ public sealed class DslReader
                         Tag = tag != null ? Scalar(tag, "tag") : named.Tag,
                     };
                 default:
-                    throw Fail(map, $"'length', 'as', 'tag', 'encoding' or 'pad' don't apply to type {current}");
+                    throw Fail(map, $"'length', 'as', 'tag', 'encoding', 'pad' or 'check' don't apply to type {current}");
             }
         }
     }
@@ -307,6 +308,30 @@ public sealed class DslReader
         try
         {
             return TypeExpressions.ParsePad(Scalar(node, "pad"));
+        }
+        catch (System.FormatException e)
+        {
+            throw Fail(node, e.Message);
+        }
+    }
+
+    private string ParseFill(YamlNode node)
+    {
+        try
+        {
+            return TypeExpressions.ParseFill(Scalar(node, "fill"));
+        }
+        catch (System.FormatException e)
+        {
+            throw Fail(node, e.Message);
+        }
+    }
+
+    private PaddingCheck ParseCheck(YamlNode node)
+    {
+        try
+        {
+            return TypeExpressions.ParseCheck(Scalar(node, "check"));
         }
         catch (System.FormatException e)
         {
@@ -378,9 +403,10 @@ public sealed class DslReader
 
                 return new ArrayRef(ParseType(value), length);
             case "string":
-                CheckKeys(map, ["string", "length", "pad"], "a string type");
+                CheckKeys(map, ["string", "length", "pad", "check"], "a string type");
                 var (stringPadding, stringPad) = Get(map, "pad") is { } padNode ? ParsePad(padNode) : (StringPadding.None, '\0');
-                return new StringRef(Scalar(value, "string") is "" or "default" ? null : ParseEncoding(value), length, stringPadding, stringPad);
+                return new StringRef(Scalar(value, "string") is "" or "default" ? null : ParseEncoding(value), length, stringPadding, stringPad,
+                    Get(map, "check") is { } checkNode ? ParseCheck(checkNode) : null);
             case "bytes":
                 CheckKeys(map, ["bytes"], "a bytes type");
                 return new BytesRef(ParseLength(value));
@@ -394,8 +420,9 @@ public sealed class DslReader
                 CheckKeys(map, ["optional"], "an optional type");
                 return new OptionalRef(ParseType(value));
             case "sized":
-                CheckKeys(map, ["sized", "length"], "a sized type");
-                return new SizedRef(ParseType(value), length);
+                CheckKeys(map, ["sized", "length", "fill", "check"], "a sized type");
+                return new SizedRef(ParseType(value), length, Get(map, "fill") is { } fill ? ParseFill(fill) : null,
+                    Get(map, "check") is { } sizedCheck ? ParseCheck(sizedCheck) : null);
             case "fixed":
                 CheckKeys(map, ["fixed", "fraction"], "a fixed-point type");
                 var fraction = Get(map, "fraction") ?? throw Fail(node, "A fixed-point type needs 'fraction' (number of fraction bits)");

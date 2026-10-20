@@ -18,6 +18,7 @@ codegen:
 | `unsigned` | `widen` | How unsigned integers are represented, see below |
 | `collections` | `list` | `list`: arrays are `java.util.List`s; `array`: Java arrays (`int[]`, `Item[]`) |
 | `validateRanges` | `false` | Check `min`/`max` of numeric fields when reading |
+| `validateStrings` | `true` | Reject invalid UTF-8 or ASCII, and padding or fill with `check: strict` |
 | `includeRuntime` | `true` | Write the runtime's sources into the output |
 | `runtimePackage` | `formatstudio.runtime` | Package of the runtime the generated code uses |
 

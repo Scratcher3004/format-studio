@@ -207,9 +207,39 @@ public sealed class Codec(FormatProject project)
                         text = ReadString(end - reader.Position, encoding);
                         reader.Position++;
                     }
+                    else if (str.Padding != StringPadding.None)
+                    {
+                        var count = ReadCount(str.Length, scope, node, path, 1) ?? reader.Remaining;
+                        var start = reader.Position;
+                        text = ReadString(count, encoding, str.Padding, str.Pad);
+                        var field = reader.Data.AsSpan(start, count);
+                        var used = Strings.Unpad(field, str.Padding, str.Pad, encoding).Length;
+                        var bad = Strings.BadPadding(field, str.Padding, str.Pad, encoding);
+                        if (bad >= 0)
+                        {
+                            const string why = "after the terminator: the string would re-encode with zeros";
+                            switch (str.Check ?? Project.Defaults.Check)
+                            {
+                                case PaddingCheck.Strict:
+                                    throw new DecodeException($"Padding byte 0x{field[bad]:x2} {why}", start + bad, path);
+                                case PaddingCheck.Warn:
+                                    diagnostics.Warning($"Padding byte 0x{field[bad]:x2} at offset {start + bad} {why}", path: path);
+                                    break;
+                            }
+                        }
+
+                        if (used < count)
+                        {
+                            node.Children.Add(new SpanNode
+                            {
+                                Name = "padding", Path = path + ".padding", Type = "padding", Offset = start + used, Length = count - used,
+                                Display = Hex.Format(reader.Data.AsSpan(start + used, Math.Min(count - used, 16))) + (count - used > 16 ? "…" : ""),
+                            });
+                        }
+                    }
                     else
                     {
-                        text = ReadString(ReadCount(str.Length, scope, node, path, 1) ?? reader.Remaining, encoding, str.Padding, str.Pad);
+                        text = ReadString(ReadCount(str.Length, scope, node, path, 1) ?? reader.Remaining, encoding);
                     }
 
                     node.Display = JsonSerializer.Serialize(text);
@@ -275,7 +305,11 @@ public sealed class Codec(FormatProject project)
                     try
                     {
                         var value = Read(sized.Inner, scope, Child(node, "content", path, sized.Inner), path);
-                        if (reader.Remaining > 0)
+                        if (sized.Fill != null)
+                        {
+                            ReadFill(sized, node, path);
+                        }
+                        else if (reader.Remaining > 0)
                         {
                             diagnostics.Warning($"{reader.Remaining} unread bytes in the sized section", path: path);
                             reader.Take(reader.Remaining);
@@ -304,6 +338,33 @@ public sealed class Codec(FormatProject project)
                     return ReadNamed(named, scope, node, path);
                 default:
                     throw reader.Error($"Unsupported type {type}");
+            }
+        }
+
+        /// <summary>The rest of a sized region with a fill: checked against the pattern and shown as a padding node.</summary>
+        private void ReadFill(SizedRef sized, SpanNode node, string path)
+        {
+            if (reader.Remaining == 0) return;
+            var start = reader.Position;
+            var rest = reader.Take(reader.Remaining);
+            var pattern = Convert.FromHexString(sized.Fill!);
+            node.Children.Add(new SpanNode
+            {
+                Name = "padding", Path = path + ".padding", Type = "fill " + TypeExpressions.FormatFill(sized.Fill!), Offset = start, Length = rest.Length,
+                Display = Hex.Format(rest[..Math.Min(rest.Length, 16)]) + (rest.Length > 16 ? "\u2026" : ""),
+            });
+            var bad = -1;
+            for (var i = 0; i < rest.Length && bad < 0; i++)
+                if (rest[i] != pattern[i % pattern.Length]) bad = i;
+            if (bad < 0) return;
+            var why = $"in the fill: the region would re-encode with {TypeExpressions.FormatFill(sized.Fill!)}";
+            switch (sized.Check ?? Project.Defaults.Check)
+            {
+                case PaddingCheck.Strict:
+                    throw new DecodeException($"Byte 0x{rest[bad]:x2} {why}", start + bad, path);
+                case PaddingCheck.Warn:
+                    diagnostics.Warning($"Byte 0x{rest[bad]:x2} at offset {start + bad} {why}", path: path);
+                    break;
             }
         }
 
@@ -583,7 +644,16 @@ public sealed class Codec(FormatProject project)
                 {
                     var text = JsonValues.String(value) ?? throw Error($"Expected a string, got {Show(value)}");
                     var encoding = str.Encoding ?? Project.Defaults.String;
-                    var bytes = Strings.Encode(text, encoding);
+                    byte[] bytes;
+                    try
+                    {
+                        bytes = Strings.Encode(text, encoding);
+                    }
+                    catch (System.Text.EncoderFallbackException e)
+                    {
+                        throw Error($"{JsonSerializer.Serialize(e.CharUnknown.ToString())} can't be written as {TypeExpressions.EncodingName(encoding)}");
+                    }
+
                     if (str.Padding != StringPadding.None)
                         WritePadded(str, text, bytes, encoding, scope, path);
                     else if (str.Length.Kind == LengthKind.Zero)
@@ -678,6 +748,16 @@ public sealed class Codec(FormatProject project)
                 {
                     var inner = new WireWriter();
                     new Encoder(codec, inner, context, diagnostics).Write(sized.Inner, value, scope, path);
+                    if (sized.Fill != null)
+                    {
+                        var size = FieldSize(sized.Length, scope);
+                        if (inner.Length > size) throw Error($"The value takes {inner.Length} bytes, more than the {size} of its region");
+                        writer.WriteBytes(inner.Written);
+                        var pattern = Convert.FromHexString(sized.Fill);
+                        for (var i = 0; i < size - inner.Length; i++) writer.WriteByte(pattern[i % pattern.Length]);
+                        break;
+                    }
+
                     WriteCount(sized.Length, inner.Length, scope);
                     writer.WriteBytes(inner.Written);
                     break;
@@ -731,22 +811,11 @@ public sealed class Codec(FormatProject project)
         /// <summary>A string in a field of a fixed or computed number of bytes, followed by its padding.</summary>
         private void WritePadded(StringRef str, string text, byte[] bytes, StringEncoding encoding, StructScope? scope, string path)
         {
-            long size;
-            switch (str.Length.Kind)
-            {
-                case LengthKind.Fixed:
-                    size = str.Length.Fixed;
-                    break;
-                case LengthKind.Expression:
-                    if (scope == null) throw Error($"Length expression '{str.Length.Expression}' outside a struct");
-                    size = context.Evaluator.EvaluateLong(Expr.Parse(str.Length.Expression!), scope);
-                    break;
-                default:
-                    throw Error($"A padded string needs a fixed length or a length expression, not {str.Length}");
-            }
-
+            var size = FieldSize(str.Length, scope);
             if (bytes.Length > size) throw Error($"The string takes {bytes.Length} bytes, more than the {size} of its field");
             if (str.Padding == StringPadding.Terminated && text.Contains('\0')) throw Error("A NUL-terminated string can't contain NUL");
+            if (str.Padding == StringPadding.Padded && text.EndsWith(str.Pad) && (str.Check ?? Project.Defaults.Check) == PaddingCheck.Strict)
+                throw Error($"The string ends with its pad character {JsonSerializer.Serialize(str.Pad.ToString())}, which would be dropped when read");
             if (str.Padding == StringPadding.Padded && text.EndsWith(str.Pad))
                 diagnostics.Warning($"The string ends with its pad character {JsonSerializer.Serialize(str.Pad.ToString())}, which is dropped when read", path: path);
             writer.WriteBytes(bytes);
@@ -754,6 +823,28 @@ public sealed class Codec(FormatProject project)
             var rest = size - bytes.Length;
             for (; rest >= unit.Length; rest -= unit.Length) writer.WriteBytes(unit);
             for (; rest > 0; rest--) writer.WriteByte(0);
+        }
+
+        /// <summary>The byte size of a padded field: a fixed length or a length expression, within the limit.</summary>
+        private int FieldSize(LengthSpec length, StructScope? scope)
+        {
+            long size;
+            switch (length.Kind)
+            {
+                case LengthKind.Fixed:
+                    size = length.Fixed;
+                    break;
+                case LengthKind.Expression:
+                    if (scope == null) throw Error($"Length expression '{length.Expression}' outside a struct");
+                    size = context.Evaluator.EvaluateLong(Expr.Parse(length.Expression!), scope);
+                    break;
+                default:
+                    throw Error($"Padding needs a fixed length or a length expression, not {length}");
+            }
+
+            if (size < 0) throw Error($"Negative length {size}");
+            if (size > codec.MaxCount) throw Error($"Length {size} exceeds the limit of {codec.MaxCount}");
+            return (int)size;
         }
 
         private void WriteCount(LengthSpec length, int count, StructScope? scope)

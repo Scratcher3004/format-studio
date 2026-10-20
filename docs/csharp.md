@@ -18,7 +18,8 @@ codegen:
 ```
 
 Options: `namespace`, `registry` (static class with the packet id dispatch), `validateRanges`, `validateEnums` (reject
-values that are not members, except for flags enums and enums with `allowUnknown`), and the runtime names below.
+values that are not members, except for flags enums and enums with `allowUnknown`), `validateStrings` (on by default:
+reject invalid UTF-8, and padding or fill with `check: strict`), and the runtime names below.
 Definitions written by hand are skipped with `skipCodegen` in the definition (see
 [code generation](codegen.md#skipping-definitions), which also describes what all generators share).
 
@@ -54,11 +55,19 @@ files):
 
 To use your own runtime, set these options to its type names. It needs the same methods as the default reader and
 writer: `Read<Kind>()` / `Write<Kind>(value)` for every primitive (`U8`, `I16LE`, `U32BE`, `VarUInt32`, `ZigZag64`,
-`UuidLE`, `F16LE` (as `System.Half`), `F64BE`, ...), `ReadUtf8(count)`, `ReadUtf8Zero()`, `ReadBytes(count)`, `Slice(length)`,
-`CheckCount(count, minElementSize, max)`, `Utf8Length(text)`, for padded strings `ReadUtf8Padded(count, pad)`,
-`ReadUtf8Terminated(count)` and `WriteUtf8Padded(text, count, pad)`, and `ReadNbt<Flavor>()` / `WriteNbt<Flavor>(raw)` for
+`UuidLE`, `F16LE` (as `System.Half`), `F64BE`, ...), `ReadUtf8(count, strict)`, `ReadUtf8Zero(strict)`, `ReadBytes(count)`,
+`Slice(length)`, `CheckCount(count, minElementSize, max)`, `Utf8Length(text)`, for padded strings
+`ReadUtf8Padded(count, pad, strict)`, `ReadUtf8Terminated(count, strict, checkPadding)` and
+`WriteUtf8Padded(text, count, pad)`, for filled sized values `SkipFill(pattern, check)` and `WriteFill(pattern, count)`, and `ReadNbt<Flavor>()` / `WriteNbt<Flavor>(raw)` for
 the NBT flavors the project uses (`Java`, `JavaNetwork`, `Bedrock`, `BedrockNetwork`). For `eof` lengths, span readers
-need `Remaining`; stream readers need `AtEnd`, `ReadToEnd()` and `ReadUtf8ToEnd()`.
+need `Remaining`; stream readers need `AtEnd`, `ReadToEnd()` and `ReadUtf8ToEnd(strict)`. `strict` is true when `validateStrings` is on
+and rejects invalid UTF-8 with the exception type.
+
+ASCII and Latin-1 strings use the same methods with `String` for `Utf8` and a `FormatEncoding` (`Ascii`, `Latin1`)
+before `strict` when reading and last when writing: `ReadString(count, encoding, strict)`, `ReadStringZero`,
+`ReadStringPadded`, `ReadStringTerminated`, `ReadStringToEnd`, `WriteString(text, encoding)`, `WriteStringZero`,
+`WriteStringPadded` and `ByteLength(text, encoding)`. Writing a character the encoding doesn't have throws; so does
+reading a byte above 0x7F as ASCII when `strict`.
 
 ## Checking generated code
 

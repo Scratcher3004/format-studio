@@ -231,15 +231,27 @@ public enum StringPadding
     Terminated,
 }
 
+/// <summary>What happens to padding that isn't what a writer would produce, so that the data wouldn't re-encode the same.</summary>
+public enum PaddingCheck
+{
+    /// <summary>Accepted silently.</summary>
+    Ignore,
+    /// <summary>Accepted with a warning (in the simulator; generated code accepts it silently).</summary>
+    Warn,
+    /// <summary>An error when decoding or encoding, in the simulator and in generated code.</summary>
+    Strict,
+}
+
 /// <summary>
 /// A string whose length is counted in bytes. <see cref="Pad"/> is the pad character of <see cref="StringPadding.Padded"/>
-/// strings (NUL for <see cref="StringPadding.Terminated"/>).
+/// strings (NUL for <see cref="StringPadding.Terminated"/>). <see cref="Check"/> is null when the project default applies.
 /// </summary>
-public sealed record StringRef(StringEncoding? Encoding, LengthSpec Length, StringPadding Padding = StringPadding.None, char Pad = '\0')
-    : TypeRef
+public sealed record StringRef(StringEncoding? Encoding, LengthSpec Length, StringPadding Padding = StringPadding.None, char Pad = '\0',
+    PaddingCheck? Check = null) : TypeRef
 {
     public override string ToString() => $"string({Encoding?.ToString() ?? "default"}, {Length}" +
-                                         (Padding == StringPadding.None ? ")" : $", pad {Dsl.TypeExpressions.FormatPad(Padding, Pad)})");
+                                         (Padding == StringPadding.None ? "" : $", pad {Dsl.TypeExpressions.FormatPad(Padding, Pad)}") +
+                                         (Check is { } check ? $", check {Dsl.TypeExpressions.CheckName(check)})" : ")");
 }
 
 public sealed record BytesRef(LengthSpec Length) : TypeRef
@@ -263,10 +275,15 @@ public sealed record OptionalRef(TypeRef Inner) : TypeRef
     public override string ToString() => $"{Inner}?";
 }
 
-/// <summary>A value stored in a byte window of the given length (length-delimited sub-structure).</summary>
-public sealed record SizedRef(TypeRef Inner, LengthSpec Length) : TypeRef
+/// <summary>
+/// A value stored in a byte window of the given length (length-delimited sub-structure). With <see cref="Fill"/> (a
+/// fixed or expression length only), the value may be shorter: the rest of the window repeats the fill pattern, lowercase
+/// hex such as <c>00</c> or <c>dead</c>. <see cref="Check"/> is null when the project default applies.
+/// </summary>
+public sealed record SizedRef(TypeRef Inner, LengthSpec Length, string? Fill = null, PaddingCheck? Check = null) : TypeRef
 {
-    public override string ToString() => $"sized({Inner}, {Length})";
+    public override string ToString() => $"sized({Inner}, {Length}" + (Fill != null ? $", fill {Dsl.TypeExpressions.FormatFill(Fill)}" : "") +
+                                         (Check is { } check ? $", check {Dsl.TypeExpressions.CheckName(check)})" : ")");
 }
 
 /// <summary>A fractional number stored as a scaled integer: value = raw / 2^FractionBits.</summary>

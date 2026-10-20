@@ -464,22 +464,48 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     protected override string ReadString(StringRef str, CodeWriter w, Context context)
     {
         var reader = context.Reader;
-        CheckEncoding(str);
-        if (str.Padding == StringPadding.Terminated) return $"{reader}.ReadUtf8Terminated({ReadCount(str.Length, w, context, 1, null)})";
-        if (str.Padding == StringPadding.Padded) return $"{reader}.ReadUtf8Padded({ReadCount(str.Length, w, context, 1, null)}, {PadByte(str)})";
+        var encoding = EncodingArgument(str);
+        var strict = options.ValidateStrings ? "true" : "false";
+        var count = str.Length.Kind is LengthKind.Zero or LengthKind.Eof ? null : ReadCount(str.Length, w, context, 1, null);
+        if (str.Padding == StringPadding.Terminated)
+        {
+            var check = options.ValidateStrings && StrictPadding(str) ? "true" : "false";
+            return encoding == null
+                ? $"{reader}.ReadUtf8Terminated({count}, {strict}, {check})"
+                : $"{reader}.ReadStringTerminated({count}, {encoding}, {strict}, {check})";
+        }
+
+        if (str.Padding == StringPadding.Padded)
+        {
+            return encoding == null
+                ? $"{reader}.ReadUtf8Padded({count}, {PadByte(str)}, {strict})"
+                : $"{reader}.ReadStringPadded({count}, {PadByte(str)}, {encoding}, {strict})";
+        }
+
+        var with = encoding == null ? "" : encoding + ", ";
+        var name = encoding == null ? "Utf8" : "String";
         return str.Length.Kind switch
         {
-            LengthKind.Zero => $"{reader}.ReadUtf8Zero()",
-            LengthKind.Eof => Streams ? $"{reader}.ReadUtf8ToEnd()" : $"{reader}.ReadUtf8({reader}.Remaining)",
-            _ => $"{reader}.ReadUtf8({ReadCount(str.Length, w, context, 1, null)})",
+            LengthKind.Zero => $"{reader}.Read{name}Zero({with}{strict})",
+            LengthKind.Eof when Streams => $"{reader}.Read{name}ToEnd({with}{strict})",
+            LengthKind.Eof => $"{reader}.Read{name}({reader}.Remaining, {with}{strict})",
+            _ => $"{reader}.Read{name}({count}, {with}{strict})",
         };
     }
 
-    private void CheckEncoding(StringRef str)
+    /// <summary>The runtime's <c>FormatEncoding</c> of a string, or null for UTF-8 (which has methods of its own).</summary>
+    private string? EncodingArgument(StringRef str) => (str.Encoding ?? Project.Defaults.String) switch
     {
-        if ((str.Encoding ?? Project.Defaults.String) != StringEncoding.Utf8)
-            throw new CodegenException($"String encoding {str.Encoding} is not supported by the C# generator");
-    }
+        StringEncoding.Utf8 => null,
+        StringEncoding.Ascii => "FormatEncoding.Ascii",
+        StringEncoding.Latin1 => "FormatEncoding.Latin1",
+        var other => throw new CodegenException($"String encoding {Dsl.TypeExpressions.EncodingName(other)} is not supported by the C# generator"),
+    };
+
+    /// <summary>The number of bytes a string takes in its encoding.</summary>
+    private string ByteCount(StringRef str, string value) => EncodingArgument(str) is { } encoding
+        ? $"{options.WriterType}.ByteLength({value}, {encoding})"
+        : $"{options.WriterType}.Utf8Length({value})";
 
     protected override string ReadBytes(BytesRef bytes, CodeWriter w, Context context)
     {
@@ -558,7 +584,11 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         var count = ReadCount(sized.Length, w, context, 1, null);
         var sub = Temp("reader");
         w.Line($"var {sub} = {context.Reader}.Slice({count});");
-        return Read(sized.Inner, w, context.WithReader(sub));
+        if (sized.Fill == null) return Read(sized.Inner, w, context.WithReader(sub));
+        var value = Temp("value");
+        w.Line($"var {value} = {Read(sized.Inner, w, context.WithReader(sub))};");
+        w.Line($"{sub}.SkipFill(new byte[] {{ {FillBytes(sized)} }}, {(options.ValidateStrings && StrictFill(sized) ? "true" : "false")});");
+        return value;
     }
 
     protected override string ReadFixedPoint(FixedPointRef fixedPoint, CodeWriter w, Context context) =>
@@ -609,34 +639,64 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override void WriteString(StringRef str, string value, CodeWriter w, Context context)
     {
-        CheckEncoding(str);
+        var encoding = EncodingArgument(str);
         if (str.Padding != StringPadding.None)
         {
             WritePadded(str, value, w, context);
             return;
         }
 
+        var with = encoding == null ? "" : ", " + encoding;
+        var name = encoding == null ? "Utf8" : "String";
         if (str.Length.Kind == LengthKind.Zero)
         {
-            w.Line($"{context.Writer}.WriteUtf8Zero({value});");
+            w.Line($"{context.Writer}.Write{name}Zero({value}{with});");
             return;
         }
 
         if (str.Length.Kind is LengthKind.Default or LengthKind.Prefix or LengthKind.Fixed)
-            WriteCount(str.Length, $"{options.WriterType}.Utf8Length({value})", w, context, What(context));
-        w.Line($"{context.Writer}.WriteUtf8({value});");
+            WriteCount(str.Length, ByteCount(str, value), w, context, What(context));
+        w.Line($"{context.Writer}.Write{name}({value}{with});");
     }
 
     private void WritePadded(StringRef str, string value, CodeWriter w, Context context)
     {
+        var encoding = EncodingArgument(str);
         var text = Temp("text");
         var size = Temp("size");
         w.Line($"var {text} = {value};");
-        w.Line($"var {size} = (int)({PaddedSize(str, context)});");
-        w.Line($"if ({options.WriterType}.Utf8Length({text}) > {size}) throw new {options.ExceptionType}($\"{What(context)} must take at most {{{size}}} bytes\");");
+        w.Line($"var {size} = (int)({PaddedSize(str.Length, context)});");
+        w.Line($"if ({ByteCount(str, text)} > {size}) throw new {options.ExceptionType}($\"{What(context)} must take at most {{{size}}} bytes\");");
         if (str.Padding == StringPadding.Terminated)
             w.Line($"if ({text}.Contains('\\0')) throw new {options.ExceptionType}(\"{What(context)} must not contain NUL\");");
-        w.Line($"{context.Writer}.WriteUtf8Padded({text}, {size}, {PadByte(str)});");
+        if (str.Padding == StringPadding.Padded && options.ValidateStrings && StrictPadding(str))
+            w.Line($"if ({text}.EndsWith((char){PadByte(str)})) throw new {options.ExceptionType}(\"{What(context)} must not end with its pad character\");");
+        w.Line(encoding == null
+            ? $"{context.Writer}.WriteUtf8Padded({text}, {size}, {PadByte(str)});"
+            : $"{context.Writer}.WriteStringPadded({text}, {size}, {PadByte(str)}, {encoding});");
+    }
+
+    /// <summary>
+    /// Writes the length of a sized value's content, or, with a fill, checks that the content fits its region and returns
+    /// the local holding the region's size.
+    /// </summary>
+    private string? WriteSizedCount(SizedRef sized, string length, CodeWriter w, Context context)
+    {
+        if (sized.Fill == null)
+        {
+            WriteCount(sized.Length, length, w, context, What(context));
+            return null;
+        }
+
+        var size = Temp("size");
+        w.Line($"var {size} = (int)({PaddedSize(sized.Length, context)});");
+        w.Line($"if ({length} > {size}) throw new {options.ExceptionType}($\"{What(context)} must take at most {{{size}}} bytes\");");
+        return size;
+    }
+
+    private static void WriteFill(SizedRef sized, string? size, string length, CodeWriter w, Context context)
+    {
+        if (size != null) w.Line($"{context.Writer}.WriteFill(new byte[] {{ {FillBytes(sized)} }}, {size} - {length});");
     }
 
     private static string What(Context context) => context.Field?.Name ?? "value";
@@ -690,16 +750,19 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
             w.Line($"var {buffer} = new global::System.IO.MemoryStream();");
             w.Line($"var {sub} = new {options.WriterType}({buffer});");
             Write(sized.Inner, value, w, context.WithWriter(sub));
-            WriteCount(sized.Length, $"{buffer}.Length", w, context, What(context));
-            w.Line($"{context.Writer}.WriteBytes(new global::System.ReadOnlySpan<byte>({buffer}.GetBuffer(), 0, (int){buffer}.Length));");
+            var length = $"(int){buffer}.Length";
+            var size = WriteSizedCount(sized, length, w, context);
+            w.Line($"{context.Writer}.WriteBytes(new global::System.ReadOnlySpan<byte>({buffer}.GetBuffer(), 0, {length}));");
+            WriteFill(sized, size, length, w, context);
         }
         else
         {
             w.Line($"var {buffer} = new global::System.Buffers.ArrayBufferWriter<byte>();");
             w.Line($"var {sub} = new {options.WriterType}({buffer});");
             Write(sized.Inner, value, w, context.WithWriter(sub));
-            WriteCount(sized.Length, $"{buffer}.WrittenCount", w, context, What(context));
+            var size = WriteSizedCount(sized, $"{buffer}.WrittenCount", w, context);
             w.Line($"{context.Writer}.WriteBytes({buffer}.WrittenSpan);");
+            WriteFill(sized, size, $"{buffer}.WrittenCount", w, context);
         }
     }
 

@@ -13,6 +13,7 @@ defaults:
   endian: big            # little | big: default byte order of fixed-width numbers
   length: varint32       # prefix type of strings, bytes, arrays and maps without an explicit length
   string: utf8           # utf8 | mutf8 | ascii | latin1 | utf16le | utf16be
+  check: warn            # ignore | warn | strict: padding of padded strings that wouldn't re-encode the same
   nbt: java-network      # arguments of a native type, here the NBT flavor: java | java-network | bedrock | bedrock-network
                          # (no default; needed when nbt is used without one)
 sources:                 # globs; a type in a later glob replaces the one with the same name in an earlier glob
@@ -169,8 +170,40 @@ A string with a fixed length or a length expression can be shorter than its fiel
 - {name: code, type: string, length: 8, pad: " "}                    # also as a field shortcut
 ```
 
-A string that ends with its pad character loses it when read back (the simulator warns when encoding it). Generated code supports `pad`
-for UTF-8 with an ASCII pad character.
+Padding can hold bytes a writer wouldn't write there, such as garbage after a terminator, or a value can end with its
+pad character, which is lost when read back. Such data doesn't re-encode to the same bytes. `check` (on the type, or
+`defaults.check` for all) says what happens:
+
+| `check` | Non-zero bytes after a terminator, when decoding | A value ending with its pad character, when encoding |
+|---|---|---|
+| `ignore` | Skipped | Simulator warning; generated code drops the character |
+| `warn` (default) | Simulator warning with the offset; generated code skips them | Same as `ignore` |
+| `strict` | Error, in the simulator and in generated code | Error, in the simulator and in generated code |
+
+```yaml
+- {name: name, type: {string: ascii, length: 16, pad: terminated, check: strict}}
+```
+
+Generated code checks strict padding unless the generator option
+`validateStrings` is off. It supports UTF-8, ASCII and Latin-1 strings, with pad characters of one byte; with a C# or
+Java target configured, validation warns about strings it can't generate. ASCII and Latin-1 are strict: a character
+the encoding doesn't have can't be encoded, and a byte above 0x7F isn't ASCII. UTF-16 strings of a fixed length need an even number of bytes. When decoding, the padding shows as
+a `padding` node under the string.
+
+A `sized` value with a fixed length or a length expression can also be shorter than its region with `fill`: the value
+is written, then the fill up to the length. When decoding, the bytes after the value must repeat the fill, under the
+same `check` as padded strings (`warn` by default), and show as a `padding` node.
+
+```yaml
+# A length byte (0-7), up to 7 ASCII characters, zero padding: 8 bytes in all
+- {name: name, type: {sized: {string: ascii, length: u8}, length: 8, fill: zero, check: strict}}
+# A header in a 512-byte block
+- {name: header, type: {sized: Header, length: 512, fill: zero}}
+```
+
+`fill` is `zero`, a byte (`255` or `0xff`), or `0x` and a pattern of several bytes (`0xdead`), repeated from the end of
+the value. The value has to know its own length: one that reads to the end (an `eof` length) takes the fill too. A
+value longer than its region can't be encoded.
 
 `{array: Item, until: "index == 255"}` is a list without a count that ends with the first element for which the
 condition is true; that element is part of the list (a sentinel such as Java's entity data terminator, or a

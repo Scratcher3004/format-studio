@@ -417,12 +417,20 @@ public sealed class LibraryLoader
         {
             PrimitiveRef primitive => Primitive(primitive),
             NamedRef named => new NamedRef(Name(named.Name), named.As == null ? null : Primitive(named.As), Expression(named.Tag)),
-            StringRef str => str with { Encoding = str.Encoding ?? (Inherits("string") ? null : _defaults.String), Length = Length(str.Length) },
+            StringRef str => str with
+            {
+                Encoding = str.Encoding ?? (Inherits("string") ? null : _defaults.String), Length = Length(str.Length),
+                Check = str.Padding == StringPadding.None ? str.Check : str.Check ?? (Inherits("check") ? null : _defaults.Check),
+            },
             BytesRef bytes => new BytesRef(Length(bytes.Length)),
             ArrayRef array => new ArrayRef(Type(array.Element), Length(array.Length)),
             MapRef map => new MapRef(Type(map.Key), Type(map.Value), Length(map.Length)),
             OptionalRef optional => new OptionalRef(Type(optional.Inner)),
-            SizedRef sized => new SizedRef(Type(sized.Inner), Length(sized.Length)),
+            SizedRef sized => sized with
+            {
+                Inner = Type(sized.Inner), Length = Length(sized.Length),
+                Check = sized.Fill == null ? sized.Check : sized.Check ?? (Inherits("check") ? null : _defaults.Check),
+            },
             FixedPointRef fixedPoint => fixedPoint with { Base = Primitive(fixedPoint.Base) },
             NativeRef native => Native(native),
             _ => type,

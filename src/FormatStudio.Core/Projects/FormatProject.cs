@@ -14,6 +14,8 @@ public sealed class FormatDefaults
     /// <summary>The prefix of strings, bytes, arrays and maps with a default length.</summary>
     public PrimitiveRef Length { get; set; } = new(PrimitiveKind.VarUInt32);
     public StringEncoding String { get; set; } = StringEncoding.Utf8;
+    /// <summary>The check of padded strings that don't name one.</summary>
+    public PaddingCheck Check { get; set; } = PaddingCheck.Warn;
 
     /// <summary>
     /// The arguments of native types that a reference leaves out, by type name: <c>nbt: java</c> gives <c>nbt</c> the
@@ -31,7 +33,7 @@ public sealed class FormatDefaults
     public bool InheritAll { get; set; }
 
     /// <summary>The names of the settings other than native types, as in the project file.</summary>
-    public static IReadOnlyList<string> Names { get; } = ["endian", "length", "string"];
+    public static IReadOnlyList<string> Names { get; } = ["endian", "length", "string", "check"];
 
     public bool Inherits(string setting) => InheritAll || Inherit.Contains(setting);
 }
@@ -147,6 +149,8 @@ public sealed class ProjectSettings
 
             if (defaults["string"]?.GetValue<string>() is { } encoding)
                 settings.Defaults.String = Wrap(() => TypeExpressions.ParseEncoding(encoding), file);
+            if (defaults["check"]?.GetValue<string>() is { } check)
+                settings.Defaults.Check = Wrap(() => TypeExpressions.ParseCheck(check), file);
             foreach (var (key, value) in defaults)
             {
                 // Everything else names a native type (checked by the validator, which knows the project's types).
@@ -281,6 +285,7 @@ public sealed class ProjectSettings
             { "length", Defaults.Length.ToString() },
             { "string", TypeExpressions.EncodingName(Defaults.String) },
         };
+        if (Defaults.Check != PaddingCheck.Warn) defaults.Add("check", TypeExpressions.CheckName(Defaults.Check));
         foreach (var (native, args) in Defaults.Natives)
             defaults.Add(native, args.Count == 1 ? args[0] : args.Cast<object?>().ToList());
         if (Defaults.InheritAll) defaults.Add("inherit", true);

@@ -71,7 +71,7 @@ with a warning; the target editor removes it when saving.)
 Definitions that use these are reported as errors and not generated; the other definitions are.
 
 - `_parent` and `_root` in expressions, and members of bit fields in expressions (`flags.hasMax`).
-- String encodings other than UTF-8 (`mutf8`, `ascii`, `latin1`, `utf16le`, `utf16be`).
+- String encodings other than UTF-8, ASCII and Latin-1 (`mutf8`, `utf16le`, `utf16be`).
 - Lengths: `zero` for bytes; `eof` and `until` for maps; `until` for anything but arrays of structs (and the condition
   may only use fields stored in the element); `zero` and `eof` for `sized` values.
 - `const` of other types than integers, floats, bools, strings and enums (e.g. `uuid`, bytes, arrays).

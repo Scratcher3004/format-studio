@@ -2,6 +2,7 @@ package formatstudio.runtime;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.charset.CharsetEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -230,6 +231,43 @@ public final class FormatWriter {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         writeBytes(bytes);
         for (int i = bytes.length; i < byteCount; i++) writeU8(pad);
+    }
+
+    /** Writes {@code count} bytes of {@code pattern} repeated: the fill of a sized region. */
+    public void writeFill(byte[] pattern, int count) throws IOException {
+        for (int i = 0; i < count; i++) writeU8(pattern[i % pattern.length] & 0xFF);
+    }
+
+    /** The number of bytes {@link #writeString} writes for a string. */
+    public static int byteLength(String value, FormatEncoding encoding) {
+        return encoding == FormatEncoding.UTF8 ? utf8Length(value) : value == null ? 0 : value.length();
+    }
+
+    /** Writes the bytes only; the caller writes the length. Characters the encoding doesn't have are errors. */
+    public void writeString(String value, FormatEncoding encoding) throws IOException {
+        writeBytes(encode(value, encoding));
+    }
+
+    /** Writes the bytes, then {@code pad} bytes up to {@code byteCount}; the caller checks that the string fits. */
+    public void writeStringPadded(String value, int byteCount, int pad, FormatEncoding encoding) throws IOException {
+        byte[] bytes = encode(value, encoding);
+        writeBytes(bytes);
+        for (int i = bytes.length; i < byteCount; i++) writeU8(pad);
+    }
+
+    public void writeStringZero(String value, FormatEncoding encoding) throws IOException {
+        writeString(value, encoding);
+        writeU8(0);
+    }
+
+    private static byte[] encode(String value, FormatEncoding encoding) throws FormatDataException {
+        if (encoding == FormatEncoding.UTF8) return value.getBytes(StandardCharsets.UTF_8);
+        CharsetEncoder encoder = encoding.charset.newEncoder();
+        for (int i = 0; i < value.length(); i++) {
+            if (!encoder.canEncode(value.charAt(i))) throw new FormatDataException("'" + value.charAt(i) + "' can't be written as " + encoding.label);
+        }
+
+        return value.getBytes(encoding.charset);
     }
 
     public void writeUtf8Zero(String value) throws IOException {

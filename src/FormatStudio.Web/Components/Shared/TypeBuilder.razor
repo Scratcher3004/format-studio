@@ -57,11 +57,23 @@
                 <LengthEditor Value="str.Length" ValueChanged="l => Changed(str with { Length = l })" AllowZero="true" />
                 @if (str.Length.Kind is LengthKind.Fixed or LengthKind.Expression || str.Padding != StringPadding.None)
                 {
-                    <MudSelect T="StringPadding" Value="@str.Padding" ValueChanged="@(p => Changed(str with { Padding = p, Pad = '\0' }))" Label="@("Padding")"
+                    <MudSelect T="StringPadding" Value="@str.Padding" ValueChanged="@(p => Changed(str with { Padding = p, Pad = '\0', Check = p == StringPadding.None ? null : str.Check }))" Label="@("Padding")"
                                Variant="@Variant.Outlined" Margin="@Margin.Dense" Dense="@true" Style="@("min-width: 140px; max-width: 160px")">
                         <MudSelectItem T="StringPadding" Value="@StringPadding.None">Exact length</MudSelectItem>
                         <MudSelectItem T="StringPadding" Value="@StringPadding.Padded">Padded</MudSelectItem>
                         <MudSelectItem T="StringPadding" Value="@StringPadding.Terminated">NUL-terminated</MudSelectItem>
+                    </MudSelect>
+                }
+                @if (str.Padding != StringPadding.None)
+                {
+                    <MudSelect T="PaddingCheck?" Value="@str.Check" ValueChanged="@(c => Changed(str with { Check = c }))" Label="@("Check")"
+                               Variant="@Variant.Outlined" Margin="@Margin.Dense" Dense="@true" Style="@("min-width: 120px; max-width: 140px")"
+                               ToStringFunc="@(c => c is { } check ? TypeExpressions.CheckName(check) : "Default")">
+                        <MudSelectItem T="PaddingCheck?" Value="@((PaddingCheck?)null)">Default</MudSelectItem>
+                        @foreach (var check in Enum.GetValues<PaddingCheck>())
+                        {
+                            <MudSelectItem T="PaddingCheck?" Value="@check">@TypeExpressions.CheckName(check)</MudSelectItem>
+                        }
                     </MudSelect>
                 }
                 @if (str.Padding == StringPadding.Padded)
@@ -82,6 +94,24 @@
                 break;
             case SizedRef sized:
                 <LengthEditor Value="sized.Length" ValueChanged="l => Changed(sized with { Length = l })" Label="Byte length" />
+                @if (sized.Length.Kind is LengthKind.Fixed or LengthKind.Expression || sized.Fill != null)
+                {
+                    <MudTextField T="string" Value="@(sized.Fill is { } fill ? TypeExpressions.FormatFill(fill) : "")" ValueChanged="@(f => SetFill(sized, f))"
+                                  Label="@("Fill")" Placeholder="@("none")" HelperText="@("zero, a byte (0xff) or a pattern (0xdead)")" Variant="@Variant.Outlined"
+                                  Margin="@Margin.Dense" Class="@("mono")" Style="@("max-width: 160px")" />
+                }
+                @if (sized.Fill != null)
+                {
+                    <MudSelect T="PaddingCheck?" Value="@sized.Check" ValueChanged="@(c => Changed(sized with { Check = c }))" Label="@("Check")"
+                               Variant="@Variant.Outlined" Margin="@Margin.Dense" Dense="@true" Style="@("min-width: 120px; max-width: 140px")"
+                               ToStringFunc="@(c => c is { } check ? TypeExpressions.CheckName(check) : "Default")">
+                        <MudSelectItem T="PaddingCheck?" Value="@((PaddingCheck?)null)">Default</MudSelectItem>
+                        @foreach (var check in Enum.GetValues<PaddingCheck>())
+                        {
+                            <MudSelectItem T="PaddingCheck?" Value="@check">@TypeExpressions.CheckName(check)</MudSelectItem>
+                        }
+                    </MudSelect>
+                }
                 break;
             case FixedPointRef fixedPoint:
                 <PrimitivePicker Value="fixedPoint.Base" ValueChanged="p => Changed(fixedPoint with { Base = p })" Label="Stored as" IntegersOnly="true" />
@@ -303,6 +333,20 @@
     private static PrimitiveRef? ParsePrimitive(string? text) => Primitives.TryParse(text ?? "", out var primitive) ? primitive : null;
 
     private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    /// <summary>A fill pattern; empty removes the fill (and its check), text that isn't one is ignored.</summary>
+    private Task SetFill(SizedRef sized, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return Changed(sized with { Fill = null, Check = null });
+        try
+        {
+            return Changed(sized with { Fill = TypeExpressions.ParseFill(text.Trim()) });
+        }
+        catch (FormatException)
+        {
+            return Task.CompletedTask;
+        }
+    }
 
     /// <summary>One pad character; empty or "zero" is NUL, longer text is ignored.</summary>
     private Task SetPad(StringRef str, string? text)

@@ -554,20 +554,33 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
     }
 
     /// <summary>
-    /// The byte size of a padded string's field (<see cref="StringPadding"/>): a literal for fixed lengths, else the
-    /// length expression (a number of the expression's type).
+    /// The byte size of a padded field (a padded string, or a sized value with a fill): a literal for fixed lengths, else
+    /// the length expression (a number of the expression's type).
     /// </summary>
-    protected string PaddedSize(StringRef str, Context context) => str.Length.Kind switch
+    protected string PaddedSize(LengthSpec length, Context context) => length.Kind switch
     {
-        LengthKind.Fixed => str.Length.Fixed.ToString(System.Globalization.CultureInfo.InvariantCulture),
-        LengthKind.Expression => Expression(str.Length.Expression!, context, out _),
-        _ => throw new CodegenException($"A padded string needs a fixed length or a length expression, not {str.Length}"),
+        LengthKind.Fixed => length.Fixed.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        LengthKind.Expression => Expression(length.Expression!, context, out _),
+        _ => throw new CodegenException($"Padding needs a fixed length or a length expression, not {length}"),
     };
 
-    /// <summary>The pad byte of a padded string, for generators that write UTF-8: the pad character must be ASCII.</summary>
-    protected static int PadByte(StringRef str) => str.Pad <= 0x7F
+    /// <summary>Whether the fill of a sized value is checked strictly (its own <c>check</c>, else the project default).</summary>
+    protected bool StrictFill(SizedRef sized) => sized.Fill != null && (sized.Check ?? project.Defaults.Check) == PaddingCheck.Strict;
+
+    /// <summary>The fill pattern of a sized value as hex byte literals: <c>0x00</c>, <c>0xde, 0xad</c>.</summary>
+    protected static string FillBytes(SizedRef sized) =>
+        string.Join(", ", Enumerable.Range(0, sized.Fill!.Length / 2).Select(i => "0x" + sized.Fill.Substring(i * 2, 2)));
+
+    /// <summary>Whether a padded string's padding is checked strictly (its own <c>check</c>, else the project default).</summary>
+    protected bool StrictPadding(StringRef str) => str.Padding != StringPadding.None && (str.Check ?? project.Defaults.Check) == PaddingCheck.Strict;
+
+    /// <summary>
+    /// The pad byte of a padded string, for generators that write single-byte pad characters: ASCII, or Latin-1 for
+    /// Latin-1 strings.
+    /// </summary>
+    protected int PadByte(StringRef str) => str.Pad <= ((str.Encoding ?? project.Defaults.String) == StringEncoding.Latin1 ? 0xFF : 0x7F)
         ? str.Pad
-        : throw new CodegenException($"The pad character of {str} must be ASCII");
+        : throw new CodegenException($"The pad character of {str} must be one byte in its encoding");
 
     /// <summary>An expression that reads a length prefix.</summary>
     protected abstract string ReadLengthPrefix(PrimitiveRef prefix, Context context);

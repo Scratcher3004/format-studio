@@ -4,6 +4,9 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
@@ -333,27 +336,85 @@ public final class FormatReader {
         return new UUID(most, readI64BE());
     }
 
+    // UTF-8 shorthands.
     public String readUtf8(int byteCount) throws IOException {
-        return new String(take(byteCount), StandardCharsets.UTF_8);
+        return readString(byteCount, FormatEncoding.UTF8, false);
     }
 
-    /** A UTF-8 string in a field of {@code byteCount} bytes, without the trailing {@code pad} bytes. */
+    public String readUtf8(int byteCount, boolean strict) throws IOException {
+        return readString(byteCount, FormatEncoding.UTF8, strict);
+    }
+
     public String readUtf8Padded(int byteCount, int pad) throws IOException {
-        byte[] bytes = take(byteCount);
-        int end = bytes.length;
-        while (end > 0 && bytes[end - 1] == (byte) pad) end--;
-        return new String(bytes, 0, end, StandardCharsets.UTF_8);
+        return readStringPadded(byteCount, pad, FormatEncoding.UTF8, false);
     }
 
-    /** A UTF-8 string in a field of {@code byteCount} bytes that ends at the first zero byte, or with the field. */
+    public String readUtf8Padded(int byteCount, int pad, boolean strict) throws IOException {
+        return readStringPadded(byteCount, pad, FormatEncoding.UTF8, strict);
+    }
+
     public String readUtf8Terminated(int byteCount) throws IOException {
-        byte[] bytes = take(byteCount);
-        int end = 0;
-        while (end < bytes.length && bytes[end] != 0) end++;
-        return new String(bytes, 0, end, StandardCharsets.UTF_8);
+        return readStringTerminated(byteCount, FormatEncoding.UTF8, false, false);
+    }
+
+    public String readUtf8Terminated(int byteCount, boolean strict, boolean checkPadding) throws IOException {
+        return readStringTerminated(byteCount, FormatEncoding.UTF8, strict, checkPadding);
     }
 
     public String readUtf8Zero() throws IOException {
+        return readStringZero(FormatEncoding.UTF8, false);
+    }
+
+    public String readUtf8Zero(boolean strict) throws IOException {
+        return readStringZero(FormatEncoding.UTF8, strict);
+    }
+
+    public String readUtf8ToEnd() throws IOException {
+        return readStringToEnd(FormatEncoding.UTF8, false);
+    }
+
+    public String readUtf8ToEnd(boolean strict) throws IOException {
+        return readStringToEnd(FormatEncoding.UTF8, strict);
+    }
+
+    /** Text; {@code strict} rejects invalid bytes instead of replacing them with U+FFFD. */
+    public String readString(int byteCount, FormatEncoding encoding, boolean strict) throws IOException {
+        long offset = position;
+        byte[] bytes = take(byteCount);
+        return decode(bytes, bytes.length, encoding, strict, offset);
+    }
+
+    /** A string in a field of {@code byteCount} bytes, without the trailing {@code pad} bytes. */
+    public String readStringPadded(int byteCount, int pad, FormatEncoding encoding, boolean strict) throws IOException {
+        long offset = position;
+        byte[] bytes = take(byteCount);
+        int end = bytes.length;
+        while (end > 0 && bytes[end - 1] == (byte) pad) end--;
+        return decode(bytes, end, encoding, strict, offset);
+    }
+
+    /**
+     * A string in a field of {@code byteCount} bytes that ends at the first zero byte, or with the field.
+     * {@code checkPadding} rejects non-zero bytes after the terminator.
+     */
+    public String readStringTerminated(int byteCount, FormatEncoding encoding, boolean strict, boolean checkPadding) throws IOException {
+        long offset = position;
+        byte[] bytes = take(byteCount);
+        int end = 0;
+        while (end < bytes.length && bytes[end] != 0) end++;
+        if (checkPadding) {
+            for (int i = end; i < bytes.length; i++) {
+                if (bytes[i] != 0) {
+                    throw new FormatDataException(String.format("Padding byte 0x%02x at offset %d after the string terminator", bytes[i] & 0xFF, offset + i));
+                }
+            }
+        }
+
+        return decode(bytes, end, encoding, strict, offset);
+    }
+
+    public String readStringZero(FormatEncoding encoding, boolean strict) throws IOException {
+        long offset = position;
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         while (true) {
             if (length >= 0 && position >= length) throw new FormatDataException("Missing string terminator after offset " + position);
@@ -362,12 +423,41 @@ public final class FormatReader {
             bytes.write(b);
         }
 
-        return new String(bytes.toByteArray(), StandardCharsets.UTF_8);
+        byte[] text = bytes.toByteArray();
+        return decode(text, text.length, encoding, strict, offset);
     }
 
-    /** The rest of the data as UTF-8. */
-    public String readUtf8ToEnd() throws IOException {
-        return new String(readToEnd(), StandardCharsets.UTF_8);
+    /** The rest of the data as text. */
+    public String readStringToEnd(FormatEncoding encoding, boolean strict) throws IOException {
+        long offset = position;
+        byte[] bytes = readToEnd();
+        return decode(bytes, bytes.length, encoding, strict, offset);
+    }
+
+    /** The first {@code count} bytes as text; {@code strict} rejects invalid bytes instead of replacing them. */
+    private static String decode(byte[] bytes, int count, FormatEncoding encoding, boolean strict, long offset) throws FormatDataException {
+        if (!strict) return new String(bytes, 0, count, encoding.charset);
+        try {
+            return encoding.charset.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes, 0, count))
+                .toString();
+        } catch (CharacterCodingException e) {
+            throw new FormatDataException("Invalid " + encoding.label + " in the string at offset " + offset);
+        }
+    }
+
+    /** Skips the rest of the data, the fill of a sized region; {@code check} rejects bytes that don't repeat {@code pattern}. */
+    public void skipFill(byte[] pattern, boolean check) throws IOException {
+        long offset = position;
+        byte[] fill = readToEnd();
+        if (!check) return;
+        for (int i = 0; i < fill.length; i++) {
+            if (fill[i] != pattern[i % pattern.length]) {
+                throw new FormatDataException(String.format("Byte 0x%02x at offset %d of the region is not its fill", fill[i] & 0xFF, offset + i));
+            }
+        }
     }
 
     public byte[] readBytes(int count) throws IOException {

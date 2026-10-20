@@ -210,21 +210,42 @@ public sealed class FormatStreamReader
     /// <summary>A UUID in RFC 4122 byte order (two big-endian 64-bit halves).</summary>
     public Guid ReadUuidBE() => new(Fixed(16), bigEndian: true);
 
-    public string ReadUtf8(int byteCount) => Encoding.UTF8.GetString(Take(byteCount));
-
-    /// <summary>A UTF-8 string in a field of <paramref name="byteCount"/> bytes, without the trailing <paramref name="pad"/> bytes.</summary>
-    public string ReadUtf8Padded(int byteCount, byte pad) => Encoding.UTF8.GetString(((ReadOnlySpan<byte>)Take(byteCount)).TrimEnd(pad));
-
-    /// <summary>A UTF-8 string in a field of <paramref name="byteCount"/> bytes that ends at the first zero byte, or with the field.</summary>
-    public string ReadUtf8Terminated(int byteCount)
+    /// <summary>Text; <paramref name="strict"/> rejects invalid bytes instead of replacing them with U+FFFD.</summary>
+    public string ReadString(int byteCount, FormatEncoding encoding, bool strict = false)
     {
-        ReadOnlySpan<byte> bytes = Take(byteCount);
-        var end = bytes.IndexOf((byte)0);
-        return Encoding.UTF8.GetString(end < 0 ? bytes : bytes[..end]);
+        var offset = Position;
+        return TextCodec.Decode(Take(byteCount), encoding, strict, offset);
     }
 
-    public string ReadUtf8Zero()
+    /// <summary>A string in a field of <paramref name="byteCount"/> bytes, without the trailing <paramref name="pad"/> bytes.</summary>
+    public string ReadStringPadded(int byteCount, byte pad, FormatEncoding encoding, bool strict = false)
     {
+        var offset = Position;
+        return TextCodec.Decode(((ReadOnlySpan<byte>)Take(byteCount)).TrimEnd(pad), encoding, strict, offset);
+    }
+
+    /// <summary>
+    /// A string in a field of <paramref name="byteCount"/> bytes that ends at the first zero byte, or with the field.
+    /// <paramref name="checkPadding"/> rejects non-zero bytes after the terminator.
+    /// </summary>
+    public string ReadStringTerminated(int byteCount, FormatEncoding encoding, bool strict = false, bool checkPadding = false)
+    {
+        var offset = Position;
+        return TextCodec.Terminated(Take(byteCount), encoding, strict, checkPadding, offset);
+    }
+
+    // UTF-8 shorthands.
+    public string ReadUtf8(int byteCount, bool strict = false) => ReadString(byteCount, FormatEncoding.Utf8, strict);
+    public string ReadUtf8Padded(int byteCount, byte pad, bool strict = false) => ReadStringPadded(byteCount, pad, FormatEncoding.Utf8, strict);
+    public string ReadUtf8Terminated(int byteCount, bool strict = false, bool checkPadding = false) =>
+        ReadStringTerminated(byteCount, FormatEncoding.Utf8, strict, checkPadding);
+    public string ReadUtf8Zero(bool strict = false) => ReadStringZero(FormatEncoding.Utf8, strict);
+
+    public string ReadUtf8ToEnd(bool strict = false) => ReadStringToEnd(FormatEncoding.Utf8, strict);
+
+    public string ReadStringZero(FormatEncoding encoding, bool strict = false)
+    {
+        var offset = Position;
         var bytes = new MemoryStream();
         while (true)
         {
@@ -234,11 +255,25 @@ public sealed class FormatStreamReader
             bytes.WriteByte(b);
         }
 
-        return Encoding.UTF8.GetString(bytes.GetBuffer(), 0, (int)bytes.Length);
+        return TextCodec.Decode(bytes.GetBuffer().AsSpan(0, (int)bytes.Length), encoding, strict, offset);
     }
 
-    /// <summary>The rest of the data as UTF-8.</summary>
-    public string ReadUtf8ToEnd() => Encoding.UTF8.GetString(ReadToEnd());
+    /// <summary>The rest of the data as text.</summary>
+    public string ReadStringToEnd(FormatEncoding encoding, bool strict = false)
+    {
+        var offset = Position;
+        return TextCodec.Decode(ReadToEnd(), encoding, strict, offset);
+    }
+
+    /// <summary>
+    /// Skips the rest of the data, the fill of a sized region; <paramref name="check"/> rejects bytes that don't repeat
+    /// <paramref name="pattern"/>.
+    /// </summary>
+    public void SkipFill(ReadOnlySpan<byte> pattern, bool check)
+    {
+        var offset = Position;
+        TextCodec.CheckFill(ReadToEnd(), pattern, check, offset);
+    }
 
     public byte[] ReadBytes(int count) => Take(count);
 

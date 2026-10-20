@@ -237,6 +237,8 @@ public sealed class WireWriter
 public static class Strings
 {
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
+    private static readonly Encoding StrictAscii = Encoding.GetEncoding("us-ascii", EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+    private static readonly Encoding StrictLatin1 = Encoding.GetEncoding("iso-8859-1", EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
 
     public static string Decode(ReadOnlySpan<byte> bytes, StringEncoding encoding)
     {
@@ -246,8 +248,8 @@ public static class Strings
             {
                 StringEncoding.Utf8 => StrictUtf8.GetString(bytes),
                 StringEncoding.Mutf8 => DecodeMutf8(bytes),
-                StringEncoding.Ascii => Encoding.ASCII.GetString(bytes),
-                StringEncoding.Latin1 => Encoding.Latin1.GetString(bytes),
+                StringEncoding.Ascii => StrictAscii.GetString(bytes),
+                StringEncoding.Latin1 => StrictLatin1.GetString(bytes),
                 StringEncoding.Utf16Le => Encoding.Unicode.GetString(bytes),
                 _ => Encoding.BigEndianUnicode.GetString(bytes),
             };
@@ -284,12 +286,27 @@ public static class Strings
         return field[..end];
     }
 
+    /// <summary>
+    /// The index of the first byte in a padded field that a writer wouldn't have written there, or -1: for
+    /// <see cref="StringPadding.Terminated"/> strings, a non-zero byte after the terminator. Trimmed pad characters are
+    /// always what a writer writes.
+    /// </summary>
+    public static int BadPadding(ReadOnlySpan<byte> field, StringPadding padding, char pad, StringEncoding encoding)
+    {
+        if (padding != StringPadding.Terminated) return -1;
+        var end = Unpad(field, padding, pad, encoding).Length;
+        if (end == field.Length) return -1;
+        var bad = field[end..].IndexOfAnyExcept((byte)0);
+        return bad < 0 ? -1 : end + bad;
+    }
+
+    /// <summary>The bytes of a string; a character the encoding doesn't have (ASCII, Latin-1) throws <see cref="EncoderFallbackException"/>.</summary>
     public static byte[] Encode(string text, StringEncoding encoding) => encoding switch
     {
         StringEncoding.Utf8 => Encoding.UTF8.GetBytes(text),
         StringEncoding.Mutf8 => EncodeMutf8(text),
-        StringEncoding.Ascii => Encoding.ASCII.GetBytes(text),
-        StringEncoding.Latin1 => Encoding.Latin1.GetBytes(text),
+        StringEncoding.Ascii => StrictAscii.GetBytes(text),
+        StringEncoding.Latin1 => StrictLatin1.GetBytes(text),
         StringEncoding.Utf16Le => Encoding.Unicode.GetBytes(text),
         _ => Encoding.BigEndianUnicode.GetBytes(text),
     };

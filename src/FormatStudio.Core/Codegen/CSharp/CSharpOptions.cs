@@ -34,6 +34,8 @@ public sealed class CSharpOptions
     public bool ValidateRanges { get; set; }
     /// <summary>Reject enum values that are not members (unless the enum allows unknown values or is a flags enum) when reading.</summary>
     public bool ValidateEnums { get; set; }
+    /// <summary>Reject invalid UTF-8 and, where <c>check</c> is strict, padding or fill that wouldn't re-encode the same.</summary>
+    public bool ValidateStrings { get; set; } = true;
 
     public static IReadOnlyList<CodegenOption> Describe(CSharpIo io)
     {
@@ -44,6 +46,7 @@ public sealed class CSharpOptions
             CodegenOption.Text("registry", "Registry class", "Packets", "The static class with the packet id dispatch."),
                 CodegenOption.Bool("validateRanges", "Validate ranges", false, "Check min/max of numeric fields when reading."),
             CodegenOption.Bool("validateEnums", "Validate enums", false, "Reject values that are not enum members when reading (except flags enums and enums that allow unknown values)."),
+            CodegenOption.Bool("validateStrings", "Validate strings", true, "Reject invalid UTF-8, and padding or fill that wouldn't re-encode the same where check is strict."),
             CodegenOption.Text("runtimeNamespace", "Runtime namespace", "FormatStudio.Runtime", "The namespace of the runtime the generated code calls.", true),
             CodegenOption.Text("reader", "Reader type", stream ? "FormatStreamReader" : "FormatReader",
                 stream ? "Reader class over a Stream." : "ref struct reader over a ReadOnlySpan<byte>.", true),
@@ -69,6 +72,7 @@ public sealed class CSharpOptions
             Registry = read.Text("registry"),
             ValidateRanges = read.Bool("validateRanges"),
             ValidateEnums = read.Bool("validateEnums"),
+            ValidateStrings = read.Bool("validateStrings"),
             RuntimeNamespace = read.Text("runtimeNamespace"),
             ReaderType = read.Text("reader"),
             WriterType = read.Text("writer"),

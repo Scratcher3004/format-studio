@@ -277,7 +277,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         builder.Append($"package {package};\n\n");
         if (options.RuntimePackage != package)
         {
-            var imports = new[] { "FormatDataException", "FormatPacket", "FormatPacketVisitor", "FormatReader", "FormatSerializable", "FormatWriter" }
+            var imports = new[] { "FormatDataException", "FormatEncoding", "FormatPacket", "FormatPacketVisitor", "FormatReader", "FormatSerializable", "FormatWriter" }
                 .Where(name => System.Text.RegularExpressions.Regex.IsMatch(body, $@"\b{name}\b")).ToList();
             foreach (var name in imports) builder.Append($"import {options.RuntimePackage}.{name};\n");
             if (imports.Count > 0) builder.Append('\n');
@@ -671,22 +671,47 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     protected override string ReadString(StringRef str, CodeWriter w, Context context)
     {
         var reader = context.Reader;
-        CheckEncoding(str);
-        if (str.Padding == StringPadding.Terminated) return $"{reader}.readUtf8Terminated({ReadCount(str.Length, w, context, 1, null)})";
-        if (str.Padding == StringPadding.Padded) return $"{reader}.readUtf8Padded({ReadCount(str.Length, w, context, 1, null)}, {PadByte(str)})";
+        var encoding = EncodingArgument(str);
+        var strict = options.ValidateStrings ? "true" : "false";
+        var count = str.Length.Kind is LengthKind.Zero or LengthKind.Eof ? null : ReadCount(str.Length, w, context, 1, null);
+        if (str.Padding == StringPadding.Terminated)
+        {
+            var check = options.ValidateStrings && StrictPadding(str) ? "true" : "false";
+            return encoding == null
+                ? $"{reader}.readUtf8Terminated({count}, {strict}, {check})"
+                : $"{reader}.readStringTerminated({count}, {encoding}, {strict}, {check})";
+        }
+
+        if (str.Padding == StringPadding.Padded)
+        {
+            return encoding == null
+                ? $"{reader}.readUtf8Padded({count}, {PadByte(str)}, {strict})"
+                : $"{reader}.readStringPadded({count}, {PadByte(str)}, {encoding}, {strict})";
+        }
+
+        var with = encoding == null ? "" : encoding + ", ";
+        var name = encoding == null ? "Utf8" : "String";
         return str.Length.Kind switch
         {
-            LengthKind.Zero => $"{reader}.readUtf8Zero()",
-            LengthKind.Eof => $"{reader}.readUtf8ToEnd()",
-            _ => $"{reader}.readUtf8({ReadCount(str.Length, w, context, 1, null)})",
+            LengthKind.Zero => $"{reader}.read{name}Zero({with}{strict})",
+            LengthKind.Eof => $"{reader}.read{name}ToEnd({with}{strict})",
+            _ => $"{reader}.read{name}({count}, {with}{strict})",
         };
     }
 
-    private void CheckEncoding(StringRef str)
+    /// <summary>The runtime's <c>FormatEncoding</c> of a string, or null for UTF-8 (which has methods of its own).</summary>
+    private string? EncodingArgument(StringRef str) => (str.Encoding ?? Project.Defaults.String) switch
     {
-        if ((str.Encoding ?? Project.Defaults.String) != StringEncoding.Utf8)
-            throw new CodegenException($"String encoding {str.Encoding} is not supported by the Java generator");
-    }
+        StringEncoding.Utf8 => null,
+        StringEncoding.Ascii => "FormatEncoding.ASCII",
+        StringEncoding.Latin1 => "FormatEncoding.LATIN1",
+        var other => throw new CodegenException($"String encoding {Dsl.TypeExpressions.EncodingName(other)} is not supported by the Java generator"),
+    };
+
+    /// <summary>The number of bytes a string takes in its encoding.</summary>
+    private string ByteCount(StringRef str, string value) => EncodingArgument(str) is { } encoding
+        ? $"FormatWriter.byteLength({value}, {encoding})"
+        : $"FormatWriter.utf8Length({value})";
 
     protected override string ReadBytes(BytesRef bytes, CodeWriter w, Context context)
     {
@@ -806,7 +831,11 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         var count = ReadCount(sized.Length, w, context, 1, null);
         var sub = Temp("reader");
         w.Line($"FormatReader {sub} = {context.Reader}.slice({count});");
-        return Read(sized.Inner, w, context.WithReader(sub));
+        if (sized.Fill == null) return Read(sized.Inner, w, context.WithReader(sub));
+        var value = Temp("value");
+        w.Line($"{Type(sized.Inner)} {value} = {Read(sized.Inner, w, context.WithReader(sub))};");
+        w.Line($"{sub}.skipFill(new byte[] {{ {JavaFillBytes(sized)} }}, {(options.ValidateStrings && StrictFill(sized) ? "true" : "false")});");
+        return value;
     }
 
     protected override string ReadFixedPoint(FixedPointRef fixedPoint, CodeWriter w, Context context) =>
@@ -842,15 +871,23 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     private void WritePadded(StringRef str, string value, CodeWriter w, Context context)
     {
+        var encoding = EncodingArgument(str);
         var text = Temp("text");
         var size = Temp("size");
         w.Line($"String {text} = {value};");
-        w.Line($"int {size} = (int) ({PaddedSize(str, context)});");
-        w.Line($"if (FormatWriter.utf8Length({text}) > {size}) {Throw($"{Literal($"{What(context)} must take at most ")} + {size} + \" bytes\"")}");
+        w.Line($"int {size} = (int) ({PaddedSize(str.Length, context)});");
+        w.Line($"if ({ByteCount(str, text)} > {size}) {Throw($"{Literal($"{What(context)} must take at most ")} + {size} + \" bytes\"")}");
         if (str.Padding == StringPadding.Terminated)
             w.Line($"if ({text}.indexOf('\\0') >= 0) {Throw(Literal($"{What(context)} must not contain NUL"))}");
-        w.Line($"{context.Writer}.writeUtf8Padded({text}, {size}, {PadByte(str)});");
+        if (str.Padding == StringPadding.Padded && options.ValidateStrings && StrictPadding(str))
+            w.Line($"if ({text}.endsWith(String.valueOf((char) {PadByte(str)}))) {Throw(Literal($"{What(context)} must not end with its pad character"))}");
+        w.Line(encoding == null
+            ? $"{context.Writer}.writeUtf8Padded({text}, {size}, {PadByte(str)});"
+            : $"{context.Writer}.writeStringPadded({text}, {size}, {PadByte(str)}, {encoding});");
     }
+
+    /// <summary>The fill pattern as Java byte literals (bytes are signed, so each is cast).</summary>
+    private static string JavaFillBytes(SizedRef sized) => string.Join(", ", FillBytes(sized).Split(", ").Select(b => "(byte) " + b));
 
     private static string What(Context context) => context.Field?.Name ?? "value";
 
@@ -859,22 +896,24 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     protected override void WriteString(StringRef str, string value, CodeWriter w, Context context)
     {
-        CheckEncoding(str);
+        var encoding = EncodingArgument(str);
         if (str.Padding != StringPadding.None)
         {
             WritePadded(str, value, w, context);
             return;
         }
 
+        var with = encoding == null ? "" : ", " + encoding;
+        var name = encoding == null ? "Utf8" : "String";
         if (str.Length.Kind == LengthKind.Zero)
         {
-            w.Line($"{context.Writer}.writeUtf8Zero({value});");
+            w.Line($"{context.Writer}.write{name}Zero({value}{with});");
             return;
         }
 
         if (str.Length.Kind is LengthKind.Default or LengthKind.Prefix or LengthKind.Fixed)
-            WriteCount(str.Length, $"FormatWriter.utf8Length({value})", w, context, What(context));
-        w.Line($"{context.Writer}.writeUtf8({value});");
+            WriteCount(str.Length, ByteCount(str, value), w, context, What(context));
+        w.Line($"{context.Writer}.write{name}({value}{with});");
     }
 
     protected override void WriteBytes(BytesRef bytes, string value, CodeWriter w, Context context)
@@ -924,8 +963,18 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         w.Line($"java.io.ByteArrayOutputStream {buffer} = new java.io.ByteArrayOutputStream();");
         w.Line($"FormatWriter {sub} = new FormatWriter({buffer});");
         Write(sized.Inner, value, w, context.WithWriter(sub));
-        WriteCount(sized.Length, $"{buffer}.size()", w, context, What(context));
+        if (sized.Fill == null)
+        {
+            WriteCount(sized.Length, $"{buffer}.size()", w, context, What(context));
+            w.Line($"{context.Writer}.writeBytes({buffer}.toByteArray());");
+            return;
+        }
+
+        var size = Temp("size");
+        w.Line($"int {size} = (int) ({PaddedSize(sized.Length, context)});");
+        w.Line($"if ({buffer}.size() > {size}) {Throw($"{Literal($"{What(context)} must take at most ")} + {size} + \" bytes\"")}");
         w.Line($"{context.Writer}.writeBytes({buffer}.toByteArray());");
+        w.Line($"{context.Writer}.writeFill(new byte[] {{ {JavaFillBytes(sized)} }}, {size} - {buffer}.size());");
     }
 
     protected override void WriteFixedPoint(FixedPointRef fixedPoint, string value, CodeWriter w, Context context) =>

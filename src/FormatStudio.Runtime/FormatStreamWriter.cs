@@ -113,6 +113,32 @@ public sealed class FormatStreamWriter(Stream stream)
         for (var i = Utf8Length(value); i < byteCount; i++) WriteU8(pad);
     }
 
+    /// <summary>The number of bytes <see cref="WriteString"/> writes for a string.</summary>
+    public static int ByteLength(string value, FormatEncoding encoding) => TextCodec.ByteCount(value, encoding);
+
+    /// <summary>Writes the bytes only; the caller writes the length. Characters the encoding doesn't have are errors.</summary>
+    public void WriteString(string value, FormatEncoding encoding) => WriteBytes(TextCodec.Encode(value, encoding));
+
+    /// <summary>Writes the bytes, then <paramref name="pad"/> bytes up to <paramref name="byteCount"/>; the caller checks that the string fits.</summary>
+    public void WriteStringPadded(string value, int byteCount, byte pad, FormatEncoding encoding)
+    {
+        var bytes = TextCodec.Encode(value, encoding);
+        WriteBytes(bytes);
+        for (var i = bytes.Length; i < byteCount; i++) WriteU8(pad);
+    }
+
+    public void WriteStringZero(string value, FormatEncoding encoding)
+    {
+        WriteString(value, encoding);
+        WriteU8(0);
+    }
+
+    /// <summary>Writes <paramref name="count"/> bytes of <paramref name="pattern"/> repeated: the fill of a sized region.</summary>
+    public void WriteFill(ReadOnlySpan<byte> pattern, int count)
+    {
+        for (var i = 0; i < count; i++) WriteU8(pattern[i % pattern.Length]);
+    }
+
     public void WriteUtf8Zero(string value)
     {
         WriteUtf8(value);

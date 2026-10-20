@@ -49,7 +49,7 @@ public sealed class RandomValues
                 return JsonValue.Create(RandomString(str, field, scope, deep));
             case BytesRef bytes:
             {
-                var buffer = new byte[Count(bytes.Length, scope, deep, field?.MaxLength)];
+                var buffer = new byte[Fit(Count(bytes.Length, scope, deep, field?.MaxLength), bytes.Length, 1)];
                 _random.NextBytes(buffer);
                 return JsonValue.Create(Hex.Format(buffer));
             }
@@ -72,6 +72,19 @@ public sealed class RandomValues
             }
             case OptionalRef optional:
                 return deep || _random.Next(3) == 0 ? null : Generate(optional.Inner, field, scope, depth + 1);
+            case SizedRef { Fill: not null, Length.Kind: LengthKind.Fixed } filled when _project.Unalias(filled.Inner) is StringRef or BytesRef:
+            {
+                // A string or bytes in a filled region: short enough to fit, with its length prefix.
+                _room = filled.Length.Fixed;
+                try
+                {
+                    return Generate(filled.Inner, field, scope, depth + 1);
+                }
+                finally
+                {
+                    _room = null;
+                }
+            }
             case SizedRef sized:
                 return Generate(sized.Inner, field, scope, depth + 1);
             case FixedPointRef fixedPoint:
@@ -169,6 +182,17 @@ public sealed class RandomValues
         return _random.Next(Math.Min(min ?? 0, upper), upper + 1);
     }
 
+    /// <summary>The bytes a value in a filled region may take (<see cref="Fit"/>), or null outside one.</summary>
+    private int? _room;
+
+    /// <summary>A count of units of <paramref name="unitSize"/> bytes, at most what fits the filled region with its length prefix.</summary>
+    private int Fit(int count, LengthSpec length, int unitSize)
+    {
+        if (_room is not { } room || length.Kind == LengthKind.Fixed) return count;
+        if (length.Kind is LengthKind.Default or LengthKind.Prefix) room -= Primitives.MinWireSize((length.Prefix ?? _project.Defaults.Length).Kind);
+        return Math.Clamp(room / unitSize, 0, count);
+    }
+
     private string RandomString(StringRef str, FieldDef? field, StructScope? scope, bool deep)
     {
         const string alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
@@ -176,6 +200,7 @@ public sealed class RandomValues
             ? Count(str.Length, scope, deep, null)
             : _random.Next(field?.MinLength ?? 0, Math.Min(field?.MaxLength ?? 12, 12) + 1);
         if (str.Length.Kind == LengthKind.Fixed) count = str.Length.Fixed;
+        count = Fit(count, str.Length, Strings.UnitSize(str.Encoding ?? _project.Defaults.String));
         var letters = alphabet;
         if (str.Padding != StringPadding.None)
         {

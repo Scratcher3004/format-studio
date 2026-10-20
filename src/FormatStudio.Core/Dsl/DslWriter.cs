@@ -198,6 +198,7 @@ public static class DslWriter
                 map.Add("string", str.Encoding is { } encoding ? TypeExpressions.EncodingName(encoding) : "default");
                 AddLength(map, str.Length);
                 if (str.Padding != StringPadding.None) map.Add("pad", TypeExpressions.FormatPad(str.Padding, str.Pad));
+                if (str.Check is { } check) map.Add("check", TypeExpressions.CheckName(check));
                 break;
             case BytesRef bytes:
                 map.Add("bytes", bytes.Length.Kind == LengthKind.Default ? "default" : LengthValue(bytes.Length));
@@ -220,6 +221,8 @@ public static class DslWriter
             case SizedRef sized:
                 map.Add("sized", Type(sized.Inner));
                 AddLength(map, sized.Length);
+                if (sized.Fill != null) map.Add("fill", TypeExpressions.FormatFill(sized.Fill));
+                if (sized.Check is { } sizedCheck) map.Add("check", TypeExpressions.CheckName(sizedCheck));
                 break;
             case FixedPointRef fixedPoint:
                 map.Add("fixed", fixedPoint.Base.ToString());

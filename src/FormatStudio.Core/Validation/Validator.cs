@@ -281,9 +281,7 @@ public sealed class Validator
                 CheckType(map.Value, source, path + ".value", null);
                 break;
             case StringRef str:
-                CheckLength(str.Length, source, path, earlier, allowZero: true);
-                if (str.Padding != StringPadding.None && str.Length.Kind is not (LengthKind.Fixed or LengthKind.Expression))
-                    _diagnostics.Error("A padded string needs a fixed length or a length expression", source, path);
+                CheckString(str, source, path, earlier);
                 break;
             case BytesRef bytes:
                 CheckLength(bytes.Length, source, path, earlier, allowZero: false);
@@ -291,6 +289,11 @@ public sealed class Validator
             case SizedRef sized:
                 CheckLength(sized.Length, source, path, earlier, allowZero: false);
                 if (sized.Length.Kind == LengthKind.Eof) _diagnostics.Warning("A sized value with length eof is the same as the plain value", source, path);
+                if (sized.Fill != null && sized.Length.Kind is not (LengthKind.Fixed or LengthKind.Expression))
+                    _diagnostics.Error("'fill' needs a fixed length or a length expression", source, path);
+                if (sized.Check != null && sized.Fill == null) _diagnostics.Error("'check' on a sized value needs 'fill'", source, path);
+                if (sized.Fill != null && ReadsToEnd(sized.Inner))
+                    _diagnostics.Warning("The value reads to the end of the region, so there is never any fill", source, path);
                 CheckType(sized.Inner, source, path, earlier);
                 break;
             case OptionalRef optional:
@@ -320,6 +323,37 @@ public sealed class Validator
 
                 break;
         }
+    }
+
+    /// <summary>Whether a value takes everything up to the end of its data (an <c>eof</c> length).</summary>
+    private bool ReadsToEnd(TypeRef type) => _project.Unalias(type) switch
+    {
+        StringRef { Length.Kind: LengthKind.Eof } or BytesRef { Length.Kind: LengthKind.Eof } or ArrayRef { Length.Kind: LengthKind.Eof }
+            or MapRef { Length.Kind: LengthKind.Eof } => true,
+        _ => false,
+    };
+
+    /// <summary>The built-in generators, which write UTF-8, ASCII and Latin-1 strings.</summary>
+    private static readonly string[] Utf8Generators = ["csharp", "csharp-stream", "java-stream"];
+
+    private void CheckString(StringRef str, SourceLocation? source, string path, IReadOnlySet<string>? earlier)
+    {
+        CheckLength(str.Length, source, path, earlier, allowZero: true);
+        if (str.Padding != StringPadding.None && str.Length.Kind is not (LengthKind.Fixed or LengthKind.Expression))
+            _diagnostics.Error("A padded string needs a fixed length or a length expression", source, path);
+        if (str.Check != null && str.Padding == StringPadding.None)
+            _diagnostics.Error("'check' only applies to padded strings (pad: zero, a character or terminated)", source, path);
+        var encoding = str.Encoding ?? _project.Defaults.String;
+        if (Strings.UnitSize(encoding) == 2 && str.Length.Kind == LengthKind.Fixed && str.Length.Fixed % 2 != 0)
+            _diagnostics.Error($"A {TypeExpressions.EncodingName(encoding)} string needs an even number of bytes, not {str.Length.Fixed}", source, path);
+
+        // Generators fail on these only when they run: say so while editing.
+        var targets = _project.Settings.Codegen.Where(t => Utf8Generators.Contains(t.Generator)).Select(t => t.Name).ToList();
+        if (targets.Count == 0) return;
+        if (encoding is not (StringEncoding.Utf8 or StringEncoding.Ascii or StringEncoding.Latin1))
+            _diagnostics.Warning($"Code generation ({string.Join(", ", targets)}) supports UTF-8, ASCII and Latin-1 strings, not {TypeExpressions.EncodingName(encoding)}", source, path);
+        else if (str.Padding == StringPadding.Padded && str.Pad > (encoding == StringEncoding.Latin1 ? 0xFF : 0x7F))
+            _diagnostics.Warning($"Code generation ({string.Join(", ", targets)}) only supports pad characters of one byte", source, path);
     }
 
     private void CheckLength(LengthSpec length, SourceLocation? source, string path, IReadOnlySet<string>? earlier, bool allowZero)

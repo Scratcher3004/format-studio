@@ -93,6 +93,17 @@
                 </MudSelect>
                 @InheritBox("string")
             </MudItem>
+            <MudItem xs="12" md="4">
+                <MudSelect T="PaddingCheck" Value="@draft.Defaults.Check" ValueChanged="@(v => Change(() => draft.Defaults.Check = v))" Label="@("Padding check")"
+                           Variant="@Variant.Outlined" Margin="@Margin.Dense" Disabled="@Inherited("check")"
+                           HelperText="@Help("check", "Of padded strings that don't name one: padding that wouldn't re-encode the same is ignored, a warning or an error")">
+                    @foreach (var check in Enum.GetValues<PaddingCheck>())
+                    {
+                        <MudSelectItem Value="@check">@TypeExpressions.CheckName(check)</MudSelectItem>
+                    }
+                </MudSelect>
+                @InheritBox("check")
+            </MudItem>
         </MudGrid>
 
         @{ var natives = project.Natives.All.Where(n => n.Parameters.Any(p => p.Kind != FormatStudio.Natives.NativeParameterKind.Type)).OrderBy(n => n.Name, StringComparer.Ordinal).ToList(); }

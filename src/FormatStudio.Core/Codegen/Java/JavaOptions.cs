@@ -34,6 +34,8 @@ public sealed class JavaOptions
     public IReadOnlySet<string> Exclude { get; set; } = new HashSet<string>(StringComparer.Ordinal);
     /// <summary>Check min/max of numeric fields when reading.</summary>
     public bool ValidateRanges { get; set; }
+    /// <summary>Reject invalid UTF-8 and, where <c>check</c> is strict, padding or fill that wouldn't re-encode the same.</summary>
+    public bool ValidateStrings { get; set; } = true;
     public JavaUnsigned Unsigned { get; set; } = JavaUnsigned.Widen;
     public JavaCollections Collections { get; set; } = JavaCollections.List;
 
@@ -45,6 +47,7 @@ public sealed class JavaOptions
             "widen: the next larger type (u8/u16 → int, u32 → long; u64 keeps its bits in a long, with a warning). signed: the signed type of the same size, keeping the bits. checked: like signed, but values that don't fit are rejected."),
         CodegenOption.Choice("collections", "Arrays as", ["list", "array"], "java.util.List or Java arrays (T[]). Maps are always lists of entries."),
         CodegenOption.Bool("validateRanges", "Validate ranges", false, "Check min/max of numeric fields when reading."),
+        CodegenOption.Bool("validateStrings", "Validate strings", true, "Reject invalid UTF-8, and padding or fill that wouldn't re-encode the same where check is strict."),
         CodegenOption.Bool("includeRuntime", "Include runtime", true,
             "Write the runtime sources (FormatReader, FormatWriter, interfaces) into the output. Turn off when the runtime is a dependency."),
         CodegenOption.Text("runtimePackage", "Runtime package", "formatstudio.runtime", "The package of the runtime the generated code calls.", true),
@@ -58,6 +61,7 @@ public sealed class JavaOptions
             Package = read.Text("package"),
             Registry = read.Text("registry"),
             ValidateRanges = read.Bool("validateRanges"),
+            ValidateStrings = read.Bool("validateStrings"),
             Unsigned = Enum.Parse<JavaUnsigned>(read.Choice("unsigned"), true),
             Collections = Enum.Parse<JavaCollections>(read.Choice("collections"), true),
             IncludeRuntime = read.Bool("includeRuntime"),
