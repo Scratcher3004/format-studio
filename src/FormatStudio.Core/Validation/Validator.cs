@@ -282,6 +282,8 @@ public sealed class Validator
                 break;
             case StringRef str:
                 CheckLength(str.Length, source, path, earlier, allowZero: true);
+                if (str.Padding != StringPadding.None && str.Length.Kind is not (LengthKind.Fixed or LengthKind.Expression))
+                    _diagnostics.Error("A padded string needs a fixed length or a length expression", source, path);
                 break;
             case BytesRef bytes:
                 CheckLength(bytes.Length, source, path, earlier, allowZero: false);

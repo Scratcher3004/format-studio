@@ -94,6 +94,8 @@ public sealed class WireReader(byte[] data)
 
     public double ReadFloat(PrimitiveKind kind, Endian endian) => (kind, endian) switch
     {
+        (PrimitiveKind.F16, Endian.Big) => (double)BinaryPrimitives.ReadHalfBigEndian(Take(2)),
+        (PrimitiveKind.F16, _) => (double)BinaryPrimitives.ReadHalfLittleEndian(Take(2)),
         (PrimitiveKind.F32, Endian.Big) => BinaryPrimitives.ReadSingleBigEndian(Take(4)),
         (PrimitiveKind.F32, _) => BinaryPrimitives.ReadSingleLittleEndian(Take(4)),
         (PrimitiveKind.F64, Endian.Big) => BinaryPrimitives.ReadDoubleBigEndian(Take(8)),
@@ -110,7 +112,9 @@ public sealed class WireReader(byte[] data)
         return $"{hex[..8]}-{hex[8..12]}-{hex[12..16]}-{hex[16..20]}-{hex[20..]}";
     }
 
-    public string ReadString(int byteCount, StringEncoding encoding) => Strings.Decode(Take(byteCount), encoding);
+    /// <summary>A string of <paramref name="byteCount"/> bytes, without its padding (see <see cref="Strings.Unpad"/>).</summary>
+    public string ReadString(int byteCount, StringEncoding encoding, StringPadding padding = StringPadding.None, char pad = '\0') =>
+        Strings.Decode(Strings.Unpad(Take(byteCount), padding, pad, encoding), encoding);
 }
 
 /// <summary>Writes primitives to a growable buffer.</summary>
@@ -201,6 +205,8 @@ public sealed class WireWriter
     {
         switch (kind, endian)
         {
+            case (PrimitiveKind.F16, Endian.Big): BinaryPrimitives.WriteHalfBigEndian(Grow(2), (Half)value); break;
+            case (PrimitiveKind.F16, _): BinaryPrimitives.WriteHalfLittleEndian(Grow(2), (Half)value); break;
             case (PrimitiveKind.F32, Endian.Big): BinaryPrimitives.WriteSingleBigEndian(Grow(4), (float)value); break;
             case (PrimitiveKind.F32, _): BinaryPrimitives.WriteSingleLittleEndian(Grow(4), (float)value); break;
             case (PrimitiveKind.F64, Endian.Big): BinaryPrimitives.WriteDoubleBigEndian(Grow(8), value); break;
@@ -250,6 +256,32 @@ public static class Strings
         {
             throw new DecodeException($"Invalid {encoding}: {e.Message}", 0);
         }
+    }
+
+    /// <summary>The bytes of one code unit: 2 for UTF-16, else 1.</summary>
+    public static int UnitSize(StringEncoding encoding) => encoding is StringEncoding.Utf16Le or StringEncoding.Utf16Be ? 2 : 1;
+
+    /// <summary>A pad character as bytes; NUL is a zero code unit, also in modified UTF-8.</summary>
+    public static byte[] PadUnit(char pad, StringEncoding encoding) => pad == '\0' ? new byte[UnitSize(encoding)] : Encode(pad.ToString(), encoding);
+
+    /// <summary>
+    /// The string in a padded field: up to the first NUL for <see cref="StringPadding.Terminated"/>, without the trailing
+    /// pad characters for <see cref="StringPadding.Padded"/>. Pad characters are looked for at whole code units.
+    /// </summary>
+    public static ReadOnlySpan<byte> Unpad(ReadOnlySpan<byte> field, StringPadding padding, char pad, StringEncoding encoding)
+    {
+        if (padding == StringPadding.None) return field;
+        var unit = PadUnit(pad, encoding);
+        if (padding == StringPadding.Terminated)
+        {
+            for (var i = 0; i + unit.Length <= field.Length; i += unit.Length)
+                if (field.Slice(i, unit.Length).SequenceEqual(unit)) return field[..i];
+            return field;
+        }
+
+        var end = field.Length;
+        while (end >= unit.Length && end % unit.Length == 0 && field[(end - unit.Length)..end].SequenceEqual(unit)) end -= unit.Length;
+        return field[..end];
     }
 
     public static byte[] Encode(string text, StringEncoding encoding) => encoding switch

@@ -35,7 +35,7 @@ handshake.write(new FormatWriter(buffer));
 - Structs and packets become `final class`es with public fields, `static read(FormatReader)` and
   `write(FormatWriter)`. Packets implement `FormatPacket` (`ID`, `packetId()`).
 - Signed integers use the Java type of their size (`i8` → `byte`, `i16` → `short`, `i32`/`varint32`/`zigzag32` →
-  `int`, 64-bit → `long`). `f32`/`f64` are `float`/`double`, `uuid` is `java.util.UUID`, strings are `String`, bytes
+  `int`, 64-bit → `long`). `f16`/`f32` are `float`, `f64` is `double`, `uuid` is `java.util.UUID`, strings are `String`, bytes
   and NBT are `byte[]`.
 - Arrays are `java.util.List`s or, with `collections: array`, Java arrays. Maps are always lists of `Map.Entry`
   (keeping order and duplicates). Optional and conditional values use the boxed types (`Integer`, ...) and `null`

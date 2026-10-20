@@ -34,7 +34,7 @@ public sealed class DefaultValues
                 return Primitive(primitive.Kind, field);
             case StringRef str:
             {
-                var count = str.Length.Kind == LengthKind.Fixed ? str.Length.Fixed : field?.MinLength ?? 0;
+                var count = str.Length.Kind == LengthKind.Fixed && str.Padding == StringPadding.None ? str.Length.Fixed : field?.MinLength ?? 0;
                 return JsonValue.Create(new string(' ', count));
             }
             case BytesRef bytes:
@@ -75,7 +75,7 @@ public sealed class DefaultValues
         {
             case PrimitiveKind.Bool:
                 return JsonValue.Create(false);
-            case PrimitiveKind.F32 or PrimitiveKind.F64:
+            case PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64:
                 return Float();
             case PrimitiveKind.Uuid:
                 return JsonValue.Create(Guid.Empty.ToString());

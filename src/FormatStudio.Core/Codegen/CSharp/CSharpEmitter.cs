@@ -100,6 +100,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         PrimitiveKind.I32 or PrimitiveKind.VarInt32 or PrimitiveKind.ZigZag32 => "int",
         PrimitiveKind.U64 or PrimitiveKind.VarUInt64 => "ulong",
         PrimitiveKind.I64 or PrimitiveKind.VarInt64 or PrimitiveKind.ZigZag64 => "long",
+        PrimitiveKind.F16 => "global::System.Half",
         PrimitiveKind.F32 => "float",
         PrimitiveKind.F64 => "double",
         _ => "global::System.Guid",
@@ -363,7 +364,9 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override void CheckRange(StructDef structDef, FieldDef field, string value, CodeWriter w)
     {
-        if (!options.ValidateRanges || Project.Unalias(field.Type) is not PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool }) return;
+        if (!options.ValidateRanges || Project.Unalias(field.Type) is not PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool } primitive) return;
+        // Half only compares with Half.
+        if (primitive.Kind == PrimitiveKind.F16) value = $"(double){value}";
         var checks = new List<string>();
         if (field.Min is { } min) checks.Add($"{value} < {min.ToString(CultureInfo.InvariantCulture)}");
         if (field.Max is { } max) checks.Add($"{value} > {max.ToString(CultureInfo.InvariantCulture)}");
@@ -382,7 +385,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
                 return $"({Global(enumDef)}){Simulation.JsonValues.Number(constant)}";
             case PrimitiveRef { Kind: PrimitiveKind.Bool }:
                 return constant.GetValueKind() == JsonValueKind.True ? "true" : "false";
-            case PrimitiveRef { Kind: PrimitiveKind.F32 or PrimitiveKind.F64 } primitive:
+            case PrimitiveRef { Kind: PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64 } primitive:
                 return $"({PrimitiveType(primitive.Kind)}){Simulation.JsonValues.Double(constant)?.ToString("R", CultureInfo.InvariantCulture)}";
             case PrimitiveRef { Kind: not PrimitiveKind.Uuid } primitive:
                 return $"({PrimitiveType(primitive.Kind)}){Simulation.JsonValues.Number(constant)?.ToString(CultureInfo.InvariantCulture)}";
@@ -462,6 +465,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     {
         var reader = context.Reader;
         CheckEncoding(str);
+        if (str.Padding == StringPadding.Terminated) return $"{reader}.ReadUtf8Terminated({ReadCount(str.Length, w, context, 1, null)})";
+        if (str.Padding == StringPadding.Padded) return $"{reader}.ReadUtf8Padded({ReadCount(str.Length, w, context, 1, null)}, {PadByte(str)})";
         return str.Length.Kind switch
         {
             LengthKind.Zero => $"{reader}.ReadUtf8Zero()",
@@ -605,6 +610,12 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     protected override void WriteString(StringRef str, string value, CodeWriter w, Context context)
     {
         CheckEncoding(str);
+        if (str.Padding != StringPadding.None)
+        {
+            WritePadded(str, value, w, context);
+            return;
+        }
+
         if (str.Length.Kind == LengthKind.Zero)
         {
             w.Line($"{context.Writer}.WriteUtf8Zero({value});");
@@ -614,6 +625,18 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         if (str.Length.Kind is LengthKind.Default or LengthKind.Prefix or LengthKind.Fixed)
             WriteCount(str.Length, $"{options.WriterType}.Utf8Length({value})", w, context, What(context));
         w.Line($"{context.Writer}.WriteUtf8({value});");
+    }
+
+    private void WritePadded(StringRef str, string value, CodeWriter w, Context context)
+    {
+        var text = Temp("text");
+        var size = Temp("size");
+        w.Line($"var {text} = {value};");
+        w.Line($"var {size} = (int)({PaddedSize(str, context)});");
+        w.Line($"if ({options.WriterType}.Utf8Length({text}) > {size}) throw new {options.ExceptionType}($\"{What(context)} must take at most {{{size}}} bytes\");");
+        if (str.Padding == StringPadding.Terminated)
+            w.Line($"if ({text}.Contains('\\0')) throw new {options.ExceptionType}(\"{What(context)} must not contain NUL\");");
+        w.Line($"{context.Writer}.WriteUtf8Padded({text}, {size}, {PadByte(str)});");
     }
 
     private static string What(Context context) => context.Field?.Name ?? "value";

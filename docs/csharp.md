@@ -54,8 +54,9 @@ files):
 
 To use your own runtime, set these options to its type names. It needs the same methods as the default reader and
 writer: `Read<Kind>()` / `Write<Kind>(value)` for every primitive (`U8`, `I16LE`, `U32BE`, `VarUInt32`, `ZigZag64`,
-`UuidLE`, `F64BE`, ...), `ReadUtf8(count)`, `ReadUtf8Zero()`, `ReadBytes(count)`, `Slice(length)`,
-`CheckCount(count, minElementSize, max)`, `Utf8Length(text)`, and `ReadNbt<Flavor>()` / `WriteNbt<Flavor>(raw)` for
+`UuidLE`, `F16LE` (as `System.Half`), `F64BE`, ...), `ReadUtf8(count)`, `ReadUtf8Zero()`, `ReadBytes(count)`, `Slice(length)`,
+`CheckCount(count, minElementSize, max)`, `Utf8Length(text)`, for padded strings `ReadUtf8Padded(count, pad)`,
+`ReadUtf8Terminated(count)` and `WriteUtf8Padded(text, count, pad)`, and `ReadNbt<Flavor>()` / `WriteNbt<Flavor>(raw)` for
 the NBT flavors the project uses (`Java`, `JavaNetwork`, `Bedrock`, `BedrockNetwork`). For `eof` lengths, span readers
 need `Remaining`; stream readers need `AtEnd`, `ReadToEnd()` and `ReadUtf8ToEnd()`.
 

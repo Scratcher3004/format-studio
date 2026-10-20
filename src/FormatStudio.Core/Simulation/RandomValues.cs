@@ -91,16 +91,27 @@ public sealed class RandomValues
         }
     }
 
+    /// <summary>A number in the field's min/max, else between -1000 and 1000.</summary>
+    private double RandomFloat(FieldDef? field)
+    {
+        var min = field?.Min is { } fieldMin ? (double)fieldMin : -1000;
+        var max = field?.Max is { } fieldMax ? (double)fieldMax : Math.Max(min, 0) + 1000;
+        if (field?.Min == null && max < min) min = max - 1000;
+        return min + _random.NextDouble() * (max - min);
+    }
+
     private JsonNode? Primitive(PrimitiveKind kind, FieldDef? field)
     {
         switch (kind)
         {
             case PrimitiveKind.Bool:
                 return JsonValue.Create(_random.Next(2) == 1);
+            case PrimitiveKind.F16:
+                return JsonValue.Create((double)(Half)RandomFloat(field));
             case PrimitiveKind.F32:
-                return JsonValue.Create((double)(float)((_random.NextDouble() - 0.5) * 2000));
+                return JsonValue.Create((double)(float)RandomFloat(field));
             case PrimitiveKind.F64:
-                return JsonValue.Create((_random.NextDouble() - 0.5) * 2000);
+                return JsonValue.Create(RandomFloat(field));
             case PrimitiveKind.Uuid:
                 return JsonValue.Create(RandomUuid());
         }
@@ -165,8 +176,16 @@ public sealed class RandomValues
             ? Count(str.Length, scope, deep, null)
             : _random.Next(field?.MinLength ?? 0, Math.Min(field?.MaxLength ?? 12, 12) + 1);
         if (str.Length.Kind == LengthKind.Fixed) count = str.Length.Fixed;
+        var letters = alphabet;
+        if (str.Padding != StringPadding.None)
+        {
+            // Any length that fits the field, without the pad character (which would be dropped when read).
+            count = _random.Next(count / Strings.UnitSize(str.Encoding ?? _project.Defaults.String) + 1);
+            letters = alphabet.Replace(str.Pad.ToString(), "");
+        }
+
         var builder = new StringBuilder(count);
-        for (var i = 0; i < count; i++) builder.Append(alphabet[_random.Next(alphabet.Length)]);
+        for (var i = 0; i < count; i++) builder.Append(letters[_random.Next(letters.Length)]);
         return builder.ToString();
     }
 

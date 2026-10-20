@@ -209,7 +209,7 @@ public sealed class Codec(FormatProject project)
                     }
                     else
                     {
-                        text = ReadString(ReadCount(str.Length, scope, node, path, 1) ?? reader.Remaining, encoding);
+                        text = ReadString(ReadCount(str.Length, scope, node, path, 1) ?? reader.Remaining, encoding, str.Padding, str.Pad);
                     }
 
                     node.Display = JsonSerializer.Serialize(text);
@@ -307,12 +307,12 @@ public sealed class Codec(FormatProject project)
             }
         }
 
-        private string ReadString(int count, StringEncoding encoding)
+        private string ReadString(int count, StringEncoding encoding, StringPadding padding = StringPadding.None, char pad = '\0')
         {
             var start = reader.Position;
             try
             {
-                return reader.ReadString(count, encoding);
+                return reader.ReadString(count, encoding, padding, pad);
             }
             catch (DecodeException e)
             {
@@ -338,7 +338,7 @@ public sealed class Codec(FormatProject project)
                     var b = reader.ReadByte();
                     if (b > 1) diagnostics.Warning($"Boolean byte 0x{b:x2} at offset {reader.Position - 1}");
                     return JsonValue.Create(b != 0);
-                case PrimitiveKind.F32 or PrimitiveKind.F64:
+                case PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64:
                     return JsonValues.FromDouble(reader.ReadFloat(primitive.Kind, endian));
                 case PrimitiveKind.Uuid:
                     return JsonValue.Create(reader.ReadUuid(endian));
@@ -582,8 +582,11 @@ public sealed class Codec(FormatProject project)
                 case StringRef str:
                 {
                     var text = JsonValues.String(value) ?? throw Error($"Expected a string, got {Show(value)}");
-                    var bytes = Strings.Encode(text, str.Encoding ?? Project.Defaults.String);
-                    if (str.Length.Kind == LengthKind.Zero)
+                    var encoding = str.Encoding ?? Project.Defaults.String;
+                    var bytes = Strings.Encode(text, encoding);
+                    if (str.Padding != StringPadding.None)
+                        WritePadded(str, text, bytes, encoding, scope, path);
+                    else if (str.Length.Kind == LengthKind.Zero)
                     {
                         if (bytes.Contains((byte)0)) throw Error("A zero-terminated string can't contain NUL");
                         writer.WriteBytes(bytes);
@@ -713,7 +716,7 @@ public sealed class Codec(FormatProject project)
                         _ => JsonValues.Number(value) is { } n and (0 or 1) ? (byte)n : throw Error($"Expected a boolean, got {Show(value)}"),
                     });
                     break;
-                case PrimitiveKind.F32 or PrimitiveKind.F64:
+                case PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64:
                     writer.WriteFloat(primitive.Kind, endian, JsonValues.Double(value) ?? throw Error($"Expected a number, got {Show(value)}"));
                     break;
                 case PrimitiveKind.Uuid:
@@ -723,6 +726,34 @@ public sealed class Codec(FormatProject project)
                     writer.WriteInteger(primitive.Kind, endian, JsonValues.Number(value) ?? throw Error($"Expected an integer, got {Show(value)}"));
                     break;
             }
+        }
+
+        /// <summary>A string in a field of a fixed or computed number of bytes, followed by its padding.</summary>
+        private void WritePadded(StringRef str, string text, byte[] bytes, StringEncoding encoding, StructScope? scope, string path)
+        {
+            long size;
+            switch (str.Length.Kind)
+            {
+                case LengthKind.Fixed:
+                    size = str.Length.Fixed;
+                    break;
+                case LengthKind.Expression:
+                    if (scope == null) throw Error($"Length expression '{str.Length.Expression}' outside a struct");
+                    size = context.Evaluator.EvaluateLong(Expr.Parse(str.Length.Expression!), scope);
+                    break;
+                default:
+                    throw Error($"A padded string needs a fixed length or a length expression, not {str.Length}");
+            }
+
+            if (bytes.Length > size) throw Error($"The string takes {bytes.Length} bytes, more than the {size} of its field");
+            if (str.Padding == StringPadding.Terminated && text.Contains('\0')) throw Error("A NUL-terminated string can't contain NUL");
+            if (str.Padding == StringPadding.Padded && text.EndsWith(str.Pad))
+                diagnostics.Warning($"The string ends with its pad character {JsonSerializer.Serialize(str.Pad.ToString())}, which is dropped when read", path: path);
+            writer.WriteBytes(bytes);
+            var unit = Strings.PadUnit(str.Pad, encoding);
+            var rest = size - bytes.Length;
+            for (; rest >= unit.Length; rest -= unit.Length) writer.WriteBytes(unit);
+            for (; rest > 0; rest--) writer.WriteByte(0);
         }
 
         private void WriteCount(LengthSpec length, int count, StructScope? scope)

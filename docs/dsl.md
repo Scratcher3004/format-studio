@@ -137,7 +137,7 @@ fields:
 
 | Short form | Meaning |
 |---|---|
-| `bool`, `u8`, `i8`, `u16`…`i64`, `f32`, `f64` | Fixed width; add `le`/`be` to override the project byte order (`u16be`) |
+| `bool`, `u8`, `i8`, `u16`…`i64`, `f16`, `f32`, `f64` | Fixed width; add `le`/`be` to override the project byte order (`u16be`); `f16` is IEEE half precision |
 | `varuint32`, `varuint64` | Unsigned LEB128 |
 | `varint32`, `varint64` | Two's complement LEB128 (Java VarInt/VarLong) |
 | `zigzag32`, `zigzag64` | Zigzag LEB128 (Bedrock "varint") |
@@ -155,6 +155,22 @@ Mapping forms: `{array: T, length: L}`, `{string: mutf8, length: L}` (`length: z
 length-delimited section), `{fixed: i32, fraction: 5}` (fixed point), `{nbt: java-network}`,
 `{native: name, args: [a, b]}`, `{type: Enum, as: zigzag32}`, `{type: Variant, tag: "expression"}`. A length `L` is a number, a primitive (prefix),
 `eof`, `zero`, `default` or an expression.
+
+A string with a fixed length or a length expression can be shorter than its field with `pad`:
+
+| `pad` | Written | Read |
+|---|---|---|
+| `none` (default) | The string must take exactly the length | All bytes |
+| `zero`, or one character such as `" "` | The string, then the pad character up to the length | Without the trailing pad characters |
+| `terminated` | The string, then NULs up to the length (none when it fills the field); it can't contain NUL | Up to the first NUL, or the whole field; the rest is skipped |
+
+```yaml
+- {name: name, type: {string: ascii, length: 16, pad: terminated}}   # C char[16]
+- {name: code, type: string, length: 8, pad: " "}                    # also as a field shortcut
+```
+
+A string that ends with its pad character loses it when read back (the simulator warns when encoding it). Generated code supports `pad`
+for UTF-8 with an ASCII pad character.
 
 `{array: Item, until: "index == 255"}` is a list without a count that ends with the first element for which the
 condition is true; that element is part of the list (a sentinel such as Java's entity data terminator, or a

@@ -57,6 +57,8 @@ public sealed class FormatStreamWriter(Stream stream)
     public void WriteU64BE(ulong value) { BinaryPrimitives.WriteUInt64BigEndian(Get(8), value); Put(8); }
     public void WriteI64LE(long value) { BinaryPrimitives.WriteInt64LittleEndian(Get(8), value); Put(8); }
     public void WriteI64BE(long value) { BinaryPrimitives.WriteInt64BigEndian(Get(8), value); Put(8); }
+    public void WriteF16LE(Half value) { BinaryPrimitives.WriteHalfLittleEndian(Get(2), value); Put(2); }
+    public void WriteF16BE(Half value) { BinaryPrimitives.WriteHalfBigEndian(Get(2), value); Put(2); }
     public void WriteF32LE(float value) { BinaryPrimitives.WriteSingleLittleEndian(Get(4), value); Put(4); }
     public void WriteF32BE(float value) { BinaryPrimitives.WriteSingleBigEndian(Get(4), value); Put(4); }
     public void WriteF64LE(double value) { BinaryPrimitives.WriteDoubleLittleEndian(Get(8), value); Put(8); }
@@ -100,6 +102,16 @@ public sealed class FormatStreamWriter(Stream stream)
 
     /// <summary>Writes the UTF-8 bytes only; the caller writes the length.</summary>
     public void WriteUtf8(string value) => WriteBytes(Encoding.UTF8.GetBytes(value));
+
+    /// <summary>
+    /// Writes the UTF-8 bytes, then <paramref name="pad"/> bytes up to <paramref name="byteCount"/>; the caller checks that
+    /// the string fits.
+    /// </summary>
+    public void WriteUtf8Padded(string value, int byteCount, byte pad)
+    {
+        WriteUtf8(value);
+        for (var i = Utf8Length(value); i < byteCount; i++) WriteU8(pad);
+    }
 
     public void WriteUtf8Zero(string value)
     {

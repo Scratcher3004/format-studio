@@ -17,6 +17,8 @@ public enum PrimitiveKind
     I32,
     U64,
     I64,
+    /// <summary>IEEE 754 half precision.</summary>
+    F16,
     F32,
     F64,
     /// <summary>Unsigned LEB128, at most 5 bytes.</summary>
@@ -48,6 +50,7 @@ public static class Primitives
         ["i32"] = PrimitiveKind.I32,
         ["u64"] = PrimitiveKind.U64,
         ["i64"] = PrimitiveKind.I64,
+        ["f16"] = PrimitiveKind.F16,
         ["f32"] = PrimitiveKind.F32,
         ["f64"] = PrimitiveKind.F64,
         ["varuint32"] = PrimitiveKind.VarUInt32,
@@ -85,13 +88,13 @@ public static class Primitives
     public static string Name(PrimitiveKind kind) => Names.First(pair => pair.Value == kind).Key;
 
     public static bool HasEndian(PrimitiveKind kind) => kind is PrimitiveKind.U16 or PrimitiveKind.I16 or PrimitiveKind.U32
-        or PrimitiveKind.I32 or PrimitiveKind.U64 or PrimitiveKind.I64 or PrimitiveKind.F32 or PrimitiveKind.F64
-        or PrimitiveKind.Uuid;
+        or PrimitiveKind.I32 or PrimitiveKind.U64 or PrimitiveKind.I64 or PrimitiveKind.F16 or PrimitiveKind.F32
+        or PrimitiveKind.F64 or PrimitiveKind.Uuid;
 
-    public static bool IsInteger(PrimitiveKind kind) => kind is not (PrimitiveKind.Bool or PrimitiveKind.F32
-        or PrimitiveKind.F64 or PrimitiveKind.Uuid);
+    public static bool IsInteger(PrimitiveKind kind) => kind is not (PrimitiveKind.Bool or PrimitiveKind.F16
+        or PrimitiveKind.F32 or PrimitiveKind.F64 or PrimitiveKind.Uuid);
 
-    public static bool IsFloat(PrimitiveKind kind) => kind is PrimitiveKind.F32 or PrimitiveKind.F64;
+    public static bool IsFloat(PrimitiveKind kind) => kind is PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64;
 
     public static bool IsSigned(PrimitiveKind kind) => kind is PrimitiveKind.I8 or PrimitiveKind.I16 or PrimitiveKind.I32
         or PrimitiveKind.I64 or PrimitiveKind.VarInt32 or PrimitiveKind.VarInt64 or PrimitiveKind.ZigZag32
@@ -105,7 +108,7 @@ public static class Primitives
     {
         PrimitiveKind.Bool => 1,
         PrimitiveKind.U8 or PrimitiveKind.I8 => 8,
-        PrimitiveKind.U16 or PrimitiveKind.I16 => 16,
+        PrimitiveKind.U16 or PrimitiveKind.I16 or PrimitiveKind.F16 => 16,
         PrimitiveKind.U32 or PrimitiveKind.I32 or PrimitiveKind.F32 or PrimitiveKind.VarUInt32
             or PrimitiveKind.VarInt32 or PrimitiveKind.ZigZag32 => 32,
         PrimitiveKind.Uuid => 128,
@@ -116,7 +119,7 @@ public static class Primitives
     public static int MinWireSize(PrimitiveKind kind) => kind switch
     {
         PrimitiveKind.Bool or PrimitiveKind.U8 or PrimitiveKind.I8 => 1,
-        PrimitiveKind.U16 or PrimitiveKind.I16 => 2,
+        PrimitiveKind.U16 or PrimitiveKind.I16 or PrimitiveKind.F16 => 2,
         PrimitiveKind.U32 or PrimitiveKind.I32 or PrimitiveKind.F32 => 4,
         PrimitiveKind.U64 or PrimitiveKind.I64 or PrimitiveKind.F64 => 8,
         PrimitiveKind.Uuid => 16,
@@ -214,10 +217,29 @@ public enum StringEncoding
     Utf16Be,
 }
 
-/// <summary>A string whose length is counted in bytes.</summary>
-public sealed record StringRef(StringEncoding? Encoding, LengthSpec Length) : TypeRef
+/// <summary>How a string fills a field of a fixed number of bytes (a fixed or expression length).</summary>
+public enum StringPadding
 {
-    public override string ToString() => $"string({Encoding?.ToString() ?? "default"}, {Length})";
+    /// <summary>The string takes exactly the length.</summary>
+    None,
+    /// <summary>The string is followed by pad characters up to the length; trailing pad characters are dropped when read.</summary>
+    Padded,
+    /// <summary>
+    /// The string ends at the first NUL, or at the length when there is none; the rest of the field is skipped when read
+    /// and written as NULs.
+    /// </summary>
+    Terminated,
+}
+
+/// <summary>
+/// A string whose length is counted in bytes. <see cref="Pad"/> is the pad character of <see cref="StringPadding.Padded"/>
+/// strings (NUL for <see cref="StringPadding.Terminated"/>).
+/// </summary>
+public sealed record StringRef(StringEncoding? Encoding, LengthSpec Length, StringPadding Padding = StringPadding.None, char Pad = '\0')
+    : TypeRef
+{
+    public override string ToString() => $"string({Encoding?.ToString() ?? "default"}, {Length}" +
+                                         (Padding == StringPadding.None ? ")" : $", pad {Dsl.TypeExpressions.FormatPad(Padding, Pad)})");
 }
 
 public sealed record BytesRef(LengthSpec Length) : TypeRef

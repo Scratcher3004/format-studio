@@ -55,6 +55,21 @@
                     }
                 </MudSelect>
                 <LengthEditor Value="str.Length" ValueChanged="l => Changed(str with { Length = l })" AllowZero="true" />
+                @if (str.Length.Kind is LengthKind.Fixed or LengthKind.Expression || str.Padding != StringPadding.None)
+                {
+                    <MudSelect T="StringPadding" Value="@str.Padding" ValueChanged="@(p => Changed(str with { Padding = p, Pad = '\0' }))" Label="@("Padding")"
+                               Variant="@Variant.Outlined" Margin="@Margin.Dense" Dense="@true" Style="@("min-width: 140px; max-width: 160px")">
+                        <MudSelectItem T="StringPadding" Value="@StringPadding.None">Exact length</MudSelectItem>
+                        <MudSelectItem T="StringPadding" Value="@StringPadding.Padded">Padded</MudSelectItem>
+                        <MudSelectItem T="StringPadding" Value="@StringPadding.Terminated">NUL-terminated</MudSelectItem>
+                    </MudSelect>
+                }
+                @if (str.Padding == StringPadding.Padded)
+                {
+                    <MudTextField T="string" Value="@(str.Pad == '\0' ? "zero" : str.Pad.ToString())" ValueChanged="@(p => SetPad(str, p))"
+                                  Label="@("Pad character")" HelperText="@("One character, or zero for NUL")" Variant="@Variant.Outlined"
+                                  Margin="@Margin.Dense" Class="@("mono")" Style="@("max-width: 140px")" />
+                }
                 break;
             case BytesRef bytes:
                 <LengthEditor Value="bytes.Length" ValueChanged="l => Changed(new BytesRef(l))" AllowZero="true" />
@@ -288,6 +303,13 @@
     private static PrimitiveRef? ParsePrimitive(string? text) => Primitives.TryParse(text ?? "", out var primitive) ? primitive : null;
 
     private static string? Blank(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+
+    /// <summary>One pad character; empty or "zero" is NUL, longer text is ignored.</summary>
+    private Task SetPad(StringRef str, string? text)
+    {
+        if (string.IsNullOrEmpty(text) || text == "zero") return Changed(str with { Pad = '\0' });
+        return text.Length == 1 ? Changed(str with { Pad = text[0] }) : Task.CompletedTask;
+    }
 
     private Task Changed(TypeRef type)
     {

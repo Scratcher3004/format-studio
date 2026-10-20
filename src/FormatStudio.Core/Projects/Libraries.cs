@@ -417,7 +417,7 @@ public sealed class LibraryLoader
         {
             PrimitiveRef primitive => Primitive(primitive),
             NamedRef named => new NamedRef(Name(named.Name), named.As == null ? null : Primitive(named.As), Expression(named.Tag)),
-            StringRef str => new StringRef(str.Encoding ?? (Inherits("string") ? null : _defaults.String), Length(str.Length)),
+            StringRef str => str with { Encoding = str.Encoding ?? (Inherits("string") ? null : _defaults.String), Length = Length(str.Length) },
             BytesRef bytes => new BytesRef(Length(bytes.Length)),
             ArrayRef array => new ArrayRef(Type(array.Element), Length(array.Length)),
             MapRef map => new MapRef(Type(map.Key), Type(map.Value), Length(map.Length)),

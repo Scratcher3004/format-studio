@@ -187,7 +187,7 @@ internal sealed class ValueContext
         {
             case PrimitiveRef { Kind: PrimitiveKind.Bool }:
                 return node.GetValueKind() == JsonValueKind.True || JsonValues.Number(node) is { } n && n != 0;
-            case PrimitiveRef { Kind: PrimitiveKind.F32 or PrimitiveKind.F64 }:
+            case PrimitiveRef { Kind: PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64 }:
             case FixedPointRef:
                 return JsonValues.Double(node);
             case PrimitiveRef { Kind: PrimitiveKind.Uuid }:

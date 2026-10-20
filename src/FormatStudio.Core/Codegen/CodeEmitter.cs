@@ -553,6 +553,22 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
         return CheckCount(raw, minSize, max, w, context);
     }
 
+    /// <summary>
+    /// The byte size of a padded string's field (<see cref="StringPadding"/>): a literal for fixed lengths, else the
+    /// length expression (a number of the expression's type).
+    /// </summary>
+    protected string PaddedSize(StringRef str, Context context) => str.Length.Kind switch
+    {
+        LengthKind.Fixed => str.Length.Fixed.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        LengthKind.Expression => Expression(str.Length.Expression!, context, out _),
+        _ => throw new CodegenException($"A padded string needs a fixed length or a length expression, not {str.Length}"),
+    };
+
+    /// <summary>The pad byte of a padded string, for generators that write UTF-8: the pad character must be ASCII.</summary>
+    protected static int PadByte(StringRef str) => str.Pad <= 0x7F
+        ? str.Pad
+        : throw new CodegenException($"The pad character of {str} must be ASCII");
+
     /// <summary>An expression that reads a length prefix.</summary>
     protected abstract string ReadLengthPrefix(PrimitiveRef prefix, Context context);
 
@@ -857,7 +873,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
         var kind = resolved switch
         {
             PrimitiveRef { Kind: PrimitiveKind.Bool } => ValueKind.Bool,
-            PrimitiveRef { Kind: PrimitiveKind.F32 or PrimitiveKind.F64 } or FixedPointRef => ValueKind.Float,
+            PrimitiveRef { Kind: PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64 } or FixedPointRef => ValueKind.Float,
             PrimitiveRef { Kind: PrimitiveKind.Uuid } => ValueKind.Other,
             PrimitiveRef => ValueKind.Number,
             NamedRef named when Definition(named.Name) is EnumDef => ValueKind.Number,

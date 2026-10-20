@@ -98,6 +98,19 @@ public class CodegenTests
         AssertMatchesSimulator(project, generator, 40);
     }
 
+    [Theory]
+    [MemberData(nameof(Generators))]
+    public void HalfFloatsAndPaddedStringsMatchTheSimulator(string generator)
+    {
+        var project = Project("name: p\ndefaults:\n  endian: little\nsources: [types/*.yaml]\n",
+            ("A.yaml", "struct: A\nfields:\n  - small: f16\n  - smallBe: f16be\n  - spaced: {string: utf8, length: 6, pad: \" \"}\n" +
+                       "  - zeroed: {string: utf8, length: 3, pad: zero}\n  - name: cName\n    type: string\n    length: 8\n    pad: terminated\n" +
+                       "  - size: u8\n  - {name: sized, type: {string: utf8, length: \"size % 16\", pad: terminated}}\n  - after: u8\n" +
+                       "  - {name: version, type: f16, const: 1.5}\n  - {name: doubled, type: f16, computed: \"small * 2\"}\n" +
+                       "  - {name: limited, type: f16be, min: -10, max: 10}\n  - maybe: f16?\n  - {name: positive, type: u8, if: \"small > 0\"}\n"));
+        AssertMatchesSimulator(project, generator, 60);
+    }
+
     /// <summary>Most of the DSL in one project: every primitive, enums of all sorts, bit fields, variants, collections, expressions.</summary>
     private static FormatProject KitchenSink() => Project("name: p\ndefaults:\n  endian: little\n  length: varuint32\nsources: [types/*.yaml]\n",
         ("Color.yaml", "enum: Color\ntype: u8\nvalues:\n  red: 0\n  green: 1\n  value: 2\n"),

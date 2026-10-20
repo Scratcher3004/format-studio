@@ -127,6 +127,40 @@ public final class FormatWriter {
         writeI64BE(value);
     }
 
+    public void writeF16LE(float value) throws IOException {
+        writeU16LE(floatToHalf(value));
+    }
+
+    public void writeF16BE(float value) throws IOException {
+        writeU16BE(floatToHalf(value));
+    }
+
+    /** IEEE 754 half precision bits of a value, rounded to nearest even. */
+    static int floatToHalf(float value) {
+        int bits = Float.floatToRawIntBits(value);
+        int sign = (bits >>> 16) & 0x8000;
+        int exponent = (bits >>> 23) & 0xFF;
+        int mantissa = bits & 0x7FFFFF;
+        if (exponent == 0xFF) return sign | 0x7C00 | (mantissa != 0 ? 0x200 | mantissa >>> 13 : 0);
+        int halfExponent = exponent - 112;
+        if (halfExponent >= 0x1F) return sign | 0x7C00;
+        int shift = 13;
+        if (halfExponent <= 0) {
+            // Subnormal: the implicit bit becomes part of the mantissa.
+            if (halfExponent < -10) return sign;
+            mantissa |= 0x800000;
+            shift = 14 - halfExponent;
+            halfExponent = 0;
+        }
+
+        int half = halfExponent << 10 | mantissa >>> shift;
+        int rest = mantissa & ((1 << shift) - 1);
+        int halfway = 1 << (shift - 1);
+        // A carry out of the mantissa raises the exponent, up to infinity.
+        if (rest > halfway || rest == halfway && (half & 1) != 0) half++;
+        return sign | half;
+    }
+
     public void writeF32LE(float value) throws IOException {
         writeI32LE(Float.floatToRawIntBits(value));
     }
@@ -189,6 +223,13 @@ public final class FormatWriter {
     /** Writes the UTF-8 bytes only; the caller writes the length. */
     public void writeUtf8(String value) throws IOException {
         writeBytes(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Writes the UTF-8 bytes, then {@code pad} bytes up to {@code byteCount}; the caller checks that the string fits. */
+    public void writeUtf8Padded(String value, int byteCount, int pad) throws IOException {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        writeBytes(bytes);
+        for (int i = bytes.length; i < byteCount; i++) writeU8(pad);
     }
 
     public void writeUtf8Zero(String value) throws IOException {

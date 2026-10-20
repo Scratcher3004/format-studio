@@ -114,7 +114,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         PrimitiveKind.I32 or PrimitiveKind.VarInt32 or PrimitiveKind.ZigZag32 => "int",
         PrimitiveKind.U32 or PrimitiveKind.VarUInt32 => "long",
         PrimitiveKind.U64 or PrimitiveKind.VarUInt64 or PrimitiveKind.I64 or PrimitiveKind.VarInt64 or PrimitiveKind.ZigZag64 => "long",
-        PrimitiveKind.F32 => "float",
+        PrimitiveKind.F16 or PrimitiveKind.F32 => "float",
         PrimitiveKind.F64 => "double",
         _ => "java.util.UUID",
     };
@@ -559,7 +559,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         }
         else
         {
-            var number = kind is PrimitiveKind.F32 or PrimitiveKind.F64 ? value : AsLong(value, kind);
+            var number = kind is PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64 ? value : AsLong(value, kind);
             if (field.Min is { } min) checks.Add($"{number} < {min.ToString(CultureInfo.InvariantCulture)}");
             if (field.Max is { } max) checks.Add($"{number} > {max.ToString(CultureInfo.InvariantCulture)}");
         }
@@ -582,7 +582,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
                 return $"{TypeName(enumDef)}.{EnumMember(byValue.Name)}";
             case PrimitiveRef { Kind: PrimitiveKind.Bool }:
                 return constant.GetValueKind() == JsonValueKind.True ? "true" : "false";
-            case PrimitiveRef { Kind: PrimitiveKind.F32 or PrimitiveKind.F64 } primitive:
+            case PrimitiveRef { Kind: PrimitiveKind.F16 or PrimitiveKind.F32 or PrimitiveKind.F64 } primitive:
                 return $"({PrimitiveType(primitive.Kind)}) {Simulation.JsonValues.Double(constant)?.ToString("R", CultureInfo.InvariantCulture)}d";
             case PrimitiveRef { Kind: not PrimitiveKind.Uuid } primitive:
                 return $"({PrimitiveType(primitive.Kind)}) {LongLiteral(Simulation.JsonValues.Number(constant) ?? 0)}";
@@ -672,6 +672,8 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     {
         var reader = context.Reader;
         CheckEncoding(str);
+        if (str.Padding == StringPadding.Terminated) return $"{reader}.readUtf8Terminated({ReadCount(str.Length, w, context, 1, null)})";
+        if (str.Padding == StringPadding.Padded) return $"{reader}.readUtf8Padded({ReadCount(str.Length, w, context, 1, null)}, {PadByte(str)})";
         return str.Length.Kind switch
         {
             LengthKind.Zero => $"{reader}.readUtf8Zero()",
@@ -838,6 +840,18 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     protected override void CheckFixedCount(string count, int length, string what, CodeWriter w, Context context) =>
         w.Line($"if ({count} != {length}) {Throw(Literal($"{what} must have exactly {length} elements"))}");
 
+    private void WritePadded(StringRef str, string value, CodeWriter w, Context context)
+    {
+        var text = Temp("text");
+        var size = Temp("size");
+        w.Line($"String {text} = {value};");
+        w.Line($"int {size} = (int) ({PaddedSize(str, context)});");
+        w.Line($"if (FormatWriter.utf8Length({text}) > {size}) {Throw($"{Literal($"{What(context)} must take at most ")} + {size} + \" bytes\"")}");
+        if (str.Padding == StringPadding.Terminated)
+            w.Line($"if ({text}.indexOf('\\0') >= 0) {Throw(Literal($"{What(context)} must not contain NUL"))}");
+        w.Line($"{context.Writer}.writeUtf8Padded({text}, {size}, {PadByte(str)});");
+    }
+
     private static string What(Context context) => context.Field?.Name ?? "value";
 
     protected override void WritePrimitive(PrimitiveRef primitive, string value, CodeWriter w, Context context) =>
@@ -846,6 +860,12 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     protected override void WriteString(StringRef str, string value, CodeWriter w, Context context)
     {
         CheckEncoding(str);
+        if (str.Padding != StringPadding.None)
+        {
+            WritePadded(str, value, w, context);
+            return;
+        }
+
         if (str.Length.Kind == LengthKind.Zero)
         {
             w.Line($"{context.Writer}.writeUtf8Zero({value});");

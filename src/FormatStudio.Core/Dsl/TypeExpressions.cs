@@ -177,6 +177,23 @@ public static partial class TypeExpressions
         return open.Count == 0;
     }
 
+    /// <summary>The <c>pad</c> of a string type: <c>none</c>, <c>zero</c>, <c>terminated</c> or the pad character.</summary>
+    public static string FormatPad(StringPadding padding, char pad) => padding switch
+    {
+        StringPadding.None => "none",
+        StringPadding.Terminated => "terminated",
+        _ => pad == '\0' ? "zero" : pad.ToString(),
+    };
+
+    public static (StringPadding Padding, char Pad) ParsePad(string text) => text switch
+    {
+        "" or "none" => (StringPadding.None, '\0'),
+        "zero" => (StringPadding.Padded, '\0'),
+        "terminated" => (StringPadding.Terminated, '\0'),
+        { Length: 1 } => (StringPadding.Padded, text[0]),
+        _ => throw new System.FormatException($"Unknown pad '{text}' (none, zero, terminated or a single pad character)"),
+    };
+
     public static string EncodingName(StringEncoding encoding) => encoding switch
     {
         StringEncoding.Utf8 => "utf8",

@@ -138,6 +138,8 @@ public sealed class FormatStreamReader
     public ulong ReadU64BE() => BinaryPrimitives.ReadUInt64BigEndian(Fixed(8));
     public long ReadI64LE() => BinaryPrimitives.ReadInt64LittleEndian(Fixed(8));
     public long ReadI64BE() => BinaryPrimitives.ReadInt64BigEndian(Fixed(8));
+    public Half ReadF16LE() => BinaryPrimitives.ReadHalfLittleEndian(Fixed(2));
+    public Half ReadF16BE() => BinaryPrimitives.ReadHalfBigEndian(Fixed(2));
     public float ReadF32LE() => BinaryPrimitives.ReadSingleLittleEndian(Fixed(4));
     public float ReadF32BE() => BinaryPrimitives.ReadSingleBigEndian(Fixed(4));
     public double ReadF64LE() => BinaryPrimitives.ReadDoubleLittleEndian(Fixed(8));
@@ -209,6 +211,17 @@ public sealed class FormatStreamReader
     public Guid ReadUuidBE() => new(Fixed(16), bigEndian: true);
 
     public string ReadUtf8(int byteCount) => Encoding.UTF8.GetString(Take(byteCount));
+
+    /// <summary>A UTF-8 string in a field of <paramref name="byteCount"/> bytes, without the trailing <paramref name="pad"/> bytes.</summary>
+    public string ReadUtf8Padded(int byteCount, byte pad) => Encoding.UTF8.GetString(((ReadOnlySpan<byte>)Take(byteCount)).TrimEnd(pad));
+
+    /// <summary>A UTF-8 string in a field of <paramref name="byteCount"/> bytes that ends at the first zero byte, or with the field.</summary>
+    public string ReadUtf8Terminated(int byteCount)
+    {
+        ReadOnlySpan<byte> bytes = Take(byteCount);
+        var end = bytes.IndexOf((byte)0);
+        return Encoding.UTF8.GetString(end < 0 ? bytes : bytes[..end]);
+    }
 
     public string ReadUtf8Zero()
     {

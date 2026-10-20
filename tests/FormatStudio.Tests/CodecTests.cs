@@ -46,6 +46,10 @@ public class CodecTests
     [InlineData("u16", "4660", "3412")]
     [InlineData("u16be", "4660", "1234")]
     [InlineData("i32", "-2", "feffffff")]
+    [InlineData("f16", "1.5", "003e")]
+    [InlineData("f16be", "-2", "c000")]
+    [InlineData("f16", "65504", "ff7b")]
+    [InlineData("f16", "5.960464477539063E-08", "0100")]
     [InlineData("f32", "1.5", "0000c03f")]
     [InlineData("f64be", "1", "3ff0000000000000")]
     [InlineData("bool", "true", "01")]
@@ -60,6 +64,61 @@ public class CodecTests
         var project = Project(Endian.Little);
         Assert.Equal(hex, Encode(project, type, json));
         Assert.True(JsonValues.DeepEquals(JsonNode.Parse(json), Decode(project, type, hex)));
+    }
+
+    [Fact]
+    public void F16RoundsToNearest()
+    {
+        var project = Project(Endian.Little);
+        Assert.Equal("553e", Encode(project, "f16", "1.583"));
+        Assert.Equal("007c", Encode(project, "f16", "100000"));
+    }
+
+    [Fact]
+    public void PaddedStrings()
+    {
+        var project = Project(Endian.Little,
+            "alias: Spaced\ntype: {string: ascii, length: 5, pad: \" \"}\n",
+            "alias: Zeroed\ntype: {string: utf8, length: 4, pad: zero}\n",
+            "alias: CName\ntype: {string: utf8, length: 4, pad: terminated}\n",
+            "alias: Wide\ntype: {string: utf16le, length: 6, pad: terminated}\n",
+            "struct: Sized\nfields:\n  - size: u8\n  - name: text\n    type: string\n    length: size\n    pad: terminated\n");
+        Assert.Equal("6162202020", Encode(project, "Spaced", "\"ab\""));
+        Assert.Equal("\"ab\"", Decode(project, "Spaced", "6162202020")!.ToJsonString());
+        Assert.Equal("\" a\"", Decode(project, "Spaced", "2061202020")!.ToJsonString());
+        Assert.Equal("61620000", Encode(project, "Zeroed", "\"ab\""));
+        Assert.Equal("\"a\\u0000b\"", Decode(project, "Zeroed", "61006200")!.ToJsonString());
+
+        // Terminated: the string ends at the first NUL, whatever follows; a string that fills the field has no NUL.
+        Assert.Equal("61620000", Encode(project, "CName", "\"ab\""));
+        Assert.Equal("\"a\"", Decode(project, "CName", "6100ffff")!.ToJsonString());
+        Assert.Equal("61626364", Encode(project, "CName", "\"abcd\""));
+        Assert.Equal("\"abcd\"", Decode(project, "CName", "61626364")!.ToJsonString());
+        Assert.Equal("\"\"", Decode(project, "CName", "00626364")!.ToJsonString());
+        Assert.Equal("\"a\\u0100\"", Decode(project, "Wide", "610000010000")!.ToJsonString());
+        Assert.Equal("610000000000", Encode(project, "Wide", "\"a\""));
+
+        Assert.Equal("03616200", Encode(project, "Sized", """{"size": 3, "text": "ab"}"""));
+        Assert.Equal("""{"size":2,"text":"ab"}""", Decode(project, "Sized", "026162")!.ToJsonString());
+
+        var codec = new Codec(project);
+        Assert.False(codec.Encode("CName", JsonValue.Create("abcde")).Success);
+        Assert.False(codec.Encode("CName", JsonValue.Create("a\0b")).Success);
+        Assert.False(codec.Encode("Sized", JsonNode.Parse("""{"size": 1, "text": "ab"}""")).Success);
+        var trailing = codec.Encode("Spaced", JsonValue.Create("ab "));
+        Assert.True(trailing.Success);
+        Assert.Contains(trailing.Diagnostics, d => d.Severity == Severity.Warning && d.Message.Contains("pad character"));
+    }
+
+    [Fact]
+    public void PaddedStringsNeedAFieldSize()
+    {
+        var project = FormatProject.InMemory([DslReader.Read("alias: P\ntype: {string: utf8, length: u8, pad: zero}\n", "test.yaml", [])!]);
+        Validation.Validator.Validate(project);
+        Assert.Contains(project.Diagnostics, d => d.Severity == Severity.Error && d.Message.Contains("padded string"));
+        var diagnostics = new DiagnosticBag();
+        Assert.Null(DslReader.Read("alias: P\ntype: {string: utf8, length: 4, pad: ab}\n", "test.yaml", diagnostics));
+        Assert.Contains(diagnostics, d => d.Message.Contains("Unknown pad 'ab'"));
     }
 
     [Fact]

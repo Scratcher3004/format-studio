@@ -197,6 +197,7 @@ public static class DslWriter
             case StringRef str:
                 map.Add("string", str.Encoding is { } encoding ? TypeExpressions.EncodingName(encoding) : "default");
                 AddLength(map, str.Length);
+                if (str.Padding != StringPadding.None) map.Add("pad", TypeExpressions.FormatPad(str.Padding, str.Pad));
                 break;
             case BytesRef bytes:
                 map.Add("bytes", bytes.Length.Kind == LengthKind.Default ? "default" : LengthValue(bytes.Length));

@@ -234,6 +234,28 @@ public final class FormatReader {
         return readI64BE();
     }
 
+    public float readF16LE() throws IOException {
+        return halfToFloat(readU16LE());
+    }
+
+    public float readF16BE() throws IOException {
+        return halfToFloat(readU16BE());
+    }
+
+    /** The value of IEEE 754 half precision bits. */
+    static float halfToFloat(int bits) {
+        int sign = (bits & 0x8000) << 16;
+        int exponent = (bits >>> 10) & 0x1F;
+        int mantissa = bits & 0x3FF;
+        if (exponent == 0x1F) return Float.intBitsToFloat(sign | 0x7F800000 | mantissa << 13);
+        if (exponent == 0) {
+            float value = mantissa * 0x1p-24f;
+            return sign == 0 ? value : -value;
+        }
+
+        return Float.intBitsToFloat(sign | (exponent + 112) << 23 | mantissa << 13);
+    }
+
     public float readF32LE() throws IOException {
         return Float.intBitsToFloat(readI32LE());
     }
@@ -313,6 +335,22 @@ public final class FormatReader {
 
     public String readUtf8(int byteCount) throws IOException {
         return new String(take(byteCount), StandardCharsets.UTF_8);
+    }
+
+    /** A UTF-8 string in a field of {@code byteCount} bytes, without the trailing {@code pad} bytes. */
+    public String readUtf8Padded(int byteCount, int pad) throws IOException {
+        byte[] bytes = take(byteCount);
+        int end = bytes.length;
+        while (end > 0 && bytes[end - 1] == (byte) pad) end--;
+        return new String(bytes, 0, end, StandardCharsets.UTF_8);
+    }
+
+    /** A UTF-8 string in a field of {@code byteCount} bytes that ends at the first zero byte, or with the field. */
+    public String readUtf8Terminated(int byteCount) throws IOException {
+        byte[] bytes = take(byteCount);
+        int end = 0;
+        while (end < bytes.length && bytes[end] != 0) end++;
+        return new String(bytes, 0, end, StandardCharsets.UTF_8);
     }
 
     public String readUtf8Zero() throws IOException {
