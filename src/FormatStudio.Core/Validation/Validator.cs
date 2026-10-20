@@ -341,6 +341,7 @@ public sealed class Validator
         CheckLength(str.Length, source, path, earlier, allowZero: true);
         if (str.Padding != StringPadding.None && str.Length.Kind is not (LengthKind.Fixed or LengthKind.Expression))
             _diagnostics.Error("A padded string needs a fixed length or a length expression", source, path);
+        if (str.Max < 0) _diagnostics.Error("A string's max can't be negative", source, path);
         if (str.Check != null && str.Padding == StringPadding.None)
             _diagnostics.Error("'check' only applies to padded strings (pad: zero, a character or terminated)", source, path);
         var encoding = str.Encoding ?? _project.Defaults.String;

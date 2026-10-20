@@ -348,6 +348,8 @@ public class DslTests
     [InlineData("{string: ascii, length: 8, pad: terminated, check: strict}")]
     [InlineData("{sized: {string: ascii, length: u8}, length: 8, fill: zero, check: strict}")]
     [InlineData("{sized: Foo, length: \"n * 2\", fill: 0xdead}")]
+    [InlineData("{string: utf8, length: u16, max: 16}")]
+    [InlineData("{array: {string: default, max: 4}, length: u8}")]
     [InlineData("{array: {string: ascii, length: u8}, length: \"a[0]\"}")]
     [InlineData("{map: {key: string, value: \"Foo[4]\"}, length: eof}")]
     [InlineData("{optional: {sized: Foo, length: \"len, 2\"}}")]

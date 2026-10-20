@@ -260,6 +260,14 @@ public static class Strings
         }
     }
 
+    /// <summary>The most bytes one UTF-16 code unit takes: 3 in UTF-8 (a surrogate pair takes 4 for 2), 2 in UTF-16, else 1.</summary>
+    public static int MaxBytesPerUnit(StringEncoding encoding) => encoding switch
+    {
+        StringEncoding.Utf8 or StringEncoding.Mutf8 => 3,
+        StringEncoding.Utf16Le or StringEncoding.Utf16Be => 2,
+        _ => 1,
+    };
+
     /// <summary>The bytes of one code unit: 2 for UTF-16, else 1.</summary>
     public static int UnitSize(StringEncoding encoding) => encoding is StringEncoding.Utf16Le or StringEncoding.Utf16Be ? 2 : 1;
 

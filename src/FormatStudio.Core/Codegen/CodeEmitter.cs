@@ -571,6 +571,14 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
     protected static string FillBytes(SizedRef sized) =>
         string.Join(", ", Enumerable.Range(0, sized.Fill!.Length / 2).Select(i => "0x" + sized.Fill.Substring(i * 2, 2)));
 
+    /// <summary>
+    /// The most bytes a string with a <see cref="StringRef.Max"/> can take, to reject a longer count before decoding; null
+    /// without a max.
+    /// </summary>
+    protected int? StringByteLimit(StringRef str) => str.Max is { } max
+        ? (int)Math.Min(int.MaxValue, (long)max * Simulation.Strings.MaxBytesPerUnit(str.Encoding ?? project.Defaults.String))
+        : null;
+
     /// <summary>Whether a padded string's padding is checked strictly (its own <c>check</c>, else the project default).</summary>
     protected bool StrictPadding(StringRef str) => str.Padding != StringPadding.None && (str.Check ?? project.Defaults.Check) == PaddingCheck.Strict;
 

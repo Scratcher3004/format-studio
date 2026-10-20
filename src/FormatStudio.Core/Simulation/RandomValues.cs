@@ -209,6 +209,9 @@ public sealed class RandomValues
             letters = alphabet.Replace(str.Pad.ToString(), "");
         }
 
+        // A fixed or computed length is exact (unless padded): max can't shorten it.
+        if (str.Max is { } max && (str.Padding != StringPadding.None || str.Length.Kind is not (LengthKind.Fixed or LengthKind.Expression)))
+            count = Math.Min(count, max);
         var builder = new StringBuilder(count);
         for (var i = 0; i < count; i++) builder.Append(letters[_random.Next(letters.Length)]);
         return builder.ToString();

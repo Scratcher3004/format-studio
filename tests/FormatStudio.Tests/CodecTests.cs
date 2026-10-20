@@ -232,6 +232,23 @@ public class CodecTests
     }
 
     [Fact]
+    public void StringsWithAMax()
+    {
+        var project = Project(Endian.Little, "alias: Name\ntype: {string: utf8, max: 3}\n", "alias: Code\ntype: {string: ascii, length: u8, max: 2}\n",
+            "alias: CName\ntype: {string: utf8, length: zero, max: 3}\n");
+        var codec = new Codec(project);
+        Assert.Equal("03616263", Encode(project, "Name", "\"abc\""));
+        Assert.Equal("06c3a9c3a9c3a9", Encode(project, "Name", "\"\u00e9\u00e9\u00e9\""));
+        Assert.Contains(codec.Encode("Name", JsonValue.Create("abcd")).Diagnostics, d => d.Message.Contains("4 characters, more than its max 3"));
+        Assert.Contains(codec.Decode("Name", Hex.Parse("0461626364")).Diagnostics, d => d.Message.Contains("4 characters, more than its max 3"));
+        Assert.Contains(codec.Decode("Name", Hex.Parse("0a" + new string('6', 20))).Diagnostics,
+            d => d.Message.Contains("10 bytes are more than a string of at most 3 characters takes"));
+        Assert.Contains(codec.Decode("Code", Hex.Parse("03616263")).Diagnostics, d => d.Message.Contains("3 bytes are more than"));
+        Assert.Contains(codec.Decode("CName", Hex.Parse("6162636400")).Diagnostics, d => d.Message.Contains("4 characters"));
+        Assert.Equal("{string: default, max: 4}", DslWriter.FormatType(DslReader.ReadType("{string: default, max: 4}")));
+    }
+
+    [Fact]
     public void PaddedWritesStayWithinTheLimit()
     {
         var project = Project(Endian.Little, "struct: A\nfields:\n  - size: u32\n  - {name: name, type: {string: utf8, length: size, pad: zero}}\n");

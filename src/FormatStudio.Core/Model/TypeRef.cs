@@ -245,13 +245,15 @@ public enum PaddingCheck
 /// <summary>
 /// A string whose length is counted in bytes. <see cref="Pad"/> is the pad character of <see cref="StringPadding.Padded"/>
 /// strings (NUL for <see cref="StringPadding.Terminated"/>). <see cref="Check"/> is null when the project default applies.
+/// <see cref="Max"/> is the most characters (UTF-16 code units) the string may have, checked when reading and writing.
 /// </summary>
 public sealed record StringRef(StringEncoding? Encoding, LengthSpec Length, StringPadding Padding = StringPadding.None, char Pad = '\0',
-    PaddingCheck? Check = null) : TypeRef
+    PaddingCheck? Check = null, int? Max = null) : TypeRef
 {
     public override string ToString() => $"string({Encoding?.ToString() ?? "default"}, {Length}" +
                                          (Padding == StringPadding.None ? "" : $", pad {Dsl.TypeExpressions.FormatPad(Padding, Pad)}") +
-                                         (Check is { } check ? $", check {Dsl.TypeExpressions.CheckName(check)})" : ")");
+                                         (Check is { } check ? $", check {Dsl.TypeExpressions.CheckName(check)}" : "") +
+                                         (Max is { } max ? $", max {max})" : ")");
 }
 
 public sealed record BytesRef(LengthSpec Length) : TypeRef

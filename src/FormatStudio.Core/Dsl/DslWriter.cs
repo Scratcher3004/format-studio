@@ -199,6 +199,7 @@ public static class DslWriter
                 AddLength(map, str.Length);
                 if (str.Padding != StringPadding.None) map.Add("pad", TypeExpressions.FormatPad(str.Padding, str.Pad));
                 if (str.Check is { } check) map.Add("check", TypeExpressions.CheckName(check));
+                if (str.Max is { } max) map.Add("max", max);
                 break;
             case BytesRef bytes:
                 map.Add("bytes", bytes.Length.Kind == LengthKind.Default ? "default" : LengthValue(bytes.Length));

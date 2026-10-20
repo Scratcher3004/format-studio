@@ -55,6 +55,8 @@
                     }
                 </MudSelect>
                 <LengthEditor Value="str.Length" ValueChanged="l => Changed(str with { Length = l })" AllowZero="true" />
+                <MudNumericField T="int?" Value="@str.Max" ValueChanged="@(m => Changed(str with { Max = m }))" Label="@("Max characters")" Min="@((int?)0)"
+                                 Clearable="@true" Variant="@Variant.Outlined" Margin="@Margin.Dense" Style="@("max-width: 140px")" />
                 @if (str.Length.Kind is LengthKind.Fixed or LengthKind.Expression || str.Padding != StringPadding.None)
                 {
                     <MudSelect T="StringPadding" Value="@str.Padding" ValueChanged="@(p => Changed(str with { Padding = p, Pad = '\0', Check = p == StringPadding.None ? null : str.Check }))" Label="@("Padding")"

@@ -478,10 +478,20 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override string ReadString(StringRef str, CodeWriter w, Context context)
     {
+        var read = ReadText(str, w, context);
+        if (str.Max is not { } max) return read;
+        var text = Temp("text");
+        w.Line($"var {text} = {read};");
+        w.Line($"if ({text}.Length > {max}) throw new {options.ExceptionType}($\"{What(context)} has {{{text}.Length}} characters, more than {max}\");");
+        return text;
+    }
+
+    private string ReadText(StringRef str, CodeWriter w, Context context)
+    {
         var reader = context.Reader;
         var encoding = EncodingArgument(str);
         var strict = options.ValidateStrings ? "true" : "false";
-        var count = str.Length.Kind is LengthKind.Zero or LengthKind.Eof ? null : ReadCount(str.Length, w, context, 1, null);
+        var count = str.Length.Kind is LengthKind.Zero or LengthKind.Eof ? null : ReadCount(str.Length, w, context, 1, StringByteLimit(str));
         if (str.Padding == StringPadding.Terminated)
         {
             var check = options.ValidateStrings && StrictPadding(str) ? "true" : "false";
@@ -655,6 +665,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     protected override void WriteString(StringRef str, string value, CodeWriter w, Context context)
     {
         var encoding = EncodingArgument(str);
+        if (str.Max is { } max)
+            w.Line($"if ({value}.Length > {max}) throw new {options.ExceptionType}(\"{What(context)} has more than {max} characters\");");
         if (str.Padding != StringPadding.None)
         {
             WritePadded(str, value, w, context);

@@ -274,6 +274,84 @@ public class CodegenTests
         Assert.Equal("Invalid ASCII in the string at offset 1", Read("018001e9"));
     }
 
+    [Theory]
+    [MemberData(nameof(Generators))]
+    public void StringsWithAMaxMatchTheSimulator(string generator)
+    {
+        var project = Project("name: p\nsources: [types/*.yaml]\n",
+            ("A.yaml", "struct: A\nfields:\n  - {name: name, type: {string: utf8, max: 5}}\n  - {name: tags, type: {array: {string: ascii, length: u8, max: 3}}}\n" +
+                       "  - {name: label, type: {string: utf8, length: zero, max: 4}}\n  - {name: code, type: {string: latin1, length: 8, pad: terminated, max: 6}}\n"));
+        AssertMatchesSimulator(project, generator, 60);
+    }
+
+    private static FormatProject MaxNames() => Project("name: p\nsources: [types/*.yaml]\n",
+        ("N.yaml", "struct: N\nfields:\n  - {name: name, type: {string: utf8, max: 3}}\n"));
+
+    [Fact]
+    public void GeneratedCSharpChecksTheMax()
+    {
+        var output = CodeGeneration.Generate(MaxNames(), Target("csharp"));
+        var assembly = GeneratedCodeVerifier.Compile(output, """
+            using FormatStudio.Runtime;
+            public static class Harness {
+              public static string Read(string hex) {
+                try {
+                  var reader = new FormatReader(System.Convert.FromHexString(hex));
+                  return global::Generated.Test.N.Read(ref reader).name;
+                } catch (FormatDataException e) { return e.Message; }
+              }
+              public static string Write(string name) {
+                try {
+                  var writer = new FormatWriter(new System.Buffers.ArrayBufferWriter<byte>());
+                  new global::Generated.Test.N { name = name }.Write(ref writer);
+                  return "ok";
+                } catch (FormatDataException e) { return e.Message; }
+              }
+            }
+            """, typeof(FormatReader).Assembly);
+        var harness = assembly.GetType("Harness")!;
+        string Read(string hex) => (string)harness.GetMethod("Read")!.Invoke(null, [hex])!;
+        Assert.Equal("abc", Read("03616263"));
+        Assert.Equal("name has 4 characters, more than 3", Read("0461626364"));
+        Assert.NotEqual("abc", Read("0a" + new string('6', 20)));
+        Assert.Equal("name has more than 3 characters", (string)harness.GetMethod("Write")!.Invoke(null, ["abcd"])!);
+    }
+
+    [Fact]
+    public void GeneratedJavaChecksTheMax()
+    {
+        var java = Java();
+        var classes = java.Compile(CodeGeneration.Generate(MaxNames(), Target("java-stream")), """
+            import formatstudio.runtime.*;
+            import generated.test.*;
+
+            public final class Harness {
+                static String read(int... data) {
+                    byte[] bytes = new byte[data.length];
+                    for (int i = 0; i < data.length; i++) bytes[i] = (byte) data[i];
+                    try {
+                        return N.read(new FormatReader(bytes)).name;
+                    } catch (Exception e) {
+                        return e.getMessage();
+                    }
+                }
+
+                public static void main(String[] args) throws Exception {
+                    System.out.println(read(3, 0x61, 0x62, 0x63));
+                    System.out.println(read(4, 0x61, 0x62, 0x63, 0x64));
+                    N n = new N();
+                    n.name = "abcd";
+                    try {
+                        n.write(new FormatWriter(new java.io.ByteArrayOutputStream()));
+                    } catch (FormatDataException e) {
+                        System.out.println(e.getMessage());
+                    }
+                }
+            }
+            """, TestPaths.NewTempDirectory());
+        Assert.Equal("abc\nname has 4 characters, more than 3\nname has more than 3 characters\n", java.Run(classes, "Harness", "").Replace("\r\n", "\n"));
+    }
+
     /// <summary>Definitions named like members the generators give them, and types hidden by a variant's nested enum Case.</summary>
     private static readonly (string File, string Text)[][] NameClashProjects =
     [

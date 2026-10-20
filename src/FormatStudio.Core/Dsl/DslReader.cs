@@ -275,8 +275,11 @@ public sealed class DslReader
                     return sized with { Length = ParseLength(length) };
                 case StringRef str when length != null || encoding != null || pad != null || check != null:
                     var (padding, padChar) = pad != null ? ParsePad(pad) : (str.Padding, str.Pad);
-                    return new StringRef(encoding != null ? ParseEncoding(encoding) : str.Encoding,
-                        length != null ? ParseLength(length) : str.Length, padding, padChar, check != null ? ParseCheck(check) : str.Check);
+                    return str with
+                    {
+                        Encoding = encoding != null ? ParseEncoding(encoding) : str.Encoding, Length = length != null ? ParseLength(length) : str.Length,
+                        Padding = padding, Pad = padChar, Check = check != null ? ParseCheck(check) : str.Check,
+                    };
                 case BytesRef when length != null:
                     return new BytesRef(ParseLength(length));
                 case NamedRef named when asNode != null || tag != null:
@@ -403,10 +406,11 @@ public sealed class DslReader
 
                 return new ArrayRef(ParseType(value), length);
             case "string":
-                CheckKeys(map, ["string", "length", "pad", "check"], "a string type");
+                CheckKeys(map, ["string", "length", "pad", "check", "max"], "a string type");
                 var (stringPadding, stringPad) = Get(map, "pad") is { } padNode ? ParsePad(padNode) : (StringPadding.None, '\0');
                 return new StringRef(Scalar(value, "string") is "" or "default" ? null : ParseEncoding(value), length, stringPadding, stringPad,
-                    Get(map, "check") is { } checkNode ? ParseCheck(checkNode) : null);
+                    Get(map, "check") is { } checkNode ? ParseCheck(checkNode) : null,
+                    Get(map, "max") is { } maxNode ? (int)Integer(maxNode, "max") : null);
             case "bytes":
                 CheckKeys(map, ["bytes"], "a bytes type");
                 return new BytesRef(ParseLength(value));

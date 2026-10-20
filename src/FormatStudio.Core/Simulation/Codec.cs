@@ -239,9 +239,14 @@ public sealed class Codec(FormatProject project)
                     }
                     else
                     {
-                        text = ReadString(ReadCount(str.Length, scope, node, path, 1) ?? reader.Remaining, encoding);
+                        var count = ReadCount(str.Length, scope, node, path, 1) ?? reader.Remaining;
+                        // Before decoding: more bytes than max characters can take.
+                        if (str.Max is { } maxCharacters && count > (long)maxCharacters * Strings.MaxBytesPerUnit(encoding))
+                            throw reader.Error($"{count} bytes are more than a string of at most {maxCharacters} characters takes");
+                        text = ReadString(count, encoding);
                     }
 
+                    if (text.Length > str.Max) throw reader.Error($"The string has {text.Length} characters, more than its max {str.Max}");
                     node.Display = JsonSerializer.Serialize(text);
                     return JsonValue.Create(text);
                 }
@@ -644,6 +649,7 @@ public sealed class Codec(FormatProject project)
                 {
                     var text = JsonValues.String(value) ?? throw Error($"Expected a string, got {Show(value)}");
                     var encoding = str.Encoding ?? Project.Defaults.String;
+                    if (text.Length > str.Max) throw Error($"The string has {text.Length} characters, more than its max {str.Max}");
                     byte[] bytes;
                     try
                     {

@@ -101,7 +101,7 @@ public static partial class TypeExpressions
                 return primitive.ToString();
             case NamedRef { As: null, Tag: null } named:
                 return named.Name;
-            case StringRef { Encoding: null, Length.Kind: LengthKind.Default }:
+            case StringRef { Encoding: null, Length.Kind: LengthKind.Default, Max: null }:
                 return "string";
             case BytesRef { Length.Kind: LengthKind.Default }:
                 return "bytes";

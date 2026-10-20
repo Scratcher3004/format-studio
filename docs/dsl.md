@@ -95,8 +95,9 @@ Integers (ids, enum values, variant tags, `const`, `default`, `min`, `max`) may 
 it the same way.
 
 Field keys: `name`, `type`, `title`, `doc`, `if`, `const`, `computed`, `default`, `min`, `max`, `minLength`,
-`maxLength`, `minItems`, `maxItems`, `pattern`, plus the type shortcuts `length`, `as`, `tag` and `encoding`, which
-apply to the field's type.
+`maxLength`, `minItems`, `maxItems`, `pattern`, plus the type shortcuts `length`, `as`, `tag`, `encoding`, `pad` and
+`check`, which apply to the field's type. `minLength`/`maxLength` are hints for random values and the editor (encoding
+only warns); a string type's `max` is a limit the data must keep.
 
 ```yaml
 enum: GameMode
@@ -156,6 +157,16 @@ Mapping forms: `{array: T, length: L}`, `{string: mutf8, length: L}` (`length: z
 length-delimited section), `{fixed: i32, fraction: 5}` (fixed point), `{nbt: java-network}`,
 `{native: name, args: [a, b]}`, `{type: Enum, as: zigzag32}`, `{type: Variant, tag: "expression"}`. A length `L` is a number, a primitive (prefix),
 `eof`, `zero`, `default` or an expression.
+
+A string type's `max` is the most characters (UTF-16 code units, like Java's `String.length()`) it may have, checked
+when decoding and encoding, in the simulator and in generated code. A length that is more bytes than `max` characters
+can take (3 each in UTF-8, 1 in ASCII and Latin-1) is rejected before the string is read.
+
+```yaml
+alias: Identifier
+type: {string: utf8, max: 32767}
+# also inside other types: {array: {string: utf8, max: 16}}
+```
 
 A string with a fixed length or a length expression can be shorter than its field with `pad`:
 
