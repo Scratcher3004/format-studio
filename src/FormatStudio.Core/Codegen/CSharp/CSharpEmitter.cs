@@ -35,7 +35,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
             EnumDef => "Enums",
             _ => "Variants",
         };
-        return definition.Owner == null ? $"{folder}/{definition.Name}.g.cs" : $"{Pascal(definition.Owner.Name)}/{folder}/{definition.Name}.g.cs";
+        var name = CsName(definition);
+        return definition.Owner == null ? $"{folder}/{name}.g.cs" : $"{Pascal(definition.Owner.Name)}/{folder}/{name}.g.cs";
     }
 
     protected override string Generator => Streams ? "csharp-stream" : "csharp";
@@ -73,18 +74,29 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     private static string Pascal(string name) => char.ToUpperInvariant(name[0]) + name[1..];
 
-    private string Global(TypeDef definition) => $"global::{NamespaceOf(definition)}.{definition.Name}";
+    private string Global(TypeDef definition) => $"global::{NamespaceOf(definition)}.{CsName(definition)}";
 
     /// <param name="reference">A type name as written in the definitions, e.g. <c>Slot</c> or <c>mc.Slot</c>.</param>
     private string Global(string reference) => Global(Definition(reference));
 
     /// <summary>The name of a definition in the generated code; the project's own definitions may go unqualified.</summary>
-    private string TypeName(TypeDef definition, bool qualified) => qualified || definition.Owner != null ? Global(definition) : definition.Name;
+    private string TypeName(TypeDef definition, bool qualified) => qualified || definition.Owner != null ? Global(definition) : CsName(definition);
+
+    /// <summary>The C# name of a definition (see <see cref="CSharpNames"/>).</summary>
+    private string CsName(TypeDef definition) => CSharpNames.TypeName(Project, definition, Definition);
+
+    /// <summary>Warns when a definition's C# name isn't its own.</summary>
+    private void WarnRenamed(TypeDef definition)
+    {
+        if (CsName(definition) is var name && name != definition.Name)
+            Output.Diagnostics.Warning($"{definition.Name}: named {name} in C#, since {definition.Name} is a member the generator gives the type");
+    }
 
     /// <summary>The C# member name of a field or case, avoiding the enclosing type name and generated members.</summary>
     private static string Member(string name, string owner) => name == owner || Reserved.Contains(name) ? name + "Value" : Id(name);
 
-    protected override string MemberName(string name, string owner) => Member(name, owner);
+    protected override string MemberName(string name, string owner) =>
+        Member(name, Generated.FirstOrDefault(d => d.Name == owner) is { } definition ? CsName(definition) : owner);
 
     /// <summary>Types that contain themselves by value must be classes.</summary>
     private bool IsClass(TypeDef definition) => (_classes ??= SelfContainingTypes()).Contains(definition.QualifiedName);
@@ -229,19 +241,21 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override string Bitfield(BitfieldDef bitfield)
     {
+        WarnRenamed(bitfield);
+        var name = CsName(bitfield);
         var w = new CodeWriter();
         Doc(w, bitfield.Doc, $"Packed into {bitfield.Base}.");
-        w.Open($"public partial struct {bitfield.Name} : {options.SerializableInterface}<{bitfield.Name}>");
-        foreach (var member in bitfield.Members) w.Line($"public {BitMemberType(member)} {Member(member.Name, bitfield.Name)};");
+        w.Open($"public partial struct {name} : {options.SerializableInterface}<{name}>");
+        foreach (var member in bitfield.Members) w.Line($"public {BitMemberType(member)} {Member(member.Name, name)};");
         w.Line();
 
-        w.Open($"public static {bitfield.Name} Read({ReaderParameter})");
+        w.Open($"public static {name} Read({ReaderParameter})");
         w.Line($"var raw = (ulong)reader.Read{Method(bitfield.Base)}();");
-        w.Line($"var result = new {bitfield.Name}();");
+        w.Line($"var result = new {name}();");
         foreach (var (member, shift) in Simulation.Bitfields.Layout(bitfield))
         {
             var mask = member.Bits >= 64 ? "ulong.MaxValue" : $"0x{(1UL << member.Bits) - 1:X}UL";
-            var field = Member(member.Name, bitfield.Name);
+            var field = Member(member.Name, name);
             var value = member.Signed
                 ? $"(long)(raw << {64 - shift - member.Bits}) >> {64 - member.Bits}"
                 : $"(raw >> {shift}) & {mask}";
@@ -262,7 +276,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         foreach (var (member, shift) in Simulation.Bitfields.Layout(bitfield))
         {
             var mask = member.Bits >= 64 ? "ulong.MaxValue" : $"0x{(1UL << member.Bits) - 1:X}UL";
-            var field = Member(member.Name, bitfield.Name);
+            var field = Member(member.Name, name);
             var value = member.Type switch
             {
                 "bool" => $"({field} ? 1UL : 0UL)",
@@ -296,7 +310,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override string Struct(StructDef structDef)
     {
-        var name = structDef.Name;
+        WarnRenamed(structDef);
+        var name = CsName(structDef);
         var isClass = IsClass(structDef);
         var w = new CodeWriter();
         var remarks = new List<string?>
@@ -339,12 +354,12 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         return field.If != null ? Nullable(type) : type;
     }
 
-    private static string Access(FieldDef field, string prefix, StructDef owner) =>
-        field.IsInput ? prefix + Member(field.Name, owner.Name) : $"__{field.Name}";
+    private string Access(FieldDef field, string prefix, StructDef owner) =>
+        field.IsInput ? prefix + Member(field.Name, CsName(owner)) : $"__{field.Name}";
 
     private void ReadMethod(StructDef structDef, CodeWriter w)
     {
-        w.Open($"public static {structDef.Name} Read({ReaderParameter})");
+        w.Open($"public static {CsName(structDef)} Read({ReaderParameter})");
         w.Line($"var result = new {Global(structDef)}();");
         ReadFields(structDef, w, f => Access(f, "result.", structDef));
         w.Line("return result;");
@@ -803,7 +818,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override string Variant(VariantDef variant)
     {
-        var name = variant.Name;
+        WarnRenamed(variant);
+        var name = CsName(variant);
         var isClass = IsClass(variant);
         var w = new CodeWriter();
         var tagType = VariantTagType(variant, false);
@@ -847,7 +863,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         {
             Doc(w, variantCase.Doc ?? $"The value of case {variantCase.Name}; only meaningful when Kind is {variantCase.Name}.",
                 $"Wire: {Describe(variantCase.Type!)}.");
-            w.Line($"public {Type(variantCase.Type!)} {Member(variantCase.Name, name)};");
+            // Qualified: a type named Case would be the nested enum.
+            w.Line($"public {Type(variantCase.Type!, true)} {Member(variantCase.Name, name)};");
             w.Line();
         }
 
@@ -855,8 +872,8 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         {
             var member = Member(variantCase.Name, name);
             w.Line(variantCase.Type == null
-                ? $"public static {name} From{variantCase.Name}() => new() {{ Kind = {CaseValue(variant, variantCase)} }};"
-                : $"public static {name} From{variantCase.Name}({Type(variantCase.Type)} value) => new() {{ Kind = {CaseValue(variant, variantCase)}, {member} = value }};");
+                ? $"public static {name} {CSharpNames.Factory(variant, variantCase)}() => new() {{ Kind = {CaseValue(variant, variantCase)} }};"
+                : $"public static {name} {CSharpNames.Factory(variant, variantCase)}({Type(variantCase.Type, true)} value) => new() {{ Kind = {CaseValue(variant, variantCase)}, {member} = value }};");
         }
 
         w.Line();

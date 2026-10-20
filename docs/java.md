@@ -51,7 +51,8 @@ handshake.write(new FormatWriter(buffer));
   `nameOf(id)` and `ids()`. Packet ids must fit an `int`. With [protocols](dsl.md#protocols) each protocol is a
   nested class with these methods: `Packets.LoginServerbound.read(id, reader)`.
 - Names that are Java keywords get a `_` suffix; fields named `ID` or `kind` (and enum members named `value` or `tag`)
-  are renamed so they don't clash with the generated members.
+  are renamed so they don't clash with the generated members. A variant named `Case` with a nested `Case` enum is the
+  class `CaseType` (with a warning), and other definitions named `Case` are written with their package.
 
 ## Unsigned integers
 

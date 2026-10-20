@@ -34,7 +34,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     private string PackagePath(string package) => package.Replace('.', '/');
 
-    protected override string PathOf(TypeDef definition) => $"{PackagePath(PackageOf(definition))}/{definition.Name}.java";
+    protected override string PathOf(TypeDef definition) => $"{PackagePath(PackageOf(definition))}/{JavaName(definition)}.java";
 
     protected override string Generator => "java-stream";
 
@@ -75,7 +75,16 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         : DependencyOf(definition)?.Package ?? $"{options.Package}.{Id(definition.Owner.Name.ToLowerInvariant())}";
 
     /// <summary>The name of a definition in the generated code: the project's own share the package, a library's are qualified.</summary>
-    private string TypeName(TypeDef definition) => definition.Owner == null ? definition.Name : $"{PackageOf(definition)}.{definition.Name}";
+    /// <summary>
+    /// The name of a definition in the generated code: the project's own definitions go unqualified, except one named
+    /// <c>Case</c>, which a variant's nested enum <c>Case</c> would hide.
+    /// </summary>
+    private string TypeName(TypeDef definition) => definition.Owner == null && JavaName(definition) != "Case"
+        ? JavaName(definition)
+        : $"{PackageOf(definition)}.{JavaName(definition)}";
+
+    /// <summary>The Java class name of a definition (see <see cref="JavaNames"/>).</summary>
+    private string JavaName(TypeDef definition) => JavaNames.TypeName(Project, definition, Definition);
 
     private static string Capitalize(string name) => name.Length == 0 ? name : char.ToUpperInvariant(name[0]) + name[1..];
 
@@ -1028,10 +1037,12 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     protected override string Variant(VariantDef variant)
     {
-        var name = variant.Name;
+        var name = JavaName(variant);
+        if (name != variant.Name)
+            Output.Diagnostics.Warning($"{variant.Name}: named {name} in Java, since its cases are a nested enum Case");
         var w = new CodeWriter();
         var stringTags = Project.TagKind(variant) == VariantTagKind.String;
-        var kindType = KindEnum(variant)?.Name ?? "Case";
+        var kindType = KindEnum(variant) is { } kindEnum ? TypeName(kindEnum) : "Case";
         Doc(w, variant.Doc, variant.Tag != null ? $"Tag: {Describe(variant.Tag)}." : "The tag is stored outside (see the fields using it).");
         w.OpenInline($"public final class {name} implements FormatSerializable");
 

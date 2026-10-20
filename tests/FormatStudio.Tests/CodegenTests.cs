@@ -274,6 +274,55 @@ public class CodegenTests
         Assert.Equal("Invalid ASCII in the string at offset 1", Read("018001e9"));
     }
 
+    /// <summary>Definitions named like members the generators give them, and types hidden by a variant's nested enum Case.</summary>
+    private static readonly (string File, string Text)[][] NameClashProjects =
+    [
+        [
+            ("Read.yaml", "struct: Read\nfields:\n  - a: u8\n  - ReadType: u8\n"),
+            ("Write.yaml", "bitfield: Write\ntype: u8\nfields:\n  - {name: low, bits: 4}\n  - {name: high, bits: 4}\n"),
+            ("Kind.yaml", "variant: Kind\ntag: u8\ncases:\n  - {name: A, tag: 1, type: u8}\n  - {name: b, tag: 2}\n"),
+            ("WriteContent.yaml", "variant: WriteContent\ntag: u8\ncases:\n  - {name: a, tag: 1, type: u16}\n"),
+            ("FromA.yaml", "variant: FromA\ntag: u8\ncases:\n  - {name: A, tag: 1, type: u8}\n"),
+            ("CaseOf.yaml", "variant: CaseOf\ntag: string\ncases:\n  - {name: a, tag: alpha, type: u8}\n"),
+            ("Factories.yaml", "variant: Factories\ntag: u8\ncases:\n  - {name: B, tag: 1, type: u16}\n  - {name: FromB, tag: 2, type: u8}\n"),
+            ("Id.yaml", "packet: Id\nid: 1\nfields:\n  - a: u8\n"),
+            ("PacketId.yaml", "packet: PacketId\nid: 2\nfields:\n  - a: u8\n"),
+        ],
+        [
+            ("Case.yaml", "variant: Case\ntag: u8\ncases:\n  - {name: x, tag: 1, type: u8}\n"),
+            ("User.yaml", "struct: User\nfields:\n  - c: Case\n"),
+        ],
+        [
+            ("Case.yaml", "enum: Case\ntype: u8\nvalues:\n  a: 0\n  b: 5\n"),
+            ("V.yaml", "variant: V\ntag: u8\ncases:\n  - {name: x, tag: 1, type: Case}\n  - {name: y, tag: 2, type: Box}\n"),
+            ("Box.yaml", "struct: Box\nfields:\n  - c: Case\n"),
+        ],
+    ];
+
+    public static TheoryData<string, int> NameClashCases()
+    {
+        var data = new TheoryData<string, int>();
+        foreach (var generator in new[] { "csharp", "csharp-stream", "java-stream" })
+            for (var i = 0; i < NameClashProjects.Length; i++) data.Add(generator, i);
+        return data;
+    }
+
+    [Theory]
+    [MemberData(nameof(NameClashCases))]
+    public void NamesThatClashWithGeneratedMembersStillWork(string generator, int index)
+    {
+        var project = Project("name: p\nsources: [types/*.yaml]\n", NameClashProjects[index]);
+        AssertMatchesSimulator(project, generator, 30);
+        var warnings = CodeGeneration.Generate(project, Target(generator)).Diagnostics.Where(d => d.Severity == Severity.Warning).Select(d => d.Message).ToList();
+        if (generator.StartsWith("csharp", StringComparison.Ordinal) && index == 0)
+        {
+            Assert.Contains("Read: named ReadType in C#, since Read is a member the generator gives the type", warnings);
+            Assert.Equal(8, warnings.Count(m => m.Contains("in C#")));
+        }
+
+        if (index == 1) Assert.Contains(warnings, m => m.StartsWith(generator == "java-stream" ? "Case: named CaseType in Java" : "Case: named CaseType in C#", StringComparison.Ordinal));
+    }
+
     /// <summary>Most of the DSL in one project: every primitive, enums of all sorts, bit fields, variants, collections, expressions.</summary>
     private static FormatProject KitchenSink() => Project("name: p\ndefaults:\n  endian: little\n  length: varuint32\nsources: [types/*.yaml]\n",
         ("Color.yaml", "enum: Color\ntype: u8\nvalues:\n  red: 0\n  green: 1\n  value: 2\n"),

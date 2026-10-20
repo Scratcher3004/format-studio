@@ -31,6 +31,11 @@ Definitions written by hand are skipped with `skipCodegen` in the definition (se
 - Variants are tagged structs: `Kind` (the tag enum, or a nested `Case` enum), one field per case,
   `FromCase(...)` factories, `Read(reader, kind)` / `WriteContent` for external tags. With string tags the `Case`
   values are the case indexes, and `CaseOf(tag)` / `TagOf(kind)` convert.
+- Fields and cases named like a generated member get a `Value` suffix (a factory too, when a case's field has its
+  name). A definition named like a member of its own type (`Read`, `Write`; `Id`, `PacketId` of packets; `Kind`,
+  `Case`, `WriteContent`, `CaseOf`, `TagOf`, `From<case>` of variants) gets a `Type` suffix, with a warning: struct
+  `Read` is `ReadType`. A definition named `Case` used inside a variant is written with its namespace, so the nested
+  enum doesn't hide it.
 - Arrays with `until` are read element by element until the condition holds for the last one read.
 - Aliases are inlined, computed and const fields are not exposed, conditional fields are nullable.
 - Counts are checked against the remaining bytes and `maxItems` before allocating. A `FormatStreamReader` over a

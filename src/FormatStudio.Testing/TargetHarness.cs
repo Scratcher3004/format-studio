@@ -47,9 +47,11 @@ internal abstract class TargetHarness : IDisposable
         return project.Generators.Get(target.Generator) switch
         {
             CSharpGenerator csharp => new CSharpHarness(output, CSharpOptions.From(target.Options, csharp.Io),
-                tools.CSharpRuntime ?? throw new GeneratedCodeException("No C# runtime to compile the generated code against"), types, registries),
+                tools.CSharpRuntime ?? throw new GeneratedCodeException("No C# runtime to compile the generated code against"), types, registries,
+                type => project.Find(type) is { } definition ? CSharpNames.TypeName(project, definition) : type),
             JavaGenerator => new JavaHarness(output, JavaOptions.From(target.Options),
-                tools.Java ?? throw new GeneratedCodeException(JavaToolchain.Missing), types, registries),
+                tools.Java ?? throw new GeneratedCodeException(JavaToolchain.Missing), types, registries,
+                type => project.Find(type) is { } definition ? JavaNames.TypeName(project, definition) : type),
             _ => throw new GeneratedCodeException($"Tests run against C# and Java targets, not {target.Generator}"),
         };
     }
@@ -68,9 +70,11 @@ internal abstract class TargetHarness : IDisposable
         private readonly Dictionary<string, Func<byte[], byte[]>> _types;
         private readonly Dictionary<string, Func<uint, byte[], (string Name, byte[] Bytes)?>> _registries;
 
-        public CSharpHarness(GeneratedOutput output, CSharpOptions options, Assembly runtime, IReadOnlyCollection<string> types, IReadOnlyCollection<string> registries)
+        /// <param name="className">The generated class of a type name.</param>
+        public CSharpHarness(GeneratedOutput output, CSharpOptions options, Assembly runtime, IReadOnlyCollection<string> types, IReadOnlyCollection<string> registries,
+            Func<string, string> className)
         {
-            var assembly = GeneratedCodeVerifier.Compile(output, Source(options, types, registries), runtime);
+            var assembly = GeneratedCodeVerifier.Compile(output, Source(options, types, registries, className), runtime);
             var harness = assembly.GetType("Harness")!;
             _types = (Dictionary<string, Func<byte[], byte[]>>)harness.GetField("Types")!.GetValue(null)!;
             _registries = (Dictionary<string, Func<uint, byte[], (string, byte[])?>>)harness.GetField("Registries")!.GetValue(null)!;
@@ -100,7 +104,7 @@ internal abstract class TargetHarness : IDisposable
         /// A static class <c>Harness</c> with <c>Types</c> (type name → read the bytes, write the value back) and
         /// <c>Registries</c> (registry → read the packet with the id, give its name and write it back; null for an unknown id).
         /// </summary>
-        private static string Source(CSharpOptions options, IReadOnlyCollection<string> types, IReadOnlyCollection<string> registries)
+        private static string Source(CSharpOptions options, IReadOnlyCollection<string> types, IReadOnlyCollection<string> registries, Func<string, string> className)
         {
             var stream = options.Io == CSharpIo.Stream;
             var builder = new StringBuilder();
@@ -127,7 +131,7 @@ internal abstract class TargetHarness : IDisposable
                 builder.AppendLine($$"""
                       static byte[] {{TypeMethod(type)}}(byte[] data) {
                         var reader = {{newReader}};
-                        var value = global::{{options.Namespace}}.{{type}}.Read({{pass}});
+                        var value = global::{{options.Namespace}}.{{className(type)}}.Read({{pass}});
                         {{checkEnd}}
                         {{write}}
                       }
@@ -174,12 +178,14 @@ internal abstract class TargetHarness : IDisposable
         private readonly string _directory = Path.Combine(Path.GetTempPath(), "format-studio-java-" + Guid.NewGuid().ToString("N"));
         private readonly string _classes;
 
-        public JavaHarness(GeneratedOutput output, JavaOptions options, JavaToolchain java, IReadOnlyCollection<string> types, IReadOnlyCollection<string> registries)
+        /// <param name="className">The generated class of a type name.</param>
+        public JavaHarness(GeneratedOutput output, JavaOptions options, JavaToolchain java, IReadOnlyCollection<string> types, IReadOnlyCollection<string> registries,
+            Func<string, string> className)
         {
             _java = java;
             try
             {
-                _classes = java.Compile(output, Source(options, types, registries), _directory);
+                _classes = java.Compile(output, Source(options, types, registries, className), _directory);
             }
             catch
             {
@@ -231,7 +237,7 @@ internal abstract class TargetHarness : IDisposable
             }
         }
 
-        private static string Source(JavaOptions options, IReadOnlyCollection<string> types, IReadOnlyCollection<string> registries)
+        private static string Source(JavaOptions options, IReadOnlyCollection<string> types, IReadOnlyCollection<string> registries, Func<string, string> className)
         {
             var builder = new StringBuilder();
             builder.AppendLine($"import {options.RuntimePackage}.*;");
@@ -287,7 +293,7 @@ internal abstract class TargetHarness : IDisposable
                 """);
             // An if per type: a switch whose only label is a throwing default would leave the code after it unreachable.
             foreach (var type in types)
-                builder.AppendLine($"        if (type.equals(\"{type}\")) return write({options.Package}.{type}.read(reader), reader);");
+                builder.AppendLine($"        if (type.equals(\"{type}\")) return write({options.Package}.{className(type)}.read(reader), reader);");
             builder.AppendLine("""
                         throw new IllegalArgumentException(type);
                     }
