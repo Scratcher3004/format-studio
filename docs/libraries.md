@@ -67,7 +67,9 @@ generation, including the runtime files that code needs.
 
 **Temporary exception.** `nbt` used to be built in. A project or library that uses it (a default `nbt: ...`, or the
 word `nbt` in one of its definition files) without declaring `minecraft` gets the dependency added automatically
-when it is loaded, so existing projects keep working. The added dependency is not written to the project file.
+when it is loaded, so existing projects keep working. The dependency is also written to the project file's
+`dependencies` section (the rest of the file stays), so this happens once; a file that can't be written gets a warning
+and the dependency is only added in memory. Libraries packed as `.fslib` can't be changed this way.
 TODO(legacy-nbt): remove this once all projects and libraries declare `dependencies: [minecraft]`
 (`HostLibrary.LegacyNatives`, `HostLibraries.WithLegacyDependencies` and its call sites in `LibraryLoader`).
 

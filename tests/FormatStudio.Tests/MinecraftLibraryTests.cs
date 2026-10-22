@@ -6,9 +6,11 @@ namespace FormatStudio.Tests;
 
 public class MinecraftLibraryTests
 {
+    private static string _directory = "";
+
     private static FormatProject Load(string settings, string field)
     {
-        var directory = TestPaths.NewTempDirectory();
+        var directory = _directory = TestPaths.NewTempDirectory();
         File.WriteAllText(Path.Combine(directory, "p.fstudio.yaml"), settings + "sources: [types/*.yaml]\n");
         Directory.CreateDirectory(Path.Combine(directory, "types"));
         File.WriteAllText(Path.Combine(directory, "types", "A.yaml"), $"struct: A\nfields:\n  - {field}\n");
@@ -47,7 +49,14 @@ public class MinecraftLibraryTests
         Assert.Empty(project.Diagnostics.Where(d => d.Severity == Severity.Error));
         Assert.True(HasMinecraft(project));
         Assert.NotNull(project.Natives.Find("nbt"));
-        Assert.Empty(project.Settings.Dependencies);
+        Assert.Equal(MinecraftLibrary.Name, project.Settings.Dependencies.Single().Library);
+        // The dependency is written to the project file, and the rest of it stays.
+        var text = File.ReadAllText(Path.Combine(_directory, "p.fstudio.yaml"));
+        Assert.Contains("library: minecraft", text);
+        Assert.Contains("sources: [types/*.yaml]", text);
+        var again = FormatProject.Load(_directory);
+        Assert.Single(again.Settings.Dependencies);
+        Assert.Equal(text, File.ReadAllText(Path.Combine(_directory, "p.fstudio.yaml")));
     }
 
     [Fact]

@@ -304,23 +304,25 @@ public sealed class ProjectSettings
         }
 
         map.Add("defaults", defaults);
-        map.AddIf("dependencies", Dependencies.Select(dependency =>
-        {
-            var dependencyMap = new YMap { { "library", dependency.Library } };
-            dependencyMap.AddIf("version", dependency.Version);
-            dependencyMap.AddIf("as", dependency.Alias);
-            var codegen = new YMap();
-            if (dependency.SkipCodegen) codegen.Add("skip", true);
-            codegen.AddIf("namespace", dependency.Namespace);
-            codegen.AddIf("package", dependency.Package);
-            if (codegen.Count > 0) dependencyMap.Add("codegen", codegen);
-            return (object?)dependencyMap;
-        }).ToList());
+        map.AddIf("dependencies", DependenciesYaml(Dependencies));
         if (Libraries is not ["libraries"]) map.Add("libraries", Libraries.Cast<object?>().ToList());
         map.Add("sources", Sources.Cast<object?>().ToList());
         map.AddIf("tests", Tests.Cast<object?>().ToList());
         return map;
     }
+
+    private static List<object?> DependenciesYaml(IEnumerable<LibraryDependency> dependencies) => dependencies.Select(dependency =>
+    {
+        var dependencyMap = new YMap { { "library", dependency.Library } };
+        dependencyMap.AddIf("version", dependency.Version);
+        dependencyMap.AddIf("as", dependency.Alias);
+        var codegen = new YMap();
+        if (dependency.SkipCodegen) codegen.Add("skip", true);
+        codegen.AddIf("namespace", dependency.Namespace);
+        codegen.AddIf("package", dependency.Package);
+        if (codegen.Count > 0) dependencyMap.Add("codegen", codegen);
+        return (object?)dependencyMap;
+    }).ToList();
 
     private static List<object?> CodegenYaml(IEnumerable<CodegenTarget> targets) => targets.Select(target =>
     {
@@ -342,6 +344,10 @@ public sealed class ProjectSettings
     /// </summary>
     public static string ReplaceCodegen(string text, IReadOnlyList<CodegenTarget> targets) =>
         ReplaceSection(text, "codegen", CodegenYaml(targets));
+
+    /// <summary>Replaces the top-level <c>dependencies</c> section of a project file's text, like <see cref="ReplaceCodegen"/>.</summary>
+    public static string ReplaceDependencies(string text, IReadOnlyList<LibraryDependency> dependencies) =>
+        ReplaceSection(text, "dependencies", DependenciesYaml(dependencies), GeneralKeys.TakeWhile(key => key != "dependencies").ToList());
 
     /// <summary>Replaces the top-level <c>protocols</c> section of a project file's text, like <see cref="ReplaceCodegen"/>.</summary>
     public static string ReplaceProtocols(string text, IReadOnlyList<ProtocolDef> protocols) =>
@@ -998,6 +1004,27 @@ public sealed class FormatProject
         var parsed = ProjectSettings.Parse(updated, file);
         File.WriteAllText(file, updated);
         return parsed;
+    }
+
+    /// <summary>
+    /// Writes the dependencies to the project file after <see cref="HostLibraries.WithLegacyDependencies"/> added some;
+    /// only its <c>dependencies</c> section changes. A file that can't be written stays as it is (a warning).
+    /// </summary>
+    // TODO(legacy-nbt): remove with HostLibraries.WithLegacyDependencies.
+    internal void SaveAddedDependencies(IReadOnlyList<LibraryDependency> added)
+    {
+        if (FilePath == null) return;
+        var names = string.Join(", ", added.Select(d => d.Library));
+        try
+        {
+            var file = Sandbox.Check(FilePath);
+            File.WriteAllText(file, ProjectSettings.ReplaceDependencies(File.ReadAllText(file), Settings.Dependencies));
+            Diagnostics.Info($"Added the dependency {names} to the project file: it uses native types that moved into it", new SourceLocation(Relative(FilePath)));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatDefinitionException)
+        {
+            Diagnostics.Warning($"Uses native types of the library {names}; add it to 'dependencies' in the project file ({e.Message})", new SourceLocation(Relative(FilePath)));
+        }
     }
 
     /// <summary>

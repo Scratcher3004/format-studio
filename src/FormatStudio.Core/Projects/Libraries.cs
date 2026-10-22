@@ -243,7 +243,17 @@ public sealed class LibraryLoader
         var where = project.FilePath != null ? new SourceLocation(project.Relative(project.FilePath)) : null;
         // TODO(legacy-nbt): once projects declare their dependencies, iterate project.Settings.Dependencies again.
         var texts = project.FilePath != null ? project.FindSources().Select(s => s.Text) : [];
-        foreach (var dependency in HostLibraries.WithLegacyDependencies(project.Settings.Dependencies, project.Defaults, texts))
+        var declared = project.Settings.Dependencies.Count;
+        var withLegacy = HostLibraries.WithLegacyDependencies(project.Settings.Dependencies, project.Defaults, texts);
+        if (withLegacy.Count > declared)
+        {
+            // The added dependencies are written to the project file, so that it declares what it uses from now on.
+            var added = withLegacy.Skip(declared).ToList();
+            project.Settings.Dependencies.AddRange(added);
+            project.SaveAddedDependencies(added);
+        }
+
+        foreach (var dependency in project.Settings.Dependencies)
         {
             try
             {
