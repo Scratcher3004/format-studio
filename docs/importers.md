@@ -19,7 +19,7 @@ import:
 ## Mojang importer (`mojang`)
 
 In `src/FormatStudio.Importers.Mojang`. Without a project, its own validation assumes `bedrock-network` NBT; the
-project should set `defaults.nbt: bedrock-network`.
+project should set `defaults.nbt: bedrock-network` and declare `dependencies: [minecraft]` for the NBT type.
 
 `import mojang` converts a release of [Mojang/bedrock-protocol-docs](https://github.com/Mojang/bedrock-protocol-docs)
 (zip or folder) into DSL files under `output` (`packets/`, `types/`, `enums/`, `variants/`, `aliases/`) plus

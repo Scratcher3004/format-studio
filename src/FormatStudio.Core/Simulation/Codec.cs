@@ -93,7 +93,7 @@ public sealed class Codec(FormatProject project)
     internal static string Describe(TypeRef type) => TypeExpressions.TryFormat(type) ?? type.ToString();
 
     /// <summary>A value for error messages, shortened.</summary>
-    internal static string Show(JsonNode? value)
+    public static string Show(JsonNode? value)
     {
         var text = value?.ToJsonString() ?? "null";
         return text.Length > 60 ? text[..57] + "..." : text;

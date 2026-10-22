@@ -63,8 +63,7 @@ writer: `Read<Kind>()` / `Write<Kind>(value)` for every primitive (`U8`, `I16LE`
 `UuidLE`, `F16LE` (as `System.Half`), `F64BE`, ...), `ReadUtf8(count, strict)`, `ReadUtf8Zero(strict)`, `ReadBytes(count)`,
 `Slice(length)`, `CheckCount(count, minElementSize, max)`, `Utf8Length(text)`, for padded strings
 `ReadUtf8Padded(count, pad, strict)`, `ReadUtf8Terminated(count, strict, checkPadding)` and
-`WriteUtf8Padded(text, count, pad)`, for filled sized values `SkipFill(pattern, check)` and `WriteFill(pattern, count)`, and `ReadNbt<Flavor>()` / `WriteNbt<Flavor>(raw)` for
-the NBT flavors the project uses (`Java`, `JavaNetwork`, `Bedrock`, `BedrockNetwork`). For `eof` lengths, span readers
+`WriteUtf8Padded(text, count, pad)`, for filled sized values `SkipFill(pattern, check)` and `WriteFill(pattern, count)`. For `eof` lengths, span readers
 need `Remaining`; stream readers need `AtEnd`, `ReadToEnd()` and `ReadUtf8ToEnd(strict)`. `strict` is true when `validateStrings` is on
 and rejects invalid UTF-8 with the exception type.
 

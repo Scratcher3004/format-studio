@@ -1,7 +1,7 @@
 # Native types of your own
 
 A [native type](dsl.md#native-types) is one the DSL can't describe: compressed blocks, bit-packed palettes, text
-components. Besides the built-in `nbt`, a project or library can declare its own. The declaration says what the type
+components. Besides `nbt` of the [`minecraft` library](libraries.md#the-minecraft-library), a project or library can declare its own. The declaration says what the type
 is called, which arguments it takes and how generated code handles it; a .NET plugin does the rest (decoding, encoding,
 default and random values).
 
@@ -42,14 +42,15 @@ default. The templates take the placeholders described in [code generation](code
 `{{writer}}`, `{{value}}`, `{{namespace}}`, `{{runtime}}` and the arguments by name (`{{order}}`,
 `{{order:pascal}}`). A generator the declaration has no `codegen` for asks the plugin class (`Codegen(generator)`).
 
-Two native types can't have the same name, also not a built-in one or one from a library, and no definition can be
+Two native types can't have the same name, also not one from the `minecraft` library or another library, and no definition can be
 named like a native type. `format-studio natives` lists the native types a project can use and where they come from.
 
 ## Writing the plugin
 
 The plugin is a class library that references `FormatStudio.Core` and implements `INativeType` with a public
 parameterless constructor. Its `Name`, `Description` and `Parameters` are not used (the declaration's are); see
-`NbtNative` for a complete example.
+`NbtNative` in `src/FormatStudio.Minecraft` for a complete example (it is a native type of a host library, which a
+plugin isn't needed for).
 
 ```csharp
 public sealed class RgbType : INativeType
@@ -158,7 +159,7 @@ library can add code for other generators, e.g. Java for a type that ships only 
 [plugin generator](generators.md#using-a-generator-in-a-project), with a `native-codegen` file among its sources:
 
 ```yaml
-native-codegen: rgb               # the native type: built-in, the project's or a library's
+native-codegen: rgb               # the native type: the project's or a library's
 doc: Java for rgb
 codegen:                          # as in a declaration
   java-stream:

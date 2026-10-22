@@ -16,6 +16,7 @@ defaults:
   check: warn            # ignore | warn | strict: padding of padded strings that wouldn't re-encode the same
   nbt: java-network      # arguments of a native type, here the NBT flavor: java | java-network | bedrock | bedrock-network
                          # (no default; needed when nbt is used without one)
+dependencies: [minecraft]   # libraries; nbt comes from the minecraft library (see libraries.md)
 sources:                 # globs; a type in a later glob replaces the one with the same name in an earlier glob
   - imported/**/*.yaml
   - overrides/**/*.yaml
@@ -146,7 +147,7 @@ fields:
 | `uuid` | 16 bytes: two 64-bit halves, most significant first, in the byte order (`uuidle` for Bedrock) |
 | `string` | Default encoding with the default length prefix |
 | `bytes`, `bytes[16]`, `bytes[eof]` | Raw bytes (shown as hex) |
-| `nbt`, `nbt(java)` | One NBT tag in the default or the given flavor (shown as SNBT); see [native types](#native-types) |
+| `nbt`, `nbt(java)` | One NBT tag in the default or the given flavor (shown as SNBT); needs the `minecraft` library, see [native types](#native-types) |
 | `Name` | Another definition |
 | `T[]` | Array with the default length prefix |
 | `T[4]`, `T[u16]`, `T[eof]`, `T[count * 2]` | Fixed count, prefix type, until the end, expression over earlier fields |
@@ -235,7 +236,9 @@ is still missing is an error. The name of a native type always means the native 
 |---|---|---|
 | `nbt` | `flavor`: `java` (big endian, named root), `java-network` (unnamed root, since 1.20.2), `bedrock` (little endian), `bedrock-network` (varints); no default | SNBT text, or `{"name": ..., "snbt": ...}` for a named root |
 
-Generated code reads and writes NBT as its raw bytes. Projects and libraries can declare native types of their own,
+`nbt` is a native type of the [`minecraft` library](libraries.md#the-minecraft-library): a project declares
+`dependencies: [minecraft]` to use it. Generated code reads and writes NBT as its raw bytes, with code from the library
+that is written into the output (`Natives/` or the `natives` package). Projects and libraries can declare native types of their own,
 implemented in .NET plugins: see [native types of your own](natives.md).
 
 ### Expressions

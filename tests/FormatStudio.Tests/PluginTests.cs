@@ -267,7 +267,7 @@ public class PluginTests
         var errors = FormatProject.Load(folder).Diagnostics.Where(d => d.Severity == Severity.Error).Select(d => d.Message).ToList();
         Assert.Contains(errors, e => e.Contains("Missing.dll doesn't exist"));
         Assert.Contains(errors, e => e.Contains("noclass: plugins/Colors.dll has no class Colors.Nope"));
-        Assert.Contains(errors, e => e.Contains("Two native types are named 'nbt': built-in and natives/c.yaml"));
+        Assert.Contains(errors, e => e.Contains("Two native types are named 'nbt': library minecraft and natives/c.yaml"));
         Assert.Contains(errors, e => e.Contains("Native type 'rgb' is also declared in natives/d.yaml") || e.Contains("Native type 'rgb' is also declared in natives/rgb.yaml"));
         Assert.Contains(errors, e => e.Contains("Parameter x needs its 'choices'"));
         Assert.Contains(errors, e => e.Contains("../../x.dll is outside the project"));

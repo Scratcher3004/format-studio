@@ -801,7 +801,7 @@ public sealed partial class MojangImporter
     {
         // Without a project, check with the defaults of the Bedrock network protocol (untyped properties are NBT).
         defaults ??= new FormatDefaults { Natives = { ["nbt"] = ["bedrock-network"] } };
-        var project = FormatProject.InMemory(_definitions.Values, new ProjectSettings { Defaults = defaults });
+        var project = FormatProject.InMemory(_definitions.Values, new ProjectSettings { Defaults = defaults }, Minecraft.MinecraftLibrary.NativeSet);
         Validation.Validator.Validate(project);
         _result.Diagnostics.AddRange(project.Diagnostics.Where(d => d.Severity != Severity.Info));
         _result.Definitions.AddRange(_definitions.Values.OrderBy(d => d.Name, StringComparer.Ordinal));

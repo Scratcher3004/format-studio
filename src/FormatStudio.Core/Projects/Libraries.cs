@@ -24,6 +24,8 @@ public sealed class LibraryPackage
     public IReadOnlyDictionary<string, byte[]> Resources { get; init; } = new Dictionary<string, byte[]>();
     /// <summary>Where the package comes from, e.g. its file or <c>built-in</c>; shown in messages.</summary>
     public required string Origin { get; init; }
+    /// <summary>The native types of a library the host provides in code (<see cref="HostLibrary"/>).</summary>
+    public IReadOnlyList<INativeType> HostNatives { get; init; } = [];
 
     public string Name => Settings.Name;
     public string? Version => Settings.Version;
@@ -159,8 +161,8 @@ public sealed class LibraryCatalog(IReadOnlyList<string> folders, FileSandbox sa
             .ToList();
     });
 
-    /// <summary>The libraries that come with Format Studio.</summary>
-    public static IReadOnlyList<LibraryPackage> Builtins => BuiltinPackages.Value;
+    /// <summary>The libraries that come with Format Studio: those embedded in Core and those the host registered.</summary>
+    public static IReadOnlyList<LibraryPackage> Builtins => [.. BuiltinPackages.Value, .. HostLibraries.Packages()];
 
     public static LibraryCatalog For(FormatProject project) => new(
         project.Settings.Libraries.Select(folder => Path.GetFullPath(folder, project.Directory)).ToList(), project.Sandbox);
@@ -239,7 +241,9 @@ public sealed class LibraryLoader
     {
         var loader = new LibraryLoader(project, catalog ?? LibraryCatalog.For(project));
         var where = project.FilePath != null ? new SourceLocation(project.Relative(project.FilePath)) : null;
-        foreach (var dependency in project.Settings.Dependencies)
+        // TODO(legacy-nbt): once projects declare their dependencies, iterate project.Settings.Dependencies again.
+        var texts = project.FilePath != null ? project.FindSources().Select(s => s.Text) : [];
+        foreach (var dependency in HostLibraries.WithLegacyDependencies(project.Settings.Dependencies, project.Defaults, texts))
         {
             try
             {
@@ -273,7 +277,8 @@ public sealed class LibraryLoader
         // The library as a project of its own, to check it and resolve its names as it sees them.
         var library = new FormatProject(package.Settings, _project.Directory) { Natives = _natives, Plugins = _project.Plugins };
         var dependencies = new List<FormatModule>();
-        foreach (var dependency in package.Settings.Dependencies)
+        // TODO(legacy-nbt): once libraries declare their dependencies, iterate package.Settings.Dependencies again.
+        foreach (var dependency in HostLibraries.WithLegacyDependencies(package.Settings.Dependencies, package.Settings.Defaults, package.Files.Select(f => f.Text)))
         {
             var module = Load(dependency.Library, dependency.Version, [.. chain, name]);
             dependencies.Add(module);
@@ -293,7 +298,7 @@ public sealed class LibraryLoader
             .Select(f => DeclaredNative.Read(f.Text, f.Path, files, _project.Plugins, natives, $"{package.Origin}!/{f.Path}"))
             .OfType<DeclaredNative>()
             .ToList();
-        var used = dependencies.SelectMany(d => d.Natives).Concat(declared).Distinct().ToList();
+        var used = dependencies.SelectMany(d => d.Natives).Concat(package.HostNatives).Concat(declared).Distinct().ToList();
         library.AddNatives(used, new SourceLocation($"{package.Origin}"));
         var extensions = package.Files.Where(f => NativeCodegenExtension.IsDeclaration(f.Text))
             .Select(f => NativeCodegenExtension.Read(f.Text, f.Path, files, natives, $"{package.Origin}!/{f.Path}"))

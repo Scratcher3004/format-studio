@@ -11,8 +11,6 @@ namespace FormatStudio.Runtime;
 /// </summary>
 public sealed class FormatStreamReader
 {
-    private const int MaxNbtDepth = 512;
-
     private readonly Stream _stream;
     private readonly long _length;
     private readonly byte[] _scratch = new byte[16];
@@ -295,46 +293,19 @@ public sealed class FormatStreamReader
         return result;
     }
 
-    /// <summary>Reads one NBT tag (big endian, named root) and returns its raw bytes.</summary>
-    public byte[] ReadNbtJava() => ReadNbt(NbtLayout.Java, named: true);
+    /// <summary>Starts recording the bytes read from here on; <see cref="StopRecording"/> returns them.</summary>
+    public void StartRecording() => _recording = new MemoryStream();
 
-    /// <summary>Reads one NBT tag (big endian, unnamed root) and returns its raw bytes.</summary>
-    public byte[] ReadNbtJavaNetwork() => ReadNbt(NbtLayout.Java, named: false);
-
-    /// <summary>Reads one NBT tag (little endian, named root) and returns its raw bytes.</summary>
-    public byte[] ReadNbtBedrock() => ReadNbt(NbtLayout.Bedrock, named: true);
-
-    /// <summary>Reads one NBT tag (little endian with varints, named root) and returns its raw bytes.</summary>
-    public byte[] ReadNbtBedrockNetwork() => ReadNbt(NbtLayout.BedrockNetwork, named: true);
-
-    private enum NbtLayout
+    /// <summary>Stops recording and returns the bytes read since <see cref="StartRecording"/> (none when not recording).</summary>
+    public byte[] StopRecording()
     {
-        Java,
-        Bedrock,
-        BedrockNetwork,
+        var bytes = _recording?.ToArray() ?? [];
+        _recording = null;
+        return bytes;
     }
 
-    private byte[] ReadNbt(NbtLayout layout, bool named)
-    {
-        _recording = new MemoryStream();
-        try
-        {
-            var type = ReadU8();
-            if (type != 0)
-            {
-                if (named) SkipNbtString(layout);
-                SkipNbtPayload(layout, type, 0);
-            }
-
-            return _recording.ToArray();
-        }
-        finally
-        {
-            _recording = null;
-        }
-    }
-
-    private void Skip(int count)
+    /// <summary>Skips <paramref name="count"/> bytes.</summary>
+    public void Skip(int count)
     {
         Span<byte> buffer = stackalloc byte[256];
         while (count > 0)
@@ -342,62 +313,6 @@ public sealed class FormatStreamReader
             var chunk = Math.Min(count, buffer.Length);
             Fill(buffer[..chunk]);
             count -= chunk;
-        }
-    }
-
-    private void SkipNbtString(NbtLayout layout) => Skip(layout switch
-    {
-        NbtLayout.Java => ReadU16BE(),
-        NbtLayout.Bedrock => ReadU16LE(),
-        _ => CheckCount(ReadVarUInt32(), 1),
-    });
-
-    private int ReadNbtLength(NbtLayout layout, int elementSize) => CheckCount(layout switch
-    {
-        NbtLayout.Java => ReadI32BE(),
-        NbtLayout.Bedrock => ReadI32LE(),
-        _ => ReadZigZag32(),
-    }, elementSize);
-
-    private void SkipNbtPayload(NbtLayout layout, byte type, int depth)
-    {
-        if (depth > MaxNbtDepth) throw new FormatDataException("NBT nested too deeply");
-        var network = layout == NbtLayout.BedrockNetwork;
-        switch (type)
-        {
-            case 1: Skip(1); break;
-            case 2: Skip(2); break;
-            case 3: if (network) ReadZigZag32(); else Skip(4); break;
-            case 4: if (network) ReadZigZag64(); else Skip(8); break;
-            case 5: Skip(4); break;
-            case 6: Skip(8); break;
-            case 7: Skip(ReadNbtLength(layout, 1)); break;
-            case 8: SkipNbtString(layout); break;
-            case 9:
-                var elementType = ReadU8();
-                var count = ReadNbtLength(layout, 0);
-                for (var i = 0; i < count; i++) SkipNbtPayload(layout, elementType, depth + 1);
-                break;
-            case 10:
-                while (true)
-                {
-                    var childType = ReadU8();
-                    if (childType == 0) break;
-                    SkipNbtString(layout);
-                    SkipNbtPayload(layout, childType, depth + 1);
-                }
-
-                break;
-            case 11:
-                var ints = ReadNbtLength(layout, network ? 1 : 4);
-                for (var i = 0; i < ints; i++) SkipNbtPayload(layout, 3, depth + 1);
-                break;
-            case 12:
-                var longs = ReadNbtLength(layout, network ? 1 : 8);
-                for (var i = 0; i < longs; i++) SkipNbtPayload(layout, 4, depth + 1);
-                break;
-            default:
-                throw new FormatDataException($"Unknown NBT tag type {type} at offset {Position - 1}");
         }
     }
 }

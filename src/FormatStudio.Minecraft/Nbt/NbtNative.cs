@@ -1,7 +1,8 @@
 using System.Text.Json.Nodes;
+using FormatStudio.Natives;
 using FormatStudio.Simulation;
 
-namespace FormatStudio.Natives;
+namespace FormatStudio.Minecraft;
 
 /// <summary>
 /// <c>nbt</c>: a root NBT tag in one of the <see cref="NbtFlavor"/>s, as SNBT text (or <c>{name, snbt}</c> for a named
@@ -11,8 +12,19 @@ public sealed class NbtNative : INativeType
 {
     public static NbtNative Instance { get; } = new();
 
-    private static readonly NativeCodegen CSharp = new("byte[]", "{{reader}}.ReadNbt{{flavor:pascal}}()", "{{writer}}.WriteNbt{{flavor:pascal}}({{value}})");
-    private static readonly NativeCodegen Java = new("byte[]", "{{reader}}.readNbt{{flavor:pascal}}()", "{{writer}}.writeNbt{{flavor:pascal}}({{value}})");
+    // The reading and writing code is a file of the generated code (Files/), not part of the runtime.
+    private static readonly NativeCodegen CSharp = new("byte[]",
+        "global::{{namespace}}.NbtCodec.Read{{flavor:pascal}}({{pass-reader}})",
+        "global::{{namespace}}.NbtCodec.Write{{flavor:pascal}}({{pass-writer}}, {{value}})",
+        [new NativeFile("NbtCodec.cs", MinecraftFiles.Text("NbtCodec.cs.txt"))]);
+    private static readonly NativeCodegen CSharpStream = new("byte[]",
+        "global::{{namespace}}.NbtStreamCodec.Read{{flavor:pascal}}({{pass-reader}})",
+        "global::{{namespace}}.NbtStreamCodec.Write{{flavor:pascal}}({{pass-writer}}, {{value}})",
+        [new NativeFile("NbtStreamCodec.cs", MinecraftFiles.Text("NbtStreamCodec.cs.txt"))]);
+    private static readonly NativeCodegen Java = new("byte[]",
+        "{{namespace}}.NbtCodec.read{{flavor:pascal}}({{reader}})",
+        "{{namespace}}.NbtCodec.write{{flavor:pascal}}({{writer}}, {{value}})",
+        [new NativeFile("NbtCodec.java", MinecraftFiles.Text("NbtCodec.java.txt"))]);
 
     private NbtNative()
     {
@@ -47,7 +59,8 @@ public sealed class NbtNative : INativeType
 
     public NativeCodegen? Codegen(string generator) => generator switch
     {
-        "csharp" or "csharp-stream" => CSharp,
+        "csharp" => CSharp,
+        "csharp-stream" => CSharpStream,
         "java-stream" => Java,
         _ => null,
     };

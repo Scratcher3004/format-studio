@@ -9,11 +9,6 @@ namespace FormatStudio.Runtime;
 /// </summary>
 public sealed class FormatStreamWriter(Stream stream)
 {
-    private static ReadOnlySpan<byte> EmptyNbtJava => [0x0A, 0x00, 0x00, 0x00];
-    private static ReadOnlySpan<byte> EmptyNbtJavaNetwork => [0x0A, 0x00];
-    private static ReadOnlySpan<byte> EmptyNbtBedrock => [0x0A, 0x00, 0x00, 0x00];
-    private static ReadOnlySpan<byte> EmptyNbtBedrockNetwork => [0x0A, 0x00, 0x00];
-
     private readonly byte[] _scratch = new byte[16];
 
     /// <summary>Number of bytes written by this writer.</summary>
@@ -144,10 +139,4 @@ public sealed class FormatStreamWriter(Stream stream)
         WriteUtf8(value);
         WriteU8(0);
     }
-
-    // Raw NBT as read by FormatStreamReader.ReadNbt*; null writes an empty compound.
-    public void WriteNbtJava(byte[]? raw) => WriteBytes(raw ?? EmptyNbtJava);
-    public void WriteNbtJavaNetwork(byte[]? raw) => WriteBytes(raw ?? EmptyNbtJavaNetwork);
-    public void WriteNbtBedrock(byte[]? raw) => WriteBytes(raw ?? EmptyNbtBedrock);
-    public void WriteNbtBedrockNetwork(byte[]? raw) => WriteBytes(raw ?? EmptyNbtBedrockNetwork);
 }

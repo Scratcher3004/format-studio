@@ -138,6 +138,7 @@ internal static class Commands
             var origin = native switch
             {
                 DeclaredNative declared => declared.Source.File + (declared.Unavailable != null ? $" (can't decode or encode: {declared.Unavailable})" : ""),
+                _ when HostLibraries.Of(native) is { } library => $"library {library.Name}",
                 _ => "built-in",
             };
             Console.WriteLine($"{native.Name + (parameters.Length > 0 ? $"({parameters})" : ""),-40} {origin}");

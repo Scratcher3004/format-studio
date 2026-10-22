@@ -7,12 +7,6 @@ namespace FormatStudio.Runtime;
 /// <summary>Writes wire primitives to a buffer writer. Counterpart of <see cref="FormatReader"/>.</summary>
 public ref struct FormatWriter
 {
-    // Empty compound tags: type, empty root name (except Java network), end.
-    private static ReadOnlySpan<byte> EmptyNbtJava => [0x0A, 0x00, 0x00, 0x00];
-    private static ReadOnlySpan<byte> EmptyNbtJavaNetwork => [0x0A, 0x00];
-    private static ReadOnlySpan<byte> EmptyNbtBedrock => [0x0A, 0x00, 0x00, 0x00];
-    private static ReadOnlySpan<byte> EmptyNbtBedrockNetwork => [0x0A, 0x00, 0x00];
-
     private readonly IBufferWriter<byte> _output;
 
     public FormatWriter(IBufferWriter<byte> output)
@@ -154,10 +148,4 @@ public ref struct FormatWriter
         WriteUtf8(value);
         WriteU8(0);
     }
-
-    // Raw NBT as read by FormatReader.ReadNbt*; null writes an empty compound.
-    public void WriteNbtJava(byte[]? raw) => WriteBytes(raw ?? EmptyNbtJava);
-    public void WriteNbtJavaNetwork(byte[]? raw) => WriteBytes(raw ?? EmptyNbtJavaNetwork);
-    public void WriteNbtBedrock(byte[]? raw) => WriteBytes(raw ?? EmptyNbtBedrock);
-    public void WriteNbtBedrockNetwork(byte[]? raw) => WriteBytes(raw ?? EmptyNbtBedrockNetwork);
 }

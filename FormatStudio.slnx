@@ -3,6 +3,7 @@
     <Project Path="src/FormatStudio.Cli/FormatStudio.Cli.csproj" />
     <Project Path="src/FormatStudio.Core/FormatStudio.Core.csproj" />
     <Project Path="src/FormatStudio.Importers.Mojang/FormatStudio.Importers.Mojang.csproj" />
+    <Project Path="src/FormatStudio.Minecraft/FormatStudio.Minecraft.csproj" />
     <Project Path="src/FormatStudio.Runtime/FormatStudio.Runtime.csproj" />
     <Project Path="src/FormatStudio.Testing/FormatStudio.Testing.csproj" />
     <Project Path="src/FormatStudio.Web/FormatStudio.Web.csproj" />

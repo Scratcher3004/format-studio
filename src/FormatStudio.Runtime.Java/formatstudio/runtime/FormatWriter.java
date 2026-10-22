@@ -20,12 +20,6 @@ public final class FormatWriter {
         void write(FormatWriter writer, T value) throws IOException;
     }
 
-    // Empty compound tags: type, empty root name (except Java network), end.
-    private static final byte[] EMPTY_NBT_JAVA = {0x0A, 0x00, 0x00, 0x00};
-    private static final byte[] EMPTY_NBT_JAVA_NETWORK = {0x0A, 0x00};
-    private static final byte[] EMPTY_NBT_BEDROCK = {0x0A, 0x00, 0x00, 0x00};
-    private static final byte[] EMPTY_NBT_BEDROCK_NETWORK = {0x0A, 0x00, 0x00};
-
     private final OutputStream output;
     private final byte[] scratch = new byte[10];
     private long written;
@@ -273,22 +267,5 @@ public final class FormatWriter {
     public void writeUtf8Zero(String value) throws IOException {
         writeUtf8(value);
         writeU8(0);
-    }
-
-    // Raw NBT as read by FormatReader.readNbt*; null writes an empty compound.
-    public void writeNbtJava(byte[] raw) throws IOException {
-        writeBytes(raw != null ? raw : EMPTY_NBT_JAVA);
-    }
-
-    public void writeNbtJavaNetwork(byte[] raw) throws IOException {
-        writeBytes(raw != null ? raw : EMPTY_NBT_JAVA_NETWORK);
-    }
-
-    public void writeNbtBedrock(byte[] raw) throws IOException {
-        writeBytes(raw != null ? raw : EMPTY_NBT_BEDROCK);
-    }
-
-    public void writeNbtBedrockNetwork(byte[] raw) throws IOException {
-        writeBytes(raw != null ? raw : EMPTY_NBT_BEDROCK_NETWORK);
     }
 }

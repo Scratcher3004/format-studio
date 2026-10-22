@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <RootNamespace>FormatStudio.Minecraft</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\FormatStudio.Core\FormatStudio.Core.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Runtime files the generated code of the native types needs; written into the output of the generators.
+             WithCulture: otherwise ".cs" in NbtCodec.cs.txt would be taken for the Czech culture. -->
+        <EmbeddedResource Include="Files\*" LogicalName="Files/%(Filename)%(Extension)" WithCulture="false" />
+    </ItemGroup>
+
+</Project>

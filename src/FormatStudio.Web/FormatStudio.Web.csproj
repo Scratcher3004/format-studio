@@ -12,6 +12,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\FormatStudio.Core\FormatStudio.Core.csproj" />
+        <ProjectReference Include="..\FormatStudio.Minecraft\FormatStudio.Minecraft.csproj" />
         <ProjectReference Include="..\FormatStudio.Importers.Mojang\FormatStudio.Importers.Mojang.csproj" />
     </ItemGroup>
 

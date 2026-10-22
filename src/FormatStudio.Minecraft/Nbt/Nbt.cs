@@ -2,8 +2,9 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using FormatStudio.Model;
+using FormatStudio.Simulation;
 
-namespace FormatStudio.Simulation;
+namespace FormatStudio.Minecraft;
 
 public enum NbtFlavor
 {

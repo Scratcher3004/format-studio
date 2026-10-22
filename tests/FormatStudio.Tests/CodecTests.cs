@@ -3,6 +3,7 @@ using FormatStudio.Dsl;
 using FormatStudio.Expressions;
 using FormatStudio.Model;
 using FormatStudio.Projects;
+using FormatStudio.Minecraft;
 using FormatStudio.Simulation;
 
 namespace FormatStudio.Tests;

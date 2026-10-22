@@ -6,6 +6,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\FormatStudio.Core\FormatStudio.Core.csproj" />
+        <ProjectReference Include="..\FormatStudio.Minecraft\FormatStudio.Minecraft.csproj" />
     </ItemGroup>
 
 </Project>

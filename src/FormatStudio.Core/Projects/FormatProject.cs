@@ -184,6 +184,13 @@ public sealed class ProjectSettings
         {
             foreach (var dependency in dependencies)
             {
+                // A library name alone: dependencies: [minecraft]
+                if (dependency is JsonValue name && name.GetValueKind() == System.Text.Json.JsonValueKind.String)
+                {
+                    settings.Dependencies.Add(new LibraryDependency { Library = name.ToString() });
+                    continue;
+                }
+
                 if (dependency is not JsonObject map || map["library"]?.ToString() is not { } library)
                     throw new FormatDefinitionException("A dependency needs a 'library'", new SourceLocation(file));
                 var dependencyCodegen = map["codegen"] as JsonObject;
@@ -594,7 +601,7 @@ public sealed class FormatProject
     private static string NativeOrigin(INativeType type) => type switch
     {
         DeclaredNative declared => declared.Source.File,
-        _ when NativeTypes.IsBuiltIn(type.Name) => "built-in",
+        _ when HostLibraries.Of(type) is { } library => $"library {library.Name}",
         _ => type.GetType().FullName ?? type.Name,
     };
 
@@ -641,9 +648,12 @@ public sealed class FormatProject
         var tag => Unalias(tag) is StringRef ? VariantTagKind.String : VariantTagKind.Integer,
     };
 
-    public static FormatProject InMemory(IEnumerable<TypeDef> definitions, ProjectSettings? settings = null)
+    public static FormatProject InMemory(IEnumerable<TypeDef> definitions, ProjectSettings? settings = null, NativeTypes? natives = null)
     {
-        var project = new FormatProject(settings ?? new ProjectSettings(), System.IO.Directory.GetCurrentDirectory());
+        var project = new FormatProject(settings ?? new ProjectSettings(), System.IO.Directory.GetCurrentDirectory())
+        {
+            Natives = natives ?? NativeTypes.BuiltIn,
+        };
         foreach (var definition in definitions) project.Add(definition);
         return project;
     }
@@ -714,19 +724,25 @@ public sealed class FormatProject
         return result;
     }
 
-    private void LoadSources()
+    /// <summary>The definition files of the project, each with the number of the source pattern that found it first.</summary>
+    internal List<(string File, int Pattern, string Text)> FindSources()
     {
         var excludes = Settings.Sources.Where(s => s.StartsWith('!')).Select(s => s[1..]).ToList();
         excludes.Add("**/*" + ProjectSettings.Extension);
         // Test files are never definitions, also when a source pattern like the default **/*.yaml takes them in.
         excludes.AddRange(Settings.Tests);
-        var origin = new Dictionary<string, int>(StringComparer.Ordinal);
         var seenFiles = new HashSet<string>(StringComparer.Ordinal);
-        var sources = Settings.Sources.Where(s => !s.StartsWith('!'))
+        return Settings.Sources.Where(s => !s.StartsWith('!'))
             .SelectMany((pattern, index) => Glob(Directory, [pattern], excludes, Sandbox).Select(file => (File: file, Pattern: index + 1)))
             .Where(source => seenFiles.Add(source.File))
             .Select(source => (source.File, source.Pattern, Text: File.ReadAllText(source.File)))
             .ToList();
+    }
+
+    private void LoadSources()
+    {
+        var origin = new Dictionary<string, int>(StringComparer.Ordinal);
+        var sources = FindSources();
 
         // Generators first, which native types name in their codegen.
         var files = NativeFiles.Folder(Directory, Sandbox);

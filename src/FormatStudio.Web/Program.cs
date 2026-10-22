@@ -1,10 +1,12 @@
 using FormatStudio.Importers;
 using FormatStudio.Importers.Mojang;
+using FormatStudio.Minecraft;
 using FormatStudio.Web;
 using FormatStudio.Web.Components;
 using MudBlazor.Services;
 
 ImporterRegistry.Register(new MojangImport());
+MinecraftLibrary.Register();
 
 // The content root is the build output, not the current folder (which is the caller's, see RunWorkingDirectory).
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = AppContext.BaseDirectory });

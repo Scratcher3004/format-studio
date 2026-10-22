@@ -1,6 +1,7 @@
 using FormatStudio.Cli;
 using FormatStudio.Importers;
 using FormatStudio.Importers.Mojang;
+using FormatStudio.Minecraft;
 using FormatStudio.Model;
 
 const string usage = """
@@ -62,6 +63,7 @@ const string usage = """
     """;
 
 ImporterRegistry.Register(new MojangImport());
+MinecraftLibrary.Register();
 
 if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
 {

@@ -43,9 +43,33 @@ dependencies:
 libraries: [libraries, ../shared/libraries]   # folders with .fslib packages; default: [libraries]
 ```
 
+A dependency with nothing but a name can be written as just the name: `dependencies: [geo, minecraft]`.
+
 Packages are found in the `libraries` folders (relative to the project, inside the web UI's workspace), then among
 the built-in libraries that come with Format Studio. `format-studio libraries` lists what a project loads, with
 versions and packages.
+
+### The `minecraft` library
+
+`minecraft` is a built-in library with the native types for Minecraft's formats; today that is `nbt` (see
+[native types](dsl.md#native-types)). It is not part of Core but of `FormatStudio.Minecraft`, an assembly that the
+command line and the web UI register at start-up (`MinecraftLibrary.Register()`), and which a program using
+`FormatStudio.Core` on its own has to register too. Projects and libraries that use `nbt` declare it:
+
+```yaml
+dependencies: [minecraft]
+defaults:
+  nbt: java-network
+```
+
+Such host libraries (`HostLibrary` in Core) have no definition files; they provide native types with their code
+generation, including the runtime files that code needs.
+
+**Temporary exception.** `nbt` used to be built in. A project or library that uses it (a default `nbt: ...`, or the
+word `nbt` in one of its definition files) without declaring `minecraft` gets the dependency added automatically
+when it is loaded, so existing projects keep working. The added dependency is not written to the project file.
+TODO(legacy-nbt): remove this once all projects and libraries declare `dependencies: [minecraft]`
+(`HostLibrary.LegacyNatives`, `HostLibraries.WithLegacyDependencies` and its call sites in `LibraryLoader`).
 
 - **Names.** A library's definitions are referenced as `g.Point` (by alias) or `geo.Point` (by library name), and by
   name alone (`Point`) when the project has no definition of that name and no other direct dependency has one;

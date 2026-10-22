@@ -1,0 +1,166 @@
+package {{namespace}};
+
+import {{runtime}}.FormatDataException;
+import {{runtime}}.FormatReader;
+import {{runtime}}.FormatWriter;
+
+import java.io.IOException;
+
+/** Reads and writes NBT tags as raw bytes: the code of the {@code nbt} native type of the minecraft library. */
+public final class NbtCodec {
+    private static final int MAX_DEPTH = 512;
+    private static final int JAVA = 0;
+    private static final int BEDROCK = 1;
+    private static final int BEDROCK_NETWORK = 2;
+
+    // Empty compound tags: type, empty root name (except Java network), end.
+    private static final byte[] EMPTY_JAVA = {0x0A, 0x00, 0x00, 0x00};
+    private static final byte[] EMPTY_JAVA_NETWORK = {0x0A, 0x00};
+    private static final byte[] EMPTY_BEDROCK = {0x0A, 0x00, 0x00, 0x00};
+    private static final byte[] EMPTY_BEDROCK_NETWORK = {0x0A, 0x00, 0x00};
+
+    private NbtCodec() {
+    }
+
+    /** Reads one NBT tag (big endian, named root) and returns its raw bytes. */
+    public static byte[] readJava(FormatReader reader) throws IOException {
+        return read(reader, JAVA, true);
+    }
+
+    /** Reads one NBT tag (big endian, unnamed root) and returns its raw bytes. */
+    public static byte[] readJavaNetwork(FormatReader reader) throws IOException {
+        return read(reader, JAVA, false);
+    }
+
+    /** Reads one NBT tag (little endian, named root) and returns its raw bytes. */
+    public static byte[] readBedrock(FormatReader reader) throws IOException {
+        return read(reader, BEDROCK, true);
+    }
+
+    /** Reads one NBT tag (little endian with varints, named root) and returns its raw bytes. */
+    public static byte[] readBedrockNetwork(FormatReader reader) throws IOException {
+        return read(reader, BEDROCK_NETWORK, true);
+    }
+
+    // The write methods take the raw bytes as read above; null writes an empty compound.
+    public static void writeJava(FormatWriter writer, byte[] raw) throws IOException {
+        writer.writeBytes(raw != null ? raw : EMPTY_JAVA);
+    }
+
+    public static void writeJavaNetwork(FormatWriter writer, byte[] raw) throws IOException {
+        writer.writeBytes(raw != null ? raw : EMPTY_JAVA_NETWORK);
+    }
+
+    public static void writeBedrock(FormatWriter writer, byte[] raw) throws IOException {
+        writer.writeBytes(raw != null ? raw : EMPTY_BEDROCK);
+    }
+
+    public static void writeBedrockNetwork(FormatWriter writer, byte[] raw) throws IOException {
+        writer.writeBytes(raw != null ? raw : EMPTY_BEDROCK_NETWORK);
+    }
+
+    private static byte[] read(FormatReader reader, int layout, boolean named) throws IOException {
+        reader.startRecording();
+        try {
+            int type = reader.readU8();
+            if (type != 0) {
+                if (named) skipString(reader, layout);
+                skipPayload(reader, layout, type, 0);
+            }
+
+            return reader.stopRecording();
+        } finally {
+            reader.stopRecording();
+        }
+    }
+
+    private static void skipString(FormatReader reader, int layout) throws IOException {
+        switch (layout) {
+            case JAVA:
+                reader.skip(reader.readU16BE());
+                break;
+            case BEDROCK:
+                reader.skip(reader.readU16LE());
+                break;
+            default:
+                reader.skip(reader.checkCount(reader.readVarUInt32(), 1));
+                break;
+        }
+    }
+
+    private static int readLength(FormatReader reader, int layout, int elementSize) throws IOException {
+        long count;
+        switch (layout) {
+            case JAVA:
+                count = reader.readI32BE();
+                break;
+            case BEDROCK:
+                count = reader.readI32LE();
+                break;
+            default:
+                count = reader.readZigZag32();
+                break;
+        }
+
+        return reader.checkCount(count, elementSize);
+    }
+
+    private static void skipPayload(FormatReader reader, int layout, int type, int depth) throws IOException {
+        if (depth > MAX_DEPTH) throw new FormatDataException("NBT nested too deeply");
+        boolean network = layout == BEDROCK_NETWORK;
+        switch (type) {
+            case 1:
+                reader.skip(1);
+                break;
+            case 2:
+                reader.skip(2);
+                break;
+            case 3:
+                if (network) reader.readZigZag32();
+                else reader.skip(4);
+                break;
+            case 4:
+                if (network) reader.readZigZag64();
+                else reader.skip(8);
+                break;
+            case 5:
+                reader.skip(4);
+                break;
+            case 6:
+                reader.skip(8);
+                break;
+            case 7:
+                reader.skip(readLength(reader, layout, 1));
+                break;
+            case 8:
+                skipString(reader, layout);
+                break;
+            case 9: {
+                int elementType = reader.readU8();
+                int count = readLength(reader, layout, 0);
+                for (int i = 0; i < count; i++) skipPayload(reader, layout, elementType, depth + 1);
+                break;
+            }
+            case 10:
+                while (true) {
+                    int childType = reader.readU8();
+                    if (childType == 0) break;
+                    skipString(reader, layout);
+                    skipPayload(reader, layout, childType, depth + 1);
+                }
+                break;
+            case 11: {
+                int count = readLength(reader, layout, network ? 1 : 4);
+                for (int i = 0; i < count; i++) skipPayload(reader, layout, 3, depth + 1);
+                break;
+            }
+            case 12: {
+                int count = readLength(reader, layout, network ? 1 : 8);
+                for (int i = 0; i < count; i++) skipPayload(reader, layout, 4, depth + 1);
+                break;
+            }
+            default:
+                throw new FormatDataException("Unknown NBT tag type " + type + " at offset " + (reader.position() - 1));
+        }
+    }
+}

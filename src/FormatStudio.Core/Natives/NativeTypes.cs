@@ -18,14 +18,11 @@ public sealed partial class NativeTypes
         _extensions = extensions ?? [];
     }
 
-    /// <summary>The types that come with Format Studio.</summary>
-    public static NativeTypes BuiltIn { get; } = new(new Dictionary<string, INativeType>(StringComparer.Ordinal)
-    {
-        [NbtNative.Instance.Name] = NbtNative.Instance,
-    });
-
-    /// <summary>Whether a name is a built-in type, written without arguments as a keyword (<c>nbt</c>).</summary>
-    public static bool IsBuiltIn(string name) => BuiltIn._types.ContainsKey(name);
+    /// <summary>
+    /// The types every project has: none. Native types come from the host's libraries (<see cref="HostLibrary"/>, e.g.
+    /// <c>minecraft</c>), from other libraries and from the project itself.
+    /// </summary>
+    public static NativeTypes BuiltIn { get; } = new(new Dictionary<string, INativeType>(StringComparer.Ordinal));
 
     public IEnumerable<INativeType> All => _types.Values;
 

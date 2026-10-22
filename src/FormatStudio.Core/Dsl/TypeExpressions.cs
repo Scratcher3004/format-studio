@@ -53,7 +53,6 @@ public static partial class TypeExpressions
             case "bytes": return new BytesRef(LengthSpec.Default);
         }
 
-        if (NativeTypes.IsBuiltIn(text)) return new NativeRef(text);
         if (text.EndsWith(')'))
         {
             var open = text.IndexOf('(');
@@ -109,8 +108,6 @@ public static partial class TypeExpressions
                 return $"bytes[{FormatLength(bytes.Length)}]";
             case ArrayRef { Element: BytesRef }:
                 return null;
-            case NativeRef { Args.Count: 0 } native when NativeTypes.IsBuiltIn(native.Name):
-                return native.Name;
             case NativeRef native when native.Args.All(IsArgument):
                 return native.ToString();
             case OptionalRef optional:

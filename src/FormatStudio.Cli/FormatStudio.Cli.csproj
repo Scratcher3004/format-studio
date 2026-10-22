@@ -8,6 +8,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\FormatStudio.Core\FormatStudio.Core.csproj" />
+        <ProjectReference Include="..\FormatStudio.Minecraft\FormatStudio.Minecraft.csproj" />
         <ProjectReference Include="..\FormatStudio.Importers.Mojang\FormatStudio.Importers.Mojang.csproj" />
         <!-- For test with targets: compiles generated C# and Java and runs the cases against it. -->
         <ProjectReference Include="..\FormatStudio.Testing\FormatStudio.Testing.csproj" />

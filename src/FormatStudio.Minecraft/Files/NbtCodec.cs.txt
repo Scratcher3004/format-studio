@@ -1,0 +1,115 @@
+#nullable enable
+
+namespace {{namespace}};
+
+using System;
+using {{runtime}};
+
+/// <summary>Reads and writes NBT tags as raw bytes: the code of the <c>nbt</c> native type of the minecraft library.</summary>
+public static class NbtCodec
+{
+    private const int MaxDepth = 512;
+
+    private enum Layout
+    {
+        Java,
+        Bedrock,
+        BedrockNetwork,
+    }
+
+    // Empty compound tags: type, empty root name (except Java network), end.
+    private static ReadOnlySpan<byte> EmptyJava => [0x0A, 0x00, 0x00, 0x00];
+    private static ReadOnlySpan<byte> EmptyJavaNetwork => [0x0A, 0x00];
+    private static ReadOnlySpan<byte> EmptyBedrock => [0x0A, 0x00, 0x00, 0x00];
+    private static ReadOnlySpan<byte> EmptyBedrockNetwork => [0x0A, 0x00, 0x00];
+
+    /// <summary>Reads one NBT tag (big endian, named root) and returns its raw bytes.</summary>
+    public static byte[] ReadJava(ref FormatReader reader) => Read(ref reader, Layout.Java, true);
+
+    /// <summary>Reads one NBT tag (big endian, unnamed root) and returns its raw bytes.</summary>
+    public static byte[] ReadJavaNetwork(ref FormatReader reader) => Read(ref reader, Layout.Java, false);
+
+    /// <summary>Reads one NBT tag (little endian, named root) and returns its raw bytes.</summary>
+    public static byte[] ReadBedrock(ref FormatReader reader) => Read(ref reader, Layout.Bedrock, true);
+
+    /// <summary>Reads one NBT tag (little endian with varints, named root) and returns its raw bytes.</summary>
+    public static byte[] ReadBedrockNetwork(ref FormatReader reader) => Read(ref reader, Layout.BedrockNetwork, true);
+
+    // The write methods take the raw bytes as read above; null writes an empty compound.
+    public static void WriteJava(ref FormatWriter writer, byte[]? raw) => writer.WriteBytes(raw ?? EmptyJava);
+
+    public static void WriteJavaNetwork(ref FormatWriter writer, byte[]? raw) => writer.WriteBytes(raw ?? EmptyJavaNetwork);
+
+    public static void WriteBedrock(ref FormatWriter writer, byte[]? raw) => writer.WriteBytes(raw ?? EmptyBedrock);
+
+    public static void WriteBedrockNetwork(ref FormatWriter writer, byte[]? raw) => writer.WriteBytes(raw ?? EmptyBedrockNetwork);
+
+    private static byte[] Read(ref FormatReader reader, Layout layout, bool named)
+    {
+        var start = reader.Position;
+        var type = reader.ReadU8();
+        if (type != 0)
+        {
+            if (named) SkipString(ref reader, layout);
+            SkipPayload(ref reader, layout, type, 0);
+        }
+
+        return reader.ReadSince(start);
+    }
+
+    private static void SkipString(ref FormatReader reader, Layout layout) => reader.Skip(layout switch
+    {
+        Layout.Java => reader.ReadU16BE(),
+        Layout.Bedrock => reader.ReadU16LE(),
+        _ => reader.CheckCount(reader.ReadVarUInt32(), 1),
+    });
+
+    private static int ReadLength(ref FormatReader reader, Layout layout, int elementSize) => reader.CheckCount(layout switch
+    {
+        Layout.Java => reader.ReadI32BE(),
+        Layout.Bedrock => reader.ReadI32LE(),
+        _ => reader.ReadZigZag32(),
+    }, elementSize);
+
+    private static void SkipPayload(ref FormatReader reader, Layout layout, byte type, int depth)
+    {
+        if (depth > MaxDepth) throw new FormatDataException("NBT nested too deeply");
+        var network = layout == Layout.BedrockNetwork;
+        switch (type)
+        {
+            case 1: reader.Skip(1); break;
+            case 2: reader.Skip(2); break;
+            case 3: if (network) reader.ReadZigZag32(); else reader.Skip(4); break;
+            case 4: if (network) reader.ReadZigZag64(); else reader.Skip(8); break;
+            case 5: reader.Skip(4); break;
+            case 6: reader.Skip(8); break;
+            case 7: reader.Skip(ReadLength(ref reader, layout, 1)); break;
+            case 8: SkipString(ref reader, layout); break;
+            case 9:
+                var elementType = reader.ReadU8();
+                var count = ReadLength(ref reader, layout, 0);
+                for (var i = 0; i < count; i++) SkipPayload(ref reader, layout, elementType, depth + 1);
+                break;
+            case 10:
+                while (true)
+                {
+                    var childType = reader.ReadU8();
+                    if (childType == 0) break;
+                    SkipString(ref reader, layout);
+                    SkipPayload(ref reader, layout, childType, depth + 1);
+                }
+
+                break;
+            case 11:
+                var ints = ReadLength(ref reader, layout, network ? 1 : 4);
+                for (var i = 0; i < ints; i++) SkipPayload(ref reader, layout, 3, depth + 1);
+                break;
+            case 12:
+                var longs = ReadLength(ref reader, layout, network ? 1 : 8);
+                for (var i = 0; i < longs; i++) SkipPayload(ref reader, layout, 4, depth + 1);
+                break;
+            default:
+                throw new FormatDataException($"Unknown NBT tag type {type} at offset {reader.Position - 1}");
+        }
+    }
+}

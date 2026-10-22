@@ -8,6 +8,7 @@ defaults:
   length: varint32
   string: utf8
   nbt: java-network
+dependencies: [minecraft]
 sources:
   - types/**/*.yaml
   - packets/**/*.yaml

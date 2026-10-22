@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FormatStudio.Core\FormatStudio.Core.csproj" />
+    <ProjectReference Include="..\..\src\FormatStudio.Minecraft\FormatStudio.Minecraft.csproj" />
     <ProjectReference Include="..\..\src\FormatStudio.Importers.Mojang\FormatStudio.Importers.Mojang.csproj" />
     <ProjectReference Include="..\..\src\FormatStudio.Runtime\FormatStudio.Runtime.csproj" />
     <ProjectReference Include="..\..\src\FormatStudio.Testing\FormatStudio.Testing.csproj" />

@@ -229,9 +229,6 @@ public static class DslWriter
                 map.Add("fixed", fixedPoint.Base.ToString());
                 map.Add("fraction", fixedPoint.FractionBits);
                 break;
-            case NativeRef native when NativeTypes.IsBuiltIn(native.Name):
-                map.Add(native.Name, native.Args.Count == 1 ? Argument(native.Args[0]) : native.Args.Select(Argument).ToList());
-                break;
             case NativeRef native:
                 map.Add("native", native.Name);
                 if (native.Args.Count > 0) map.Add("args", native.Args.Select(Argument).ToList());
