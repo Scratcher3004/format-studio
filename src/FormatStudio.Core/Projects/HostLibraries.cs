@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using FormatStudio.Codegen;
 using FormatStudio.Natives;
 
 namespace FormatStudio.Projects;
@@ -15,6 +16,8 @@ public sealed class HostLibrary
     public string Description { get; init; } = "";
     /// <summary>The native types the library provides to the projects that depend on it.</summary>
     public IReadOnlyList<INativeType> Natives { get; init; } = [];
+    /// <summary>The code generators the library provides to the projects that depend on it, e.g. <c>netty</c>.</summary>
+    public IReadOnlyList<ICodeGenerator> Generators { get; init; } = [];
 
     /// <summary>
     /// Names of native types that used to be built in. A project or library that uses one without depending on this
@@ -46,6 +49,9 @@ public static class HostLibraries
     /// <summary>The library that provides a native type, or null.</summary>
     public static HostLibrary? Of(INativeType type) => All.FirstOrDefault(l => l.Natives.Contains(type));
 
+    /// <summary>The library that provides a code generator, or null.</summary>
+    public static HostLibrary? Of(ICodeGenerator generator) => All.FirstOrDefault(l => l.Generators.Contains(generator));
+
     /// <summary>The libraries as packages, for the library catalog.</summary>
     internal static IEnumerable<LibraryPackage> Packages() => All.Select(library => new LibraryPackage
     {
@@ -54,6 +60,7 @@ public static class HostLibraries
         Files = [],
         Origin = $"built-in {library.Name}",
         HostNatives = library.Natives,
+        HostGenerators = library.Generators,
     });
 
     /// <summary>

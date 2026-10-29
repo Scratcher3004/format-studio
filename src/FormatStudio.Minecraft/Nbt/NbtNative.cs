@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using FormatStudio.Minecraft.Netty;
 using FormatStudio.Natives;
 using FormatStudio.Simulation;
 
@@ -6,7 +7,7 @@ namespace FormatStudio.Minecraft;
 
 /// <summary>
 /// <c>nbt</c>: a root NBT tag in one of the <see cref="NbtFlavor"/>s, as SNBT text (or <c>{name, snbt}</c> for a named
-/// root). Generated code keeps the tag's raw bytes.
+/// root). Generated code keeps the tag's raw bytes, except that of the <c>netty</c> generator, which has Minecraft's tags.
 /// </summary>
 public sealed class NbtNative : INativeType
 {
@@ -25,6 +26,14 @@ public sealed class NbtNative : INativeType
         "{{namespace}}.NbtCodec.read{{flavor:pascal}}({{reader}})",
         "{{namespace}}.NbtCodec.write{{flavor:pascal}}({{writer}}, {{value}})",
         [new NativeFile("NbtCodec.java", MinecraftFiles.Text("NbtCodec.java.txt"))]);
+    // Minecraft's own tags; the netty generator only allows the network flavor, the one Minecraft's codecs read.
+    private static readonly NativeCodegen NettyCode = new("net.minecraft.nbt.Tag",
+        "{{namespace}}.NettyNbt.read{{flavor:pascal}}({{reader}})",
+        "{{namespace}}.NettyNbt.write{{flavor:pascal}}({{writer}}, {{value}})",
+        [new NativeFile("NbtCodec.java", MinecraftFiles.Text("NbtCodec.java.txt")), new NativeFile("NettyNbt.java", MinecraftFiles.Text("NettyNbt.java.txt"))])
+    {
+        Codec = "net.minecraft.network.codec.ByteBufCodecs.TAG",
+    };
 
     private NbtNative()
     {
@@ -62,6 +71,7 @@ public sealed class NbtNative : INativeType
         "csharp" => CSharp,
         "csharp-stream" => CSharpStream,
         "java-stream" => Java,
+        NettyGenerator.GeneratorName => NettyCode,
         _ => null,
     };
 }

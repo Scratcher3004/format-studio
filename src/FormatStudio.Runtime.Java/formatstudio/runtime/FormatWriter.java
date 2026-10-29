@@ -33,6 +33,11 @@ public final class FormatWriter {
         return written;
     }
 
+    /** The stream the writer writes to, e.g. for code that writes through other means and then passes the bytes on. */
+    public OutputStream output() {
+        return output;
+    }
+
     /** The number of bytes {@link #writeUtf8} writes for a string. */
     public static int utf8Length(String value) {
         return value == null ? 0 : value.getBytes(StandardCharsets.UTF_8).length;

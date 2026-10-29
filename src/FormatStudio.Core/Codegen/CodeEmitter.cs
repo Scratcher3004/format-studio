@@ -197,10 +197,20 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
     protected string? BoundType(NamedRef named) =>
         Binding(named) is { } codegen ? NativeTemplate(codegen.Type, null, new Dictionary<string, string>()) : null;
 
-    /// <summary>Fails for code that composes codecs only, when values are read and written.</summary>
-    private static NativeCodegen ReadWrite(NativeCodegen codegen, string what) => codegen.CanReadWrite
-        ? codegen
-        : throw new CodegenException($"{what} has only a codec, no read and write code");
+    private static string Codec(NativeCodegen codegen, string what) =>
+        codegen.Codec ?? throw new CodegenException($"{what} has neither read and write code nor a codec");
+
+    /// <summary>
+    /// Reads a value of a native or bound type that has only a codec (<see cref="NativeCodegen.Codec"/>, the expression
+    /// <paramref name="codec"/>); generators that can't use codecs fail, the default.
+    /// </summary>
+    /// <param name="what">The type's name, for messages.</param>
+    protected virtual string ReadWithCodec(string what, string codec, TypeRef type, CodeWriter w, Context context) =>
+        throw new CodegenException($"{what} has only a codec, no read and write code");
+
+    /// <summary>Writes a value of a type that has only a codec; see <see cref="ReadWithCodec"/>.</summary>
+    protected virtual void WriteWithCodec(string what, string codec, TypeRef type, string value, CodeWriter w, Context context) =>
+        throw new CodegenException($"{what} has only a codec, no read and write code");
 
     /// <summary>
     /// <see cref="FormatProject.Unalias"/>, except that an alias bound to an existing type stays: its values are those of
@@ -261,8 +271,14 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
         }
 
         var codegen = project.Natives.Codegen(bound.Type, Generator) ?? throw new CodegenException($"The native type {native.Name} has no code for {Generator}");
+        CheckNative(bound);
         _natives.TryAdd(bound.Type.Name, (bound.Type, codegen));
         return (codegen, bound.Args);
+    }
+
+    /// <summary>Throws a <see cref="CodegenException"/> for a native type whose arguments the generator's code can't handle.</summary>
+    protected virtual void CheckNative(BoundNative bound)
+    {
     }
 
     /// <summary>
@@ -600,13 +616,15 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             case NativeRef native:
             {
                 var (codegen, args) = Native(native);
-                return NativeTemplate(ReadWrite(codegen, native.Name).Read, args, new Dictionary<string, string>
+                if (!codegen.CanReadWrite) return ReadWithCodec(native.Name, NativeTemplate(Codec(codegen, native.Name), args, new Dictionary<string, string>()), type, w, context);
+                return NativeTemplate(codegen.Read, args, new Dictionary<string, string>
                 {
                     ["reader"] = context.Reader, ["pass-reader"] = PassReader(context.Reader),
                 }, w, context);
             }
             case NamedRef named when Binding(named) is { } bound:
-                return NativeTemplate(ReadWrite(bound, named.Name).Read, null, new Dictionary<string, string>
+                if (!bound.CanReadWrite) return ReadWithCodec(named.Name, NativeTemplate(Codec(bound, named.Name), null, new Dictionary<string, string>()), type, w, context);
+                return NativeTemplate(bound.Read, null, new Dictionary<string, string>
                 {
                     ["reader"] = context.Reader, ["pass-reader"] = PassReader(context.Reader),
                 }, w, context);
@@ -756,14 +774,26 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             case NativeRef native:
             {
                 var (codegen, args) = Native(native);
-                w.Line(Statement(NativeTemplate(ReadWrite(codegen, native.Name).Write, args, new Dictionary<string, string>
+                if (!codegen.CanReadWrite)
+                {
+                    WriteWithCodec(native.Name, NativeTemplate(Codec(codegen, native.Name), args, new Dictionary<string, string>()), type, value, w, context);
+                    break;
+                }
+
+                w.Line(Statement(NativeTemplate(codegen.Write, args, new Dictionary<string, string>
                 {
                     ["writer"] = context.Writer, ["pass-writer"] = PassWriter(context.Writer), ["value"] = value,
                 }, w, context)));
                 break;
             }
             case NamedRef named when Binding(named) is { } bound:
-                w.Line(Statement(NativeTemplate(ReadWrite(bound, named.Name).Write, null, new Dictionary<string, string>
+                if (!bound.CanReadWrite)
+                {
+                    WriteWithCodec(named.Name, NativeTemplate(Codec(bound, named.Name), null, new Dictionary<string, string>()), type, value, w, context);
+                    break;
+                }
+
+                w.Line(Statement(NativeTemplate(bound.Write, null, new Dictionary<string, string>
                 {
                     ["writer"] = context.Writer, ["pass-writer"] = PassWriter(context.Writer), ["value"] = value,
                 }, w, context)));

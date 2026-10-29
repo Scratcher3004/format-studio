@@ -57,7 +57,7 @@ const string usage = """
           Runs the project's codegen targets. Output only goes to the target's output folder.
       format-studio generators [--verbose]
           Lists the code generators and their options: the built-in ones (csharp, csharp-stream, java-stream) and,
-          in a project, those it and its libraries declare.
+          in a project, those it and its libraries declare or provide (netty of the minecraft library).
       format-studio web [--project <p>] [--workspace <folder>] [--urls <url>]
           Hint for starting the web UI (FormatStudio.Web).
     """;

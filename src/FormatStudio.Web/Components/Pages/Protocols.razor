@@ -37,6 +37,7 @@
     {
         var packets = project.Packets.Where(draft.Contains).OrderBy(p => p.Id).ThenBy(p => p.TextId, StringComparer.Ordinal).ThenBy(p => p.Name, StringComparer.Ordinal).ToList();
         var clashes = packets.Where(p => p.HasId).GroupBy(p => p.IdText).Where(g => g.Count() > 1).ToList();
+        var mixed = packets.Any(p => p.Id != null) && packets.Any(p => p.TextId != null);
         var added = _added.Contains(draft);
         <MudPaper Outlined="@true" Class="@(added ? "pa-3 mb-3 protocol-added" : "pa-3 mb-3")" id="@ElementId(draft)">
             @if (added)
@@ -74,6 +75,12 @@
             {
                 <MudAlert Severity="@MudBlazor.Severity.Error" Dense="@true" Class="mt-2">
                     Packets @string.Join(", ", clash.Select(p => p.Name)) share id @clash.Key in this protocol
+                </MudAlert>
+            }
+            @if (mixed)
+            {
+                <MudAlert Severity="@MudBlazor.Severity.Warning" Dense="@true" Class="mt-2">
+                    This protocol has packets with integer ids and packets with text ids. A registry uses one kind, so generating it reports an error.
                 </MudAlert>
             }
             <MudExpansionPanels Elevation="0" Class="mt-2">

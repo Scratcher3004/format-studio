@@ -646,6 +646,7 @@ public sealed class FormatProject
     {
         DeclaredGenerator declared => declared.Source.File,
         _ when CodeGenerators.IsBuiltIn(generator.Name) => "built-in",
+        _ when HostLibraries.Of(generator) is { } library => $"library {library.Name}",
         _ => generator.GetType().FullName ?? generator.Name,
     };
 

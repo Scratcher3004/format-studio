@@ -34,8 +34,11 @@ public sealed class FormatModule
     public IReadOnlyDictionary<string, TypeDef> Types => _types;
     /// <summary>The native types the library's definitions use: its own and those of its dependencies.</summary>
     public IReadOnlyList<Natives.INativeType> Natives { get; init; } = [];
-    /// <summary>The code generators the library declares (not those of its dependencies, which are modules of their own).</summary>
-    public IReadOnlyList<Codegen.DeclaredGenerator> Generators { get; init; } = [];
+    /// <summary>
+    /// The code generators the library declares or, for a host library, provides (not those of its dependencies, which
+    /// are modules of their own).
+    /// </summary>
+    public IReadOnlyList<Codegen.ICodeGenerator> Generators { get; init; } = [];
     /// <summary>The code for native types the library adds (<c>native-codegen</c>); it applies wherever the library is loaded.</summary>
     public IReadOnlyList<Natives.NativeCodegenExtension> CodegenExtensions { get; init; } = [];
     /// <summary>The library's bindings of definitions to existing types, by qualified name; they apply wherever the library is loaded.</summary>

@@ -12,6 +12,8 @@
     <ItemGroup>
         <InternalsVisibleTo Include="FormatStudio.Tests" />
         <InternalsVisibleTo Include="FormatStudio.Testing" />
+        <!-- The netty generator derives from the Java emitter. -->
+        <InternalsVisibleTo Include="FormatStudio.Minecraft" />
     </ItemGroup>
 
     <ItemGroup>

@@ -59,6 +59,14 @@ public final class FormatReader {
         return position;
     }
 
+    /**
+     * The stream the reader reads from, e.g. for code that decodes the next bytes through other means and then skips
+     * them here. With an unknown length, {@link #atEnd} may have read a byte ahead.
+     */
+    public InputStream input() {
+        return input;
+    }
+
     /** The number of bytes left, or -1 when the length is unknown. */
     public long remaining() {
         return length < 0 ? -1 : length - position;

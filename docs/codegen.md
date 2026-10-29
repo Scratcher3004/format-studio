@@ -21,6 +21,7 @@ codegen:
 | `csharp` | C# (spans) | `ref struct` reader over `ReadOnlySpan<byte>`, writer over `IBufferWriter<byte>`. See [C#](csharp.md). |
 | `csharp-stream` | C# (streams) | Reader and writer classes over `System.IO.Stream`. See [C#](csharp.md). |
 | `java-stream` | Java 8+ (streams) | `FormatReader`/`FormatWriter` over `InputStream`/`OutputStream`. See [Java](java.md). |
+| `netty` | Java 16+ (Minecraft) | Records with Minecraft `StreamCodec`s; a generator of the `minecraft` library. See [netty](netty.md). |
 
 Projects and libraries can add generators of their own from .NET plugins (see [writing a code
 generator](generators.md#using-a-generator-in-a-project)). `format-studio generators --verbose` lists the project's

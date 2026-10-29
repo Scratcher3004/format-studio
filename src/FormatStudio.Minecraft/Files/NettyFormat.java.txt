@@ -1,0 +1,130 @@
+package {{runtime}};
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.util.Optional;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+
+/**
+ * Minecraft's StreamCodecs over the generated read and write code: the codecs of types that StreamCodec.composite
+ * can't describe, and StreamCodecs used inside such types. The FormatReader and FormatWriter work on the ByteBuf
+ * itself, so a value takes exactly its bytes. Malformed data throws an UncheckedIOException around the
+ * FormatDataException.
+ */
+public final class NettyFormat {
+    private NettyFormat() {
+    }
+
+    /** Writes a value: the generated instance method {@code write(FormatWriter)}, or a function with that shape. */
+    @FunctionalInterface
+    public interface MemberWriter<T> {
+        void write(T value, FormatWriter writer) throws IOException;
+    }
+
+    /** A codec that reads and writes values with the generated code, e.g. {@code codec(Item::read, Item::write)}. */
+    public static <B extends ByteBuf, T> StreamCodec<B, T> codec(FormatReader.ValueReader<T> read, MemberWriter<T> write) {
+        return StreamCodec.of((buf, value) -> {
+            try {
+                write.write(value, new FormatWriter(new BufOutput(buf)));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }, buf -> {
+            try {
+                return read.read(new FormatReader(new BufInput(buf), buf.readableBytes()));
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+    }
+
+    /** An optional value (a presence byte, then the value) as the value or null. */
+    public static <B extends ByteBuf, V> StreamCodec<B, V> nullable(StreamCodec<? super B, V> codec) {
+        return ByteBufCodecs.<B, V>optional(codec).map(value -> value.orElse(null), Optional::ofNullable);
+    }
+
+    /**
+     * Reads a value with a codec, for generated code that reads with a FormatReader: the codec reads from the ByteBuf,
+     * then the reader skips the bytes it took. Only works for the reader of {@link #codec}, not inside sized values.
+     */
+    public static <T> T decode(StreamCodec<?, T> codec, FormatReader reader) throws IOException {
+        if (!(reader.input() instanceof BufInput)) {
+            throw new FormatDataException("A StreamCodec can only read from the ByteBuf itself, not inside a sized value");
+        }
+
+        ByteBuf buf = ((BufInput) reader.input()).buf;
+        int start = buf.readerIndex();
+        T value = ByteBufCodec.of(codec).decode(buf);
+        int count = buf.readerIndex() - start;
+        buf.readerIndex(start);
+        reader.skip(count);
+        return value;
+    }
+
+    /**
+     * Writes a value with a codec, for generated code that writes with a FormatWriter: the codec writes to the ByteBuf
+     * (or a buffer of its own inside sized values), then the bytes go through the writer.
+     */
+    public static <T> void encode(StreamCodec<?, T> codec, FormatWriter writer, T value) throws IOException {
+        ByteBuf buf = writer.output() instanceof BufOutput ? ((BufOutput) writer.output()).buf : Unpooled.buffer();
+        int start = buf.writerIndex();
+        ByteBufCodec.of(codec).encode(buf, value);
+        byte[] bytes = new byte[buf.writerIndex() - start];
+        buf.getBytes(start, bytes);
+        buf.writerIndex(start);
+        writer.writeBytes(bytes);
+    }
+
+    /** A codec of any buffer type used on the buffer at hand, which is the codec's type (or the codec casts it). */
+    private static final class ByteBufCodec {
+        @SuppressWarnings("unchecked")
+        static <T> StreamCodec<ByteBuf, T> of(StreamCodec<?, T> codec) {
+            return (StreamCodec<ByteBuf, T>) codec;
+        }
+    }
+
+    private static final class BufInput extends InputStream {
+        final ByteBuf buf;
+
+        BufInput(ByteBuf buf) {
+            this.buf = buf;
+        }
+
+        @Override
+        public int read() {
+            return buf.isReadable() ? buf.readUnsignedByte() : -1;
+        }
+
+        @Override
+        public int read(byte[] target, int offset, int count) {
+            if (count == 0) return 0;
+            if (!buf.isReadable()) return -1;
+            int read = Math.min(count, buf.readableBytes());
+            buf.readBytes(target, offset, read);
+            return read;
+        }
+    }
+
+    private static final class BufOutput extends OutputStream {
+        final ByteBuf buf;
+
+        BufOutput(ByteBuf buf) {
+            this.buf = buf;
+        }
+
+        @Override
+        public void write(int value) {
+            buf.writeByte(value);
+        }
+
+        @Override
+        public void write(byte[] source, int offset, int count) {
+            buf.writeBytes(source, offset, count);
+        }
+    }
+}

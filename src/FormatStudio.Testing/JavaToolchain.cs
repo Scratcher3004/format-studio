@@ -40,13 +40,22 @@ public sealed class JavaToolchain(string javac, string java)
     /// for Java 8 (or <paramref name="release"/>) with all lint warnings as errors. Returns the folder with the classes.
     /// </summary>
     /// <param name="release">The Java version to compile for, e.g. 16 for records.</param>
-    public string Compile(GeneratedOutput output, string extraSource, string directory, int release = 8)
+    public string Compile(GeneratedOutput output, string extraSource, string directory, int release = 8) =>
+        Compile(output, [new GeneratedFile("Harness.java", extraSource)], directory, release);
+
+    /// <summary>
+    /// Writes the generated files and <paramref name="extraFiles"/> (by their paths below the source folder) to
+    /// <paramref name="directory"/> and compiles them against <paramref name="classPath"/> (jars or folders) for
+    /// <paramref name="release"/>, with all lint warnings as errors. Returns the folder with the classes.
+    /// </summary>
+    public string Compile(GeneratedOutput output, IEnumerable<GeneratedFile> extraFiles, string directory, int release = 8,
+        IReadOnlyList<string>? classPath = null)
     {
         var sources = Path.Combine(directory, "src");
         var classes = Path.Combine(directory, "classes");
         Directory.CreateDirectory(classes);
         var files = new List<string>();
-        foreach (var file in output.Files.Append(new GeneratedFile("Harness.java", extraSource)))
+        foreach (var file in output.Files.Concat(extraFiles))
         {
             var path = Path.Combine(sources, file.Path);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -56,7 +65,9 @@ public sealed class JavaToolchain(string javac, string java)
 
         var list = Path.Combine(directory, "sources.txt");
         File.WriteAllLines(list, files.Select(f => "\"" + f.Replace("\\", "/") + "\""));
-        var (exit, stdout, stderr) = Execute(Javac, ["-encoding", "UTF-8", "--release", release.ToString(System.Globalization.CultureInfo.InvariantCulture), "-Xlint:all,-options,-cast", "-Werror", "-d", classes, "@" + list], null);
+        string[] jars = classPath is { Count: > 0 } ? ["-cp", string.Join(Path.PathSeparator, classPath)] : [];
+        var (exit, stdout, stderr) = Execute(Javac, ["-encoding", "UTF-8", "--release", release.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-Xlint:all,-options,-cast", "-Werror", .. jars, "-d", classes, "@" + list], null);
         if (exit != 0) throw new GeneratedCodeException(string.Join("\n", (stdout + stderr).Split('\n').Take(60)));
         return classes;
     }

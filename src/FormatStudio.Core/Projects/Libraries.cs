@@ -26,6 +26,8 @@ public sealed class LibraryPackage
     public required string Origin { get; init; }
     /// <summary>The native types of a library the host provides in code (<see cref="HostLibrary"/>).</summary>
     public IReadOnlyList<INativeType> HostNatives { get; init; } = [];
+    /// <summary>The code generators of a library the host provides in code (<see cref="HostLibrary"/>).</summary>
+    public IReadOnlyList<ICodeGenerator> HostGenerators { get; init; } = [];
 
     public string Name => Settings.Name;
     public string? Version => Settings.Version;
@@ -339,7 +341,8 @@ public sealed class LibraryLoader
             .Select(b => library.Find(b.Definition) is { } bound ? b.WithDefinition(bound.Owner == null ? $"{name}.{bound.Name}" : bound.QualifiedName) : null)
             .OfType<TypeBinding>()
             .ToList();
-        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin, Natives = used, Generators = generators,
+        var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin, Natives = used,
+            Generators = [.. generators, .. package.HostGenerators],
             CodegenExtensions = extensions, Bindings = bindings };
         _project.AddModule(result);
         return result;

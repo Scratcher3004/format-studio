@@ -51,8 +51,8 @@ versions and packages.
 
 ### The `minecraft` library
 
-`minecraft` is a built-in library with the native types for Minecraft's formats; today that is `nbt` (see
-[native types](dsl.md#native-types)). It is not part of Core but of `FormatStudio.Minecraft`, an assembly that the
+`minecraft` is a built-in library with the native types for Minecraft's formats, today `nbt` (see
+[native types](dsl.md#native-types)), and the [`netty` generator](netty.md) of Minecraft's `StreamCodec`s. It is not part of Core but of `FormatStudio.Minecraft`, an assembly that the
 command line and the web UI register at start-up (`MinecraftLibrary.Register()`), and which a program using
 `FormatStudio.Core` on its own has to register too. Projects and libraries that use `nbt` declare it:
 
@@ -63,7 +63,7 @@ defaults:
 ```
 
 Such host libraries (`HostLibrary` in Core) have no definition files; they provide native types with their code
-generation, including the runtime files that code needs.
+generation, including the runtime files that code needs, and code generators.
 
 **Temporary exception.** `nbt` used to be built in. A project or library that uses it (a default `nbt: ...`, or the
 word `nbt` in one of its definition files) without declaring `minecraft` gets the dependency added automatically

@@ -13,7 +13,8 @@ namespace FormatStudio.Codegen.Java;
 /// Arrays are <c>java.util.List</c>s or Java arrays, maps are lists of entries; conditional and optional values use the
 /// boxed types and null.
 /// </summary>
-internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : CodeEmitter(project, options.Exclude)
+/// <remarks>The <c>netty</c> generator of <c>FormatStudio.Minecraft</c> derives from it and adds members through the hooks.</remarks>
+internal class JavaEmitter(FormatProject project, JavaOptions options) : CodeEmitter(project, options.Exclude)
 {
     private static readonly HashSet<string> Keywords =
     [
@@ -36,9 +37,28 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     /// <summary>Names of the fields and helpers of generated enums, which members can't use.</summary>
     private static readonly HashSet<string> EnumReserved = ["value", "tag", "BY_VALUE", "BY_TAG"];
 
-    private const string IOException = "java.io.IOException";
+    protected const string IOException = "java.io.IOException";
 
-    private string PackagePath(string package) => package.Replace('.', '/');
+    protected JavaOptions Options => options;
+
+    /// <summary>Adds members at the end of the class (or enum) of a definition, after the generated ones.</summary>
+    protected virtual void TypeMembers(TypeDef definition, CodeWriter w)
+    {
+    }
+
+    /// <summary>Names of members that subclasses add (<see cref="TypeMembers"/>), which fields, cases and enum members avoid.</summary>
+    protected virtual IReadOnlySet<string> ReservedMembers { get; } = new HashSet<string>();
+
+    /// <summary>
+    /// Classes the file of the current definition uses by their simple name, as full names: imported unless they are in
+    /// its package. Called once per file, after its body is written.
+    /// </summary>
+    protected virtual IEnumerable<string> FileImports() => [];
+
+    /// <summary>The interfaces a struct's class implements; <paramref name="interfaceName"/> is the runtime's.</summary>
+    protected virtual string StructInterfaces(StructDef structDef, string interfaceName) => interfaceName;
+
+    protected string PackagePath(string package) => package.Replace('.', '/');
 
     protected override string PathOf(TypeDef definition) => $"{PackagePath(PackageOf(definition))}/{JavaName(definition)}.java";
 
@@ -69,18 +89,18 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     private static string Id(string name) => Keywords.Contains(name) ? name + "_" : name;
 
     /// <summary>The Java field name of a field or case, avoiding generated members.</summary>
-    private static string Member(string name) => Reserved.Contains(name) ? name + "Value" : Id(name);
+    private string Member(string name) => Reserved.Contains(name) || ReservedMembers.Contains(name) ? name + "Value" : Id(name);
 
     /// <summary>The Java name of a struct's field: a public field, or with <c>records</c> a record component.</summary>
-    private string FieldMember(string name) => options.Records && RecordReserved.Contains(name) ? name + "Value" : Member(name);
+    protected string FieldMember(string name) => options.Records && RecordReserved.Contains(name) ? name + "Value" : Member(name);
 
     // Fields are read through the accessor of a record.
     protected override string MemberName(string name, string owner) => options.Records ? FieldMember(name) + "()" : FieldMember(name);
 
-    private static string EnumMember(string name) => EnumReserved.Contains(name) ? name + "_" : Id(name);
+    private string EnumMember(string name) => EnumReserved.Contains(name) || ReservedMembers.Contains(name) ? name + "_" : Id(name);
 
     /// <summary>The package of a definition: the target's, or for a library's definition a package of its own inside it.</summary>
-    private string PackageOf(TypeDef definition) => definition.Owner == null
+    protected string PackageOf(TypeDef definition) => definition.Owner == null
         ? options.Package
         : DependencyOf(definition)?.Package ?? $"{options.Package}.{Id(definition.Owner.Name.ToLowerInvariant())}";
 
@@ -89,7 +109,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     /// The name of a definition in the generated code: the project's own definitions go unqualified, except one named
     /// <c>Case</c>, which a variant's nested enum <c>Case</c> would hide.
     /// </summary>
-    private string TypeName(TypeDef definition) => definition.Owner == null && JavaName(definition) != "Case"
+    protected string TypeName(TypeDef definition) => definition.Owner == null && JavaName(definition) != "Case"
         ? JavaName(definition)
         : $"{PackageOf(definition)}.{JavaName(definition)}";
 
@@ -99,7 +119,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     private static string Capitalize(string name) => name.Length == 0 ? name : char.ToUpperInvariant(name[0]) + name[1..];
 
     /// <summary>Flags enums and enums with unknown values are kept as <c>long</c> numbers, the others are Java enums.</summary>
-    private static bool IsOpen(EnumDef enumDef) => enumDef.Flags || enumDef.AllowUnknown;
+    protected static bool IsOpen(EnumDef enumDef) => enumDef.Flags || enumDef.AllowUnknown;
 
     private EnumDef? ClosedEnum(TypeRef type) =>
         Unalias(type) is NamedRef named && Definition(named.Name) is EnumDef { } enumDef && !IsOpen(enumDef) ? enumDef : null;
@@ -107,13 +127,13 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     private bool Arrays => options.Collections == JavaCollections.Array;
 
     /// <summary>Unsigned values use the signed type of the same size.</summary>
-    private bool SameSize => options.Unsigned != JavaUnsigned.Widen;
+    protected bool SameSize => options.Unsigned != JavaUnsigned.Widen;
 
     private static bool IsUnsigned(PrimitiveKind kind) => kind is PrimitiveKind.U8 or PrimitiveKind.U16 or PrimitiveKind.U32 or PrimitiveKind.VarUInt32
         or PrimitiveKind.U64 or PrimitiveKind.VarUInt64;
 
     /// <summary>The Java type of a primitive, following the <c>unsigned</c> option.</summary>
-    private string PrimitiveType(PrimitiveKind kind) => SameSize
+    protected string PrimitiveType(PrimitiveKind kind) => SameSize
         ? kind switch
         {
             PrimitiveKind.U8 => "byte",
@@ -139,7 +159,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     };
 
     /// <summary>The Java type of an enum's values.</summary>
-    private string EnumType(EnumDef enumDef) => PrimitiveType(enumDef.Type.Kind);
+    protected string EnumType(EnumDef enumDef) => PrimitiveType(enumDef.Type.Kind);
 
     /// <summary>The numeric value of a primitive (of <see cref="PrimitiveType"/>) as a long; unsigned values stay positive.</summary>
     private string AsLong(string value, PrimitiveKind kind) => SameSize
@@ -181,7 +201,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         _ => $"({type}) {LongLiteral(value)}",
     };
 
-    private static string Box(string type) => type switch
+    protected static string Box(string type) => type switch
     {
         "boolean" => "Boolean",
         "byte" => "Byte",
@@ -202,7 +222,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     private static bool IsPrimitive(string type) => Box(type) != type;
 
     /// <summary>The Java type of a value; <paramref name="boxed"/> for generic arguments and values that may be null.</summary>
-    private string Type(TypeRef type, bool boxed = false)
+    protected string Type(TypeRef type, bool boxed = false)
     {
         var result = type switch
         {
@@ -228,7 +248,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         return boxed ? Box(result) : result;
     }
 
-    private string FieldType(FieldDef field) => Type(field.Type, field.If != null);
+    protected string FieldType(FieldDef field) => Type(field.Type, field.If != null);
 
     private static string DefaultValue(string type) => type switch
     {
@@ -237,7 +257,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         _ => "null",
     };
 
-    private static string Literal(string text)
+    protected static string Literal(string text)
     {
         var builder = new StringBuilder("\"");
         foreach (var c in text)
@@ -301,19 +321,18 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         builder.Append("// Do not edit: change the format definitions and regenerate.\n");
         var package = Current != null ? PackageOf(Current) : options.Package;
         builder.Append($"package {package};\n\n");
-        if (options.RuntimePackage != package)
-        {
-            var imports = new[] { "FormatDataException", "FormatEncoding", "FormatPacket", "FormatPacketVisitor", "FormatReader", "FormatSerializable", "FormatTextPacket",
-                    "FormatTextPacketVisitor", "FormatWriter" }
-                .Where(name => System.Text.RegularExpressions.Regex.IsMatch(body, $@"\b{name}\b")).ToList();
-            foreach (var name in imports) builder.Append($"import {options.RuntimePackage}.{name};\n");
-            if (imports.Count > 0) builder.Append('\n');
-        }
+        var runtime = new[] { "FormatDataException", "FormatEncoding", "FormatPacket", "FormatPacketVisitor", "FormatReader", "FormatSerializable", "FormatTextPacket",
+                "FormatTextPacketVisitor", "FormatWriter" }
+            .Where(name => System.Text.RegularExpressions.Regex.IsMatch(body, $@"\b{name}\b"))
+            .Select(name => $"{options.RuntimePackage}.{name}");
+        var imports = runtime.Concat(FileImports()).Where(i => i[..i.LastIndexOf('.')] != package).Distinct().Order(StringComparer.Ordinal).ToList();
+        foreach (var name in imports) builder.Append($"import {name};\n");
+        if (imports.Count > 0) builder.Append('\n');
 
         return builder.Append(body).ToString();
     }
 
-    private string Throw(string message) => $"throw new FormatDataException({message});";
+    protected string Throw(string message) => $"throw new FormatDataException({message});";
 
     // ------------------------------------------------------------------ expression syntax
 
@@ -396,6 +415,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
                 w.Line($"public static final {type} {EnumMember(member.Name)} = {TypedLiteral(member.Value, type)};");
             }
 
+            TypeMembers(enumDef, w);
             w.Close();
             return Header(w.ToString());
         }
@@ -412,6 +432,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         if (enumDef.Members.Count == 0) w.Line(";");
         w.Line();
         EnumBody(w, enumDef.Name, "value", type, Box(type), $"\"Unknown {enumDef.Name} value \" + {AsLong("value", enumDef.Type.Kind)}");
+        TypeMembers(enumDef, w);
         w.Close();
         return Header(w.ToString());
     }
@@ -500,6 +521,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
         w.Line($"writer.write{Method(bitfield.Base)}(({RuntimeType(bitfield.Base.Kind)}) raw);");
         w.Close();
+        TypeMembers(bitfield, w);
         w.Close();
         return Header(w.ToString());
     }
@@ -518,12 +540,12 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         {
             // The fields' documentation goes to the record's @param tags.
             Doc(w, structDef.Doc, fields.Select(f => $"@param {FieldMember(f.Name)} {Escape(FieldRemarks(f))}").ToList(), remarks);
-            w.OpenInline($"public record {name}({string.Join(", ", fields.Select(f => $"{FieldType(f)} {FieldMember(f.Name)}"))}) implements {interfaceName}");
+            w.OpenInline($"public record {name}({string.Join(", ", fields.Select(f => $"{FieldType(f)} {FieldMember(f.Name)}"))}) implements {StructInterfaces(structDef, interfaceName)}");
         }
         else
         {
             Doc(w, structDef.Doc, remarks);
-            w.OpenInline($"public final class {name} implements {interfaceName}");
+            w.OpenInline($"public final class {name} implements {StructInterfaces(structDef, interfaceName)}");
         }
 
         if (structDef.IsPacket)
@@ -555,6 +577,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         ReadMethod(structDef, w);
         w.Line();
         WriteMethod(structDef, w);
+        TypeMembers(structDef, w);
         w.Close();
         return Header(w.ToString());
     }
@@ -1216,6 +1239,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         w.Line($"    {Throw($"\"Unknown {name} tag \" + this.kind")}");
         w.Close();
         w.Close();
+        TypeMembers(variant, w);
         w.Close();
         return Header(w.ToString());
     }
