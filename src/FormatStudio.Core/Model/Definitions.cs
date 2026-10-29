@@ -97,6 +97,14 @@ public sealed class StructDef : TypeDef
     public bool IsPacket { get; set; }
     public long? Id { get; set; }
     public NumberBase IdBase { get; set; } = NumberBase.Hex;
+    /// <summary>A packet's id as text instead of a number (<see cref="Id"/>), e.g. a channel name such as <c>mod:move</c>.</summary>
+    public string? TextId { get; set; }
+
+    /// <summary>Whether the packet has an id, a number or text.</summary>
+    public bool HasId => Id != null || TextId != null;
+
+    /// <summary>The id for messages and the UI: the number in decimal, or the text; null without an id.</summary>
+    public string? IdText => TextId ?? Id?.ToString(System.Globalization.CultureInfo.InvariantCulture);
     /// <summary>Free-form packet groups, e.g. a direction or a protocol state.</summary>
     public List<string> Groups { get; } = [];
 

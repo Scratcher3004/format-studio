@@ -37,9 +37,10 @@ public sealed class JavaToolchain(string javac, string java)
 
     /// <summary>
     /// Writes the generated files and extra sources (default package) to <paramref name="directory"/> and compiles them
-    /// for Java 8 with all lint warnings as errors. Returns the folder with the classes.
+    /// for Java 8 (or <paramref name="release"/>) with all lint warnings as errors. Returns the folder with the classes.
     /// </summary>
-    public string Compile(GeneratedOutput output, string extraSource, string directory)
+    /// <param name="release">The Java version to compile for, e.g. 16 for records.</param>
+    public string Compile(GeneratedOutput output, string extraSource, string directory, int release = 8)
     {
         var sources = Path.Combine(directory, "src");
         var classes = Path.Combine(directory, "classes");
@@ -55,7 +56,7 @@ public sealed class JavaToolchain(string javac, string java)
 
         var list = Path.Combine(directory, "sources.txt");
         File.WriteAllLines(list, files.Select(f => "\"" + f.Replace("\\", "/") + "\""));
-        var (exit, stdout, stderr) = Execute(Javac, ["-encoding", "UTF-8", "--release", "8", "-Xlint:all,-options,-cast", "-Werror", "-d", classes, "@" + list], null);
+        var (exit, stdout, stderr) = Execute(Javac, ["-encoding", "UTF-8", "--release", release.ToString(System.Globalization.CultureInfo.InvariantCulture), "-Xlint:all,-options,-cast", "-Werror", "-d", classes, "@" + list], null);
         if (exit != 0) throw new GeneratedCodeException(string.Join("\n", (stdout + stderr).Split('\n').Take(60)));
         return classes;
     }

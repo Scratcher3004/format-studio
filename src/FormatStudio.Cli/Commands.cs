@@ -173,12 +173,13 @@ internal static class Commands
         foreach (var definition in definitions
                      .Where(d => kind == null || d.Kind == kind)
                      .Where(d => filter == null || d.QualifiedName.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                     .OrderBy(d => d is StructDef { IsPacket: true } p ? p.Id : long.MaxValue)
+                     .OrderBy(d => d is StructDef { IsPacket: true } p ? p.Id ?? long.MaxValue : long.MaxValue)
+                     .ThenBy(d => (d as StructDef)?.TextId, StringComparer.Ordinal)
                      .ThenBy(d => d.Name, StringComparer.Ordinal))
         {
             var detail = definition switch
             {
-                StructDef { IsPacket: true } packet => $"id {packet.Id}, {packet.Fields.Count} fields",
+                StructDef { IsPacket: true } packet => $"id {packet.IdText}, {packet.Fields.Count} fields",
                 StructDef structDef => $"{structDef.Fields.Count} fields",
                 EnumDef enumDef => $"{enumDef.Members.Count} members, {enumDef.Type}",
                 VariantDef variant => $"{variant.Cases.Count} cases, tag {variant.Tag?.ToString() ?? "external"}",

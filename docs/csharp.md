@@ -26,7 +26,8 @@ Definitions written by hand are skipped with `skipCodegen` in the definition (se
 - Structs become `partial struct`s with public fields and `static Read(reader)` / `Write(writer)` (by `ref` for
   spans); types that contain themselves by value become `sealed partial class`es.
 - Packets implement the packet interface with `static uint PacketId`; `<registry>.Dispatch(id, reader, ref visitor)`
-  switches over the ids without boxing. With [protocols](dsl.md#protocols) each protocol is a nested class with the
+  switches over the ids without boxing. Packets with a text id implement the text packet interface
+  (`static string PacketId`, `const string Id`), and their registry takes `string` ids and a text visitor. With [protocols](dsl.md#protocols) each protocol is a nested class with the
   same members: `Packets.LoginServerbound.Dispatch(id, ref reader, ref visitor)`, `NameOf(id)`, `Ids`.
 - Variants are tagged structs: `Kind` (the tag enum, or a nested `Case` enum), one field per case,
   `FromCase(...)` factories, `Read(reader, kind)` / `WriteContent` for external tags. With string tags the `Case`
@@ -56,6 +57,8 @@ files):
 | `serializableInterface` | `IFormatSerializable` | `IFormatStreamSerializable` | `static abstract T Read(reader)`, `void Write(writer)` |
 | `packetInterface` | `IFormatPacket` | `IFormatStreamPacket` | adds `static abstract uint PacketId` |
 | `visitorInterface` | `IFormatPacketVisitor` | `IFormatStreamPacketVisitor` | `void Visit<T>(ref T packet) where T : packet interface` |
+| `textPacketInterface` | `IFormatTextPacket` | `IFormatStreamTextPacket` | for packets with text ids: adds `static abstract string PacketId` |
+| `textVisitorInterface` | `IFormatTextPacketVisitor` | `IFormatStreamTextPacketVisitor` | `void Visit<T>(ref T packet) where T : text packet interface` |
 | `exception` | `FormatDataException` | `FormatDataException` | thrown for malformed data |
 
 To use your own runtime, set these options to its type names. It needs the same methods as the default reader and

@@ -123,6 +123,12 @@ public sealed class LibraryPackage
             foreach (var file in extension.Files) Add(file, $"native-codegen for {extension.Type}");
         }
 
+        foreach (var binding in library.Bindings.OrderBy(b => b.Source.File, StringComparer.Ordinal))
+        {
+            Add(binding.Source.File, $"binding of {binding.Definition}");
+            foreach (var file in binding.Files) Add(file, $"binding of {binding.Definition}");
+        }
+
         return path;
     }
 
@@ -319,14 +325,22 @@ public sealed class LibraryLoader
         extensions = extensions.Where(library.Natives.Extensions.Contains).ToList();
         foreach (var (path, text) in package.Files.Where(f => !FormatProject.IsDeclaration(f.Text)))
             if (DslReader.Read(text, $"{package.Origin}!/{path}", library.Diagnostics) is { } definition) library.Add(definition);
+        library.Bindings.AddRange(package.Files.Where(f => TypeBinding.IsDeclaration(f.Text))
+            .Select(f => TypeBinding.Read(f.Text, f.Path, files, natives, $"{package.Origin}!/{f.Path}"))
+            .OfType<TypeBinding>());
         Validation.Validator.Validate(library);
         foreach (var diagnostic in natives.Concat(library.Diagnostics.Where(d => d.Severity == Severity.Error)))
             _project.Diagnostics.Add(diagnostic with { Message = $"Library {package}: {diagnostic.Message}" });
 
         var definitions = library.Types.Values.ToList();
         new Baker(library, name).Bake(definitions);
+        // A binding names the definition as the library does; the projects that load it use the qualified name.
+        var bindings = library.Bindings
+            .Select(b => library.Find(b.Definition) is { } bound ? b.WithDefinition(bound.Owner == null ? $"{name}.{bound.Name}" : bound.QualifiedName) : null)
+            .OfType<TypeBinding>()
+            .ToList();
         var result = new FormatModule(name, definitions) { Version = package.Version, Origin = package.Origin, Natives = used, Generators = generators,
-            CodegenExtensions = extensions };
+            CodegenExtensions = extensions, Bindings = bindings };
         _project.AddModule(result);
         return result;
     }

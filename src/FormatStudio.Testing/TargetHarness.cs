@@ -185,7 +185,7 @@ internal abstract class TargetHarness : IDisposable
             _java = java;
             try
             {
-                _classes = java.Compile(output, Source(options, types, registries, className), _directory);
+                _classes = java.Compile(output, Source(options, types, registries, className), _directory, options.Records ? 16 : 8);
             }
             catch
             {

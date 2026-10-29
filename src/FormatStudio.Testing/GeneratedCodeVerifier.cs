@@ -52,7 +52,8 @@ public static class GeneratedCodeVerifier
     {
         var output = CodeGeneration.Generate(project, target);
         if (output.Diagnostics.HasErrors) throw new GeneratedCodeException(string.Join("\n", output.Diagnostics));
-        var types = StandaloneTypes(project).Select(t => t.Name).ToList();
+        // Types bound to existing ones (or skipped) have no generated code to check.
+        var types = StandaloneTypes(project).Select(t => t.Name).Where(t => output.FileOf(t) != null).ToList();
         var codec = new Codec(project);
         var failures = new List<string>();
         var jobs = new List<HarnessJob>();

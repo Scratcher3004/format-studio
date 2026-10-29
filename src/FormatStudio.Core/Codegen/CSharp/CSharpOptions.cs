@@ -25,6 +25,8 @@ public sealed class CSharpOptions
     public string SerializableInterface { get; set; } = "IFormatSerializable";
     public string PacketInterface { get; set; } = "IFormatPacket";
     public string VisitorInterface { get; set; } = "IFormatPacketVisitor";
+    public string TextPacketInterface { get; set; } = "IFormatTextPacket";
+    public string TextVisitorInterface { get; set; } = "IFormatTextPacketVisitor";
     public string ExceptionType { get; set; } = "FormatDataException";
     /// <summary>Name of the static class with the packet id dispatch.</summary>
     public string Registry { get; set; } = "Packets";
@@ -58,6 +60,10 @@ public sealed class CSharpOptions
                 "Implemented by packets: adds static abstract uint PacketId.", true),
             CodegenOption.Text("visitorInterface", "Visitor interface", stream ? "IFormatStreamPacketVisitor" : "IFormatPacketVisitor",
                 "Receives packets from the registry's dispatch.", true),
+            CodegenOption.Text("textPacketInterface", "Text packet interface", stream ? "IFormatStreamTextPacket" : "IFormatTextPacket",
+                "Implemented by packets with text ids: adds static abstract string PacketId.", true),
+            CodegenOption.Text("textVisitorInterface", "Text visitor interface", stream ? "IFormatStreamTextPacketVisitor" : "IFormatTextPacketVisitor",
+                "Receives packets with text ids from the registry's dispatch.", true),
             CodegenOption.Text("exception", "Exception type", "FormatDataException", "Thrown for malformed data.", true),
         ];
     }
@@ -79,6 +85,8 @@ public sealed class CSharpOptions
             SerializableInterface = read.Text("serializableInterface"),
             PacketInterface = read.Text("packetInterface"),
             VisitorInterface = read.Text("visitorInterface"),
+            TextPacketInterface = read.Text("textPacketInterface"),
+            TextVisitorInterface = read.Text("textVisitorInterface"),
             ExceptionType = read.Text("exception"),
         };
     }

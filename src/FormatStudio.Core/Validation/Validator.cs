@@ -30,6 +30,7 @@ public sealed class Validator
         validator.CheckPacketIds();
         validator.CheckAliasCycles();
         validator.CheckNativeDefaults();
+        validator.CheckBindings();
         validator.CheckLibrarySettings();
         validator.CheckTests();
     }
@@ -84,6 +85,30 @@ public sealed class Validator
                 foreach (var duplicate in bitfield.Members.GroupBy(m => m.Name).Where(g => g.Count() > 1))
                     _diagnostics.Error($"Bitfield {bitfield.Name}: duplicate member '{duplicate.Key}'", bitfield.Source);
                 break;
+        }
+    }
+
+    /// <summary>The project's bindings name definitions it has, and no definition is bound twice for a generator.</summary>
+    private void CheckBindings()
+    {
+        var bound = new Dictionary<(TypeDef, string), Codegen.TypeBinding>();
+        foreach (var binding in _project.Bindings)
+        {
+            var lookup = _project.Resolve(binding.Definition);
+            if (lookup.Definition is not { } definition)
+            {
+                _diagnostics.Error($"Binding of {binding.Definition}: {lookup.Error}", binding.Source);
+                continue;
+            }
+
+            foreach (var generator in binding.Codegen.Keys)
+            {
+                var other = bound.GetValueOrDefault((definition, generator))
+                            ?? _project.Modules.Values.SelectMany(m => m.Bindings)
+                                .FirstOrDefault(b => b.Codegen.ContainsKey(generator) && ReferenceEquals(_project.Find(b.Definition), definition));
+                if (other != null) _diagnostics.Error($"{binding.Definition} is bound for {generator} in both {other.Source.File} and {binding.Source.File}", binding.Source);
+                else bound[(definition, generator)] = binding;
+            }
         }
     }
 
@@ -436,20 +461,33 @@ public sealed class Validator
         var protocols = _project.Settings.Protocols;
         if (protocols.Count == 0)
         {
-            foreach (var group in _project.Packets.Where(p => p.Id != null)
-                         .GroupBy(p => (p.Id, string.Join(",", p.Groups.Order(StringComparer.Ordinal))))
+            foreach (var group in _project.Packets.Where(p => p.HasId)
+                         .GroupBy(p => (p.Id, p.TextId, string.Join(",", p.Groups.Order(StringComparer.Ordinal))))
                          .Where(g => g.Count() > 1))
             {
-                _diagnostics.Error($"Packets {string.Join(", ", group.Select(p => p.Name))} share id {group.Key.Id}", group.First().Source);
+                _diagnostics.Error($"Packets {string.Join(", ", group.Select(p => p.Name))} share id {group.First().IdText}", group.First().Source);
             }
+
+            CheckIdKinds(_project.Packets.ToList(), "The packets", null);
         }
         else
         {
             CheckProtocols();
         }
 
-        foreach (var packet in _project.Packets.Where(p => p.Id == null))
+        foreach (var packet in _project.Packets.Where(p => !p.HasId))
             _diagnostics.Warning($"Packet {packet.Name} has no id", packet.Source);
+    }
+
+    /// <summary>A registry dispatches either integer or text ids: the packets it has can't mix them.</summary>
+    private void CheckIdKinds(List<StructDef> packets, string what, ProtocolDef? protocol)
+    {
+        var text = packets.Where(p => p.TextId != null).ToList();
+        if (text.Count == 0 || text.Count == packets.Count(p => p.HasId)) return;
+        var message = $"{what} mix integer and text ids, which one registry can't dispatch: {string.Join(", ", text.Select(p => p.Name))} " +
+                      $"{(text.Count == 1 ? "has a text id" : "have text ids")}";
+        if (protocol == null) _diagnostics.Error(message, text[0].Source);
+        else Protocol(Severity.Error, message, text[0].Source);
     }
 
     private void CheckProtocols()
@@ -465,17 +503,19 @@ public sealed class Validator
             else if (_project.Find(protocol.Name) != null)
                 Protocol(Severity.Error, $"Protocol {protocol.Name} has the name of a definition", file);
 
-            var packets = _project.PacketsOf(protocol).Where(p => p.Id != null).ToList();
+            var packets = _project.PacketsOf(protocol).Where(p => p.HasId).ToList();
             if (packets.Count == 0)
                 Protocol(Severity.Warning, $"Protocol {protocol.Name} has no packets (none is in all of the groups {string.Join(", ", protocol.Groups)})", file);
-            foreach (var duplicate in packets.GroupBy(p => p.Id).Where(g => g.Count() > 1))
+            foreach (var duplicate in packets.GroupBy(p => (p.Id, p.TextId)).Where(g => g.Count() > 1))
             {
-                Protocol(Severity.Error, $"Packets {string.Join(", ", duplicate.Select(p => p.Name))} share id {duplicate.Key} in protocol {protocol.Name}",
+                Protocol(Severity.Error, $"Packets {string.Join(", ", duplicate.Select(p => p.Name))} share id {duplicate.First().IdText} in protocol {protocol.Name}",
                     duplicate.First().Source);
             }
+
+            CheckIdKinds(packets, $"The packets of protocol {protocol.Name}", protocol);
         }
 
-        foreach (var packet in _project.Packets.Where(p => p.Id != null && !_project.ProtocolsOf(p).Any()))
+        foreach (var packet in _project.Packets.Where(p => p.HasId && !_project.ProtocolsOf(p).Any()))
             Protocol(Severity.Warning, $"Packet {packet.Name} is in no protocol, so no registry dispatches it", packet.Source);
     }
 

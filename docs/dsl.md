@@ -65,12 +65,13 @@ with the same groups, and the single registry dispatches the first of the packet
 
 Each file holds one definition. The key naming the kind carries the name; `title` and `doc` are allowed everywhere.
 `skipCodegen: true` (or a list of codegen targets and generators) leaves a definition out of the generated code, e.g.
-because it is written by hand; see [code generation](codegen.md#skipping-definitions).
+because it is written by hand; see [code generation](codegen.md#skipping-definitions). A `bind` file binds a
+definition to an existing type of the generated code instead (see [code generation](codegen.md#binding-definitions-to-existing-types)).
 Names are identifiers (`[A-Za-z_][A-Za-z0-9_]*`).
 
 ```yaml
 packet: Particle                # or "struct:" for a type without id
-id: 0x27
+id: 0x27                        # or a text id: "mod:particle" (quoted, or anything that isn't an integer)
 groups: [play, clientbound]     # free-form; ids must be unique per group set (or per protocol)
 fields:
   - particleId: varint32        # short form: "- name: type"
@@ -90,6 +91,12 @@ fields:
     type: u8
     const: 3                    # always this value
 ```
+
+A packet's id is an integer or a text, e.g. a channel name such as `mod:move` for payloads that are dispatched by name.
+A plain integer is an integer id; a quoted value (`"39"`) or anything else is a text id. The packets of one registry
+(a protocol, or the project without protocols) have either integer or text ids, not both. Text ids are names for
+dispatching only: a [packet case](testing.md#packet-cases) holds an integer id, so packets with text ids are tested
+as types.
 
 Integers (ids, enum values, variant tags, `const`, `default`, `min`, `max`) may be written in decimal (`39`), hex
 (`0x27`) or binary (`0b100111`), optionally with a sign. The writer keeps the form of each value, and the builder shows

@@ -20,5 +20,17 @@ public interface IFormatPacketVisitor
     void Visit<T>(ref T packet) where T : IFormatPacket<T>;
 }
 
+/// <summary>A packet with a text id (e.g. a channel name such as <c>mod:move</c>), dispatched by the generated registry.</summary>
+public interface IFormatTextPacket<TSelf> : IFormatSerializable<TSelf> where TSelf : IFormatTextPacket<TSelf>
+{
+    static abstract string PacketId { get; }
+}
+
+/// <summary>Receives packets with text ids from the generated dispatch without boxing.</summary>
+public interface IFormatTextPacketVisitor
+{
+    void Visit<T>(ref T packet) where T : IFormatTextPacket<T>;
+}
+
 /// <summary>Malformed or unsupported data.</summary>
 public sealed class FormatDataException(string message) : Exception(message);

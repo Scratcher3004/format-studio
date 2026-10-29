@@ -131,12 +131,31 @@ public sealed record BoundNative(INativeType Type, NativeArguments Args);
 /// documentation for their signatures). The functions can't use fields of the struct.</item>
 /// </list>
 /// </summary>
+/// <remarks>
+/// The same record describes the code of a definition that is bound to an existing type (<see cref="Codegen.TypeBinding"/>).
+/// </remarks>
 /// <param name="Type">The type of values in the target language.</param>
-/// <param name="Read">An expression that reads a value.</param>
-/// <param name="Write">A statement that writes <c>{{value}}</c>, without the semicolon.</param>
+/// <param name="Read">An expression that reads a value; empty when there is only a <see cref="Codec"/>.</param>
+/// <param name="Write">A statement that writes <c>{{value}}</c>, without the semicolon; empty when there is only a <see cref="Codec"/>.</param>
 /// <param name="Files">Source files the generated code needs, written into the output (with the same placeholders).</param>
 /// <param name="IsValueType">C#: the type is a struct (nullable as <c>T?</c> with <c>.Value</c>). A <see cref="Type"/> that is just <c>{{T:type}}</c> is a struct when <c>T</c>'s values are.</param>
-public sealed record NativeCodegen(string Type, string Read, string Write, IReadOnlyList<NativeFile>? Files = null, bool IsValueType = false);
+public sealed record NativeCodegen(string Type, string Read, string Write, IReadOnlyList<NativeFile>? Files = null, bool IsValueType = false)
+{
+    /// <summary>
+    /// An expression of a codec value that reads and writes values, for generators that compose codecs instead of calling
+    /// read and write code (e.g. Minecraft's <c>StreamCodec</c>s); null when there is none.
+    /// </summary>
+    public string? Codec { get; init; }
+
+    /// <summary>
+    /// Bindings of enums: an expression of the wire value of <c>{{value}}</c>, so that expressions can compare and
+    /// calculate with it (<c>{{value}}.ordinal()</c>); null when expressions can't use the values.
+    /// </summary>
+    public string? Value { get; init; }
+
+    /// <summary>Whether there is code to read and write values (not only a <see cref="Codec"/>).</summary>
+    public bool CanReadWrite => Read.Length > 0 && Write.Length > 0;
+}
 
 /// <param name="Name">The file name, e.g. <c>Color.cs</c>; it goes into the folder of <c>{{namespace}}</c>.</param>
 public sealed record NativeFile(string Name, string Content);

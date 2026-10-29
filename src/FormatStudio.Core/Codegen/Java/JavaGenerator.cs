@@ -19,7 +19,7 @@ public sealed class JavaGenerator : ICodeGenerator
     public string Language => "java";
 
     public string Description =>
-        "Java 8+ classes over java.io.InputStream and OutputStream. The runtime (FormatReader, FormatWriter) is written into the output by default.";
+        "Java 8+ classes (or records, Java 16+) over java.io.InputStream and OutputStream. The runtime (FormatReader, FormatWriter) is written into the output by default.";
 
     public string DefaultOutput => "generated/java";
 

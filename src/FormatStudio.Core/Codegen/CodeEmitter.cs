@@ -32,6 +32,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
 
     private int _temp;
     private readonly Dictionary<string, (INativeType Type, NativeCodegen Codegen)> _natives = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, NativeCodegen> _bindings = new(StringComparer.Ordinal);
 
     protected FormatProject Project => project;
     protected GeneratedOutput Output { get; } = new();
@@ -46,6 +47,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             Current = definition;
             try
             {
+                CheckBindings(definition);
                 var code = definition switch
                 {
                     StructDef structDef => Struct(structDef),
@@ -63,12 +65,25 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
         }
 
         Current = null;
-        foreach (var (type, codegen) in _natives.Values.OrderBy(n => n.Type.Name, StringComparer.Ordinal))
+        var runtimeFiles = _natives.Values.OrderBy(n => n.Type.Name, StringComparer.Ordinal)
+            .Select(n => ($"the native type '{n.Type.Name}'", n.Codegen))
+            .Concat(_bindings.OrderBy(b => b.Key, StringComparer.Ordinal).Select(b => ($"the binding of '{b.Key}'", b.Value)));
+        var written = new Dictionary<string, (string Owner, string Content)>(StringComparer.Ordinal);
+        foreach (var (owner, codegen) in runtimeFiles)
         {
             foreach (var file in codegen.Files ?? [])
             {
-                Output.Files.Add(new GeneratedFile(NativeFilePath(file.Name),
-                    $"{Marker}\n// Runtime of the native type '{type.Name}', written by format-studio. Do not edit.\n" + NativeTemplate(file.Content, null, new Dictionary<string, string>())));
+                var path = NativeFilePath(file.Name);
+                var content = NativeTemplate(file.Content, null, new Dictionary<string, string>());
+                if (written.TryGetValue(path, out var other))
+                {
+                    // Two bindings (or types) may share a runtime file; different files of the same name would overwrite each other.
+                    if (other.Content != content) Output.Diagnostics.Error($"{other.Owner} and {owner} both have a runtime file {file.Name}, with different content");
+                    continue;
+                }
+
+                written[path] = (owner, content);
+                Output.Files.Add(new GeneratedFile(path, $"{Marker}\n// Runtime of {owner}, written by format-studio. Do not edit.\n" + content));
             }
         }
 
@@ -145,6 +160,8 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
         while (queue.TryDequeue(out var definition))
         {
             if (!seen.Add(definition) || definition.Owner != null && IsExcluded(definition)) continue;
+            // The binding's code replaces the definition's, so neither it nor the types it uses are generated for it.
+            if (IsBound(definition)) continue;
             result.Add(definition);
             foreach (var name in TypeReferences.Of(definition))
                 if (project.Find(name) is { Owner: not null } used) queue.Enqueue(used);
@@ -155,6 +172,80 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
 
     protected TypeDef Definition(string name) =>
         project.Find(name) ?? throw new CodegenException($"Unknown type '{name}'");
+
+    // ------------------------------------------------------------------ bindings
+
+    /// <summary>Whether a definition is bound to an existing type for this generator (<see cref="TypeBinding"/>), so it isn't generated.</summary>
+    protected bool IsBound(TypeDef definition) => project.Binding(definition, Generator) != null;
+
+    /// <summary>
+    /// The code of a reference to a definition that is bound to an existing type for this generator, or null when the
+    /// definition is generated. Its runtime files are written into the output. A bound type can't be used with
+    /// <c>as</c> or an external tag, which its code doesn't know of.
+    /// </summary>
+    protected NativeCodegen? Binding(NamedRef named)
+    {
+        var definition = Definition(named.Name);
+        if (project.Binding(definition, Generator) is not { } codegen) return null;
+        if (named.As != null) throw new CodegenException($"{named.Name} is bound to an existing type, whose wire type can't be changed with 'as'");
+        if (named.Tag != null) throw new CodegenException($"{named.Name} is bound to an existing type, which can't take an external tag");
+        _bindings.TryAdd(definition.QualifiedName, codegen);
+        return codegen;
+    }
+
+    /// <summary>The type of a bound definition's values in the language (see <see cref="Binding"/>), or null when it is generated.</summary>
+    protected string? BoundType(NamedRef named) =>
+        Binding(named) is { } codegen ? NativeTemplate(codegen.Type, null, new Dictionary<string, string>()) : null;
+
+    /// <summary>Fails for code that composes codecs only, when values are read and written.</summary>
+    private static NativeCodegen ReadWrite(NativeCodegen codegen, string what) => codegen.CanReadWrite
+        ? codegen
+        : throw new CodegenException($"{what} has only a codec, no read and write code");
+
+    /// <summary>
+    /// <see cref="FormatProject.Unalias"/>, except that an alias bound to an existing type stays: its values are those of
+    /// the binding, not of the alias's type.
+    /// </summary>
+    protected TypeRef Unalias(TypeRef type)
+    {
+        for (var depth = 0; depth < 64; depth++)
+        {
+            if (type is not NamedRef { As: null, Tag: null } named || project.Find(named.Name) is not AliasDef alias || IsBound(alias)) return type;
+            type = alias.Target;
+        }
+
+        throw new CodegenException($"Alias cycle at {type}");
+    }
+
+    /// <summary>
+    /// The uses of bound types that the code of a definition can't express: constants and computed values (their
+    /// expressions are numbers, strings and enums of the DSL), bit field members and variant tags of a bound enum.
+    /// </summary>
+    private void CheckBindings(TypeDef definition)
+    {
+        string? Bound(TypeRef type) => Unalias(type) is NamedRef named && IsBound(Definition(named.Name)) ? named.Name : null;
+        switch (definition)
+        {
+            case StructDef structDef:
+                foreach (var field in structDef.Fields.Where(f => !f.IsInput))
+                {
+                    if (Bound(field.Type) is { } name)
+                        throw new CodegenException($"{field.Name}: a {(field.Const != null ? "const" : "computed")} field can't be of {name}, which is bound to an existing type");
+                }
+
+                break;
+            case BitfieldDef bitfield:
+                foreach (var member in bitfield.Members.Where(m => m.Type is not (null or "bool")))
+                {
+                    if (IsBound(Definition(member.Type!)))
+                        throw new CodegenException($"{member.Name}: a bit field member can't be of {member.Type}, which is bound to an existing type");
+                }
+
+                break;
+            case VariantDef { Tag: { } tag } when Bound(tag) is { } tagName:
+                throw new CodegenException($"The tag of a variant can't be {tagName}, which is bound to an existing type");
+        }
+    }
 
     /// <summary>A native type reference with its arguments, and its code for this generator.</summary>
     protected (NativeCodegen Codegen, NativeArguments Args) Native(NativeRef native)
@@ -262,7 +353,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
     protected static string Describe(TypeRef type) => TypeExpressions.TryFormat(type) ?? type.ToString();
 
     /// <summary>The least number of bytes a value takes on the wire, to check counts before allocating.</summary>
-    protected int MinSize(TypeRef type) => project.Unalias(type) switch
+    protected int MinSize(TypeRef type) => Unalias(type) switch
     {
         PrimitiveRef primitive => Primitives.MinWireSize(primitive.Kind),
         FixedPointRef fixedPoint => Primitives.MinWireSize(fixedPoint.Base.Kind),
@@ -302,7 +393,8 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
     /// <summary>
     /// The packet registries: one per protocol of the project, or a single one (with a null protocol) over all packets
     /// when the project declares none. Packets are ordered by id; packets sharing an id are reported and the first one
-    /// wins. Protocols whose name would clash in the generated code are reported and left out.
+    /// wins. A registry dispatches either integer or text ids (<see cref="IsTextRegistry"/>); with both, the text ids are
+    /// reported and left out. Protocols whose name would clash in the generated code are reported and left out.
     /// </summary>
     /// <param name="registryClass">The name of the class holding the registries.</param>
     protected List<(ProtocolDef? Protocol, List<StructDef> Packets)> Registries(string registryClass)
@@ -331,9 +423,29 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
 
     private List<StructDef> RegistryPackets(IEnumerable<StructDef> candidates, ProtocolDef? protocol)
     {
-        var packets = candidates.Where(p => p.Id != null)
-            .OrderBy(p => p.Id).ThenBy(p => p.Name, StringComparer.Ordinal).ToList();
-        foreach (var duplicate in packets.GroupBy(p => p.Id).Where(g => g.Count() > 1))
+        var packets = new List<StructDef>();
+        var ordered = candidates.Where(p => p.HasId)
+            .OrderBy(p => p.Id).ThenBy(p => p.TextId, StringComparer.Ordinal).ThenBy(p => p.Name, StringComparer.Ordinal).ToList();
+        if (ordered.Any(p => p.Id != null) && ordered.Any(p => p.TextId != null))
+        {
+            Output.Diagnostics.Add(new Diagnostic(Severity.Error,
+                $"{(protocol == null ? "The registry" : $"The registry of protocol {protocol.Name}")} can't dispatch both integer and text ids; " +
+                $"{string.Join(", ", ordered.Where(p => p.TextId != null).Select(p => p.Name))} are left out")
+            {
+                Area = Diagnostic.ProtocolsArea,
+            });
+            ordered.RemoveAll(p => p.TextId != null);
+        }
+
+        foreach (var packet in ordered)
+        {
+            // The registry returns the packets of the generated code; a bound packet's type is an existing one.
+            if (!IsBound(packet)) packets.Add(packet);
+            else if (protocol == null || protocol == project.Settings.Protocols.FirstOrDefault(p => p.Contains(packet)))
+                Output.Diagnostics.Warning($"{packet.Name} is bound to an existing type and left out of the packet registry", packet.Source);
+        }
+
+        foreach (var duplicate in packets.GroupBy(p => p.IdText).Where(g => g.Count() > 1))
         {
             var names = string.Join(", ", duplicate.Select(p => p.Name));
             Output.Diagnostics.Add(new Diagnostic(Severity.Warning, protocol == null
@@ -344,8 +456,11 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             });
         }
 
-        return packets.DistinctBy(p => p.Id).ToList();
+        return packets.DistinctBy(p => p.IdText).ToList();
     }
+
+    /// <summary>Whether a registry's packets (see <see cref="Registries"/>) have text ids rather than integer ids.</summary>
+    protected static bool IsTextRegistry(IReadOnlyList<StructDef> packets) => packets.Count > 0 && packets[0].TextId != null;
 
     /// <summary>A sentence for the documentation of a protocol's registry.</summary>
     protected static string ProtocolRemark(ProtocolDef protocol, int packets)
@@ -485,11 +600,16 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             case NativeRef native:
             {
                 var (codegen, args) = Native(native);
-                return NativeTemplate(codegen.Read, args, new Dictionary<string, string>
+                return NativeTemplate(ReadWrite(codegen, native.Name).Read, args, new Dictionary<string, string>
                 {
                     ["reader"] = context.Reader, ["pass-reader"] = PassReader(context.Reader),
                 }, w, context);
             }
+            case NamedRef named when Binding(named) is { } bound:
+                return NativeTemplate(ReadWrite(bound, named.Name).Read, null, new Dictionary<string, string>
+                {
+                    ["reader"] = context.Reader, ["pass-reader"] = PassReader(context.Reader),
+                }, w, context);
             case NamedRef named:
                 return Definition(named.Name) switch
                 {
@@ -636,12 +756,18 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             case NativeRef native:
             {
                 var (codegen, args) = Native(native);
-                w.Line(Statement(NativeTemplate(codegen.Write, args, new Dictionary<string, string>
+                w.Line(Statement(NativeTemplate(ReadWrite(codegen, native.Name).Write, args, new Dictionary<string, string>
                 {
                     ["writer"] = context.Writer, ["pass-writer"] = PassWriter(context.Writer), ["value"] = value,
                 }, w, context)));
                 break;
             }
+            case NamedRef named when Binding(named) is { } bound:
+                w.Line(Statement(NativeTemplate(ReadWrite(bound, named.Name).Write, null, new Dictionary<string, string>
+                {
+                    ["writer"] = context.Writer, ["pass-writer"] = PassWriter(context.Writer), ["value"] = value,
+                }, w, context)));
+                break;
             case NamedRef named:
                 switch (Definition(named.Name))
                 {
@@ -881,15 +1007,18 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
     /// <param name="conditional">The field has a condition, so it may be missing.</param>
     protected Value FieldValue(string access, TypeRef type, bool conditional)
     {
-        var resolved = project.Unalias(type);
+        var resolved = Unalias(type);
         var declared = type;
         var mayBeNull = conditional;
         if (resolved is OptionalRef optional)
         {
             declared = optional.Inner;
-            resolved = project.Unalias(optional.Inner);
+            resolved = Unalias(optional.Inner);
             mayBeNull = true;
         }
+
+        if (resolved is NamedRef boundRef && Binding(boundRef) is { } bound)
+            return BoundValue(access, boundRef, bound, type, mayBeNull);
 
         var kind = resolved switch
         {
@@ -904,6 +1033,25 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
         var code = kind is ValueKind.Bool or ValueKind.Number or ValueKind.Float ? Convert(access, kind, declared, mayBeNull) : access;
         return new Value(code, access, kind, type, mayBeNull);
     }
+
+    /// <summary>
+    /// A value of a bound type in an expression: a bound enum with a <see cref="NativeCodegen.Value"/> template is its wire
+    /// value; other values can only be compared with null.
+    /// </summary>
+    private Value BoundValue(string access, NamedRef named, NativeCodegen bound, TypeRef type, bool mayBeNull)
+    {
+        if (bound.Value == null || Definition(named.Name) is not EnumDef enumDef) return new Value(access, access, ValueKind.Other, type, mayBeNull);
+        if (mayBeNull) throw new CodegenException($"Expressions can't use an optional or conditional {named.Name}, which is bound to an existing type");
+        var number = NativeTemplate(bound.Value, null, new Dictionary<string, string> { ["value"] = access });
+        return new Value(Convert(number, ValueKind.Number, enumDef.Type, false), access, ValueKind.Number, type);
+    }
+
+    /// <summary>The bound definition a value is of, for the error of an expression that needs to look into it; null when it is generated.</summary>
+    private string? BoundName(Value value) =>
+        value.Type != null && Unalias(value.Type) is var resolved && (resolved is OptionalRef optional ? Unalias(optional.Inner) : resolved) is NamedRef named
+        && IsBound(Definition(named.Name))
+            ? named.Name
+            : null;
 
     protected Value Translate(Expr expression, Context context)
     {
@@ -926,13 +1074,22 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             case NameExpr name:
                 return context.Resolve(name.Name) ?? throw new CodegenException($"Unknown name '{name.Name}' in an expression");
             case EnumConstExpr constant:
-                if (Definition(constant.Enum) is not EnumDef enumDef || enumDef.FindByName(constant.Member) == null)
+                if (Definition(constant.Enum) is not EnumDef enumDef || enumDef.FindByName(constant.Member) is not { } member)
                     throw new CodegenException($"Unknown enum constant {constant}");
+                if (IsBound(enumDef))
+                {
+                    // Bound enums are compared by their wire values (see BoundValue).
+                    var wire = NumberLiteral(member.Value);
+                    return new Value(wire, wire, ValueKind.Number, null);
+                }
+
                 return EnumConstant(enumDef, constant.Member);
             case MemberExpr memberExpr:
             {
                 var target = Translate(memberExpr.Target, context);
-                if (target.Type == null || project.Unalias(target.Type) is not NamedRef named || Definition(named.Name) is not StructDef structDef)
+                if (BoundName(target) is { } boundName)
+                    throw new CodegenException($"Can't access '{memberExpr.Name}' in {memberExpr}: {boundName} is bound to an existing type");
+                if (target.Type == null || Unalias(target.Type) is not NamedRef named || Definition(named.Name) is not StructDef structDef)
                     throw new CodegenException($"Can't access '{memberExpr.Name}' in {memberExpr}");
                 var field = structDef.Fields.FirstOrDefault(f => f.Name == memberExpr.Name && f.IsInput)
                     ?? throw new CodegenException($"{structDef.Name} has no field '{memberExpr.Name}'");
@@ -942,7 +1099,7 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             {
                 var target = Translate(indexExpr.Target, context);
                 var index = Translate(indexExpr.Index, context);
-                if (target.Type == null || project.Unalias(target.Type) is not ArrayRef array)
+                if (target.Type == null || Unalias(target.Type) is not ArrayRef array)
                     throw new CodegenException($"Can't index {indexExpr.Target}");
                 return FieldValue(IndexAccess(target.Raw, $"(int){index.Code}"), array.Element, false);
             }
@@ -969,7 +1126,9 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
             {
                 if (call.Arguments.Count != 1) throw new CodegenException($"{call.Function}() takes one argument");
                 var argument = Translate(call.Arguments[0], context);
-                if (call.Function == "tagof" && argument.Type != null && project.Unalias(argument.Type) is NamedRef tagged
+                if (BoundName(argument) is { } boundArgument)
+                    throw new CodegenException($"{call.Function}() can't be used on {boundArgument}, which is bound to an existing type");
+                if (call.Function == "tagof" && argument.Type != null && Unalias(argument.Type) is NamedRef tagged
                     && Definition(tagged.Name) is VariantDef taggedVariant && project.TagKind(taggedVariant) == VariantTagKind.String)
                 {
                     var tagText = TagText(taggedVariant, argument);
@@ -1065,8 +1224,10 @@ public abstract class CodeEmitter(FormatProject project, IReadOnlySet<string> ex
     /// <summary>Names in the end condition of an <c>until</c> array are the fields of the element.</summary>
     protected Context ElementContext(ArrayRef array, string item)
     {
-        if (project.Unalias(array.Element) is not NamedRef named || Definition(named.Name) is not StructDef structDef)
+        if (Unalias(array.Element) is not NamedRef named || Definition(named.Name) is not StructDef structDef)
             throw new CodegenException($"An array with 'until' needs struct elements, not {Describe(array.Element)}");
+        if (IsBound(structDef))
+            throw new CodegenException($"An array with 'until' can't end on elements of {named.Name}, which is bound to an existing type");
         return new Context
         {
             Resolve = n => structDef.Fields.FirstOrDefault(f => f.Name == n) switch

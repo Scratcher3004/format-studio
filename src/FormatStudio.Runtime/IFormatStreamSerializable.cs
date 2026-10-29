@@ -19,3 +19,15 @@ public interface IFormatStreamPacketVisitor
 {
     void Visit<T>(ref T packet) where T : IFormatStreamPacket<T>;
 }
+
+/// <summary>A packet with a text id (e.g. a channel name such as <c>mod:move</c>), dispatched by the generated registry.</summary>
+public interface IFormatStreamTextPacket<TSelf> : IFormatStreamSerializable<TSelf> where TSelf : IFormatStreamTextPacket<TSelf>
+{
+    static abstract string PacketId { get; }
+}
+
+/// <summary>Receives packets with text ids from the generated dispatch without boxing.</summary>
+public interface IFormatStreamTextPacketVisitor
+{
+    void Visit<T>(ref T packet) where T : IFormatStreamTextPacket<T>;
+}

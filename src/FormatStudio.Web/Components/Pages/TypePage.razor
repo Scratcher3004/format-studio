@@ -18,7 +18,7 @@ else
         <MudText Typo="Typo.h5">@_definition.QualifiedName</MudText>
         @if (_definition is StructDef { IsPacket: true } packet)
         {
-            <MudChip T="string" Size="Size.Small">id @packet.Id</MudChip>
+            <MudChip T="string" Size="Size.Small">id @packet.IdText</MudChip>
             @foreach (var group in packet.Groups)
             {
                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@group</MudChip>

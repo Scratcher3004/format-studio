@@ -136,6 +136,7 @@ public static class Simulator
         var writer = new WireWriter();
         try
         {
+            if (packet.TextId != null) throw new EncodeException($"{packet.Name} has a text id, which a packet header can't hold");
             writer.WriteInteger(header.Type.Kind, header.Type.Endian ?? codec.Project.Defaults.Endian, packet.Id ?? 0);
         }
         catch (EncodeException e)

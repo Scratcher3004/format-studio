@@ -352,6 +352,35 @@ public class CodegenTests
         Assert.Equal("abc\nname has 4 characters, more than 3\nname has more than 3 characters\n", java.Run(classes, "Harness", "").Replace("\r\n", "\n"));
     }
 
+    [Theory]
+    [InlineData("list")]
+    [InlineData("array")]
+    public void JavaRecordsMatchTheSimulator(string collections)
+    {
+        AssertMatchesSimulator(FormatProject.Load(TestPaths.JavaSample), "java-stream", 10, new JsonObject { ["records"] = true, ["collections"] = collections });
+    }
+
+    [Fact]
+    public void JavaRecordsHaveComponentsAndAccessors()
+    {
+        var project = Project("name: p\nsources: [types/*.yaml]\n",
+            ("Point.yaml", "struct: Point\ndoc: A point\nfields:\n  - x: i32\n  - {name: hashCode, type: i32, doc: Not Object's}\n"),
+            ("Steps.yaml", "struct: Steps\nfields:\n  - {name: steps, type: {array: Point, until: \"x == 0\"}}\n  - {name: extra, type: u8, if: \"steps[0].x > 1\"}\n"),
+            ("Hello.yaml", "packet: Hello\nid: 1\nfields:\n  - {name: count, type: u8, computed: len(name)}\n  - {name: name, type: string, length: count}\n"));
+        var output = CodeGeneration.Generate(project, Target("java-stream", new JsonObject { ["records"] = true }));
+        Assert.Empty(output.Diagnostics.Where(d => d.Severity == Severity.Error));
+        var point = output.FileOf("Point")!.Content;
+        Assert.Contains("public record Point(int x, int hashCodeValue) implements FormatSerializable", point);
+        Assert.Contains(" * @param hashCodeValue Not Object's Wire: i32.", point);
+        Assert.Contains("return new Point(__x, __hashCodeValue);", point);
+        Assert.Contains("writer.writeI32LE(this.x);", point);
+        var steps = output.FileOf("Steps")!.Content;
+        Assert.Contains(".x() == 0L", steps);
+        Assert.Contains(".get((int)0L).x()", steps);
+        Assert.Contains("public record Hello(String name) implements FormatPacket", output.FileOf("Hello")!.Content);
+        AssertMatchesSimulator(project, "java-stream", 10, new JsonObject { ["records"] = true });
+    }
+
     /// <summary>Definitions named like members the generators give them, and types hidden by a variant's nested enum Case.</summary>
     private static readonly (string File, string Text)[][] NameClashProjects =
     [

@@ -23,7 +23,7 @@
 
     private string? _type;
 
-    protected override void OnInitialized() => _type = Initial ?? Projects.Project?.Packets.OrderBy(p => p.Id).FirstOrDefault()?.Name;
+    protected override void OnInitialized() => _type = Initial ?? Projects.Project?.Packets.OrderBy(p => p.Id).ThenBy(p => p.TextId, StringComparer.Ordinal).FirstOrDefault()?.Name;
 
     private string? Hint => _type != null && Projects.Project?.Find(_type) is { } definition ? $"{definition.Kind}, {definition.Source?.File}" : null;
 }

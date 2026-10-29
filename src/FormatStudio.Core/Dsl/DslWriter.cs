@@ -18,7 +18,7 @@ public static class DslWriter
             case StructDef structDef:
                 if (structDef.IsPacket)
                 {
-                    map.AddIf("id", Integer(structDef.Id, structDef.IdBase));
+                    map.AddIf("id", (object?)structDef.TextId ?? Integer(structDef.Id, structDef.IdBase));
                     map.AddIf("groups", structDef.Groups.Cast<object?>().ToList());
                 }
 

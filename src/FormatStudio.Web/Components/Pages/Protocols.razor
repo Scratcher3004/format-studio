@@ -35,8 +35,8 @@
 
     @foreach (var draft in _drafts)
     {
-        var packets = project.Packets.Where(draft.Contains).OrderBy(p => p.Id).ThenBy(p => p.Name, StringComparer.Ordinal).ToList();
-        var clashes = packets.Where(p => p.Id != null).GroupBy(p => p.Id).Where(g => g.Count() > 1).ToList();
+        var packets = project.Packets.Where(draft.Contains).OrderBy(p => p.Id).ThenBy(p => p.TextId, StringComparer.Ordinal).ThenBy(p => p.Name, StringComparer.Ordinal).ToList();
+        var clashes = packets.Where(p => p.HasId).GroupBy(p => p.IdText).Where(g => g.Count() > 1).ToList();
         var added = _added.Contains(draft);
         <MudPaper Outlined="@true" Class="@(added ? "pa-3 mb-3 protocol-added" : "pa-3 mb-3")" id="@ElementId(draft)">
             @if (added)
@@ -81,7 +81,7 @@
                     <div class="d-flex flex-wrap gap-2">
                         @foreach (var packet in packets)
                         {
-                            <MudLink Href="@Link($"type/{packet.Name}")" Typo="@Typo.body2"><span class="mono">@packet.Id</span> @packet.Name</MudLink>
+                            <MudLink Href="@Link($"type/{packet.Name}")" Typo="@Typo.body2"><span class="mono">@packet.IdText</span> @packet.Name</MudLink>
                         }
                     </div>
                 </MudExpansionPanel>
@@ -89,7 +89,7 @@
         </MudPaper>
     }
 
-    @if (_drafts.Count > 0 && project.Packets.Where(p => p.Id != null && !_drafts.Any(d => d.Contains(p))).ToList() is { Count: > 0 } uncovered)
+    @if (_drafts.Count > 0 && project.Packets.Where(p => p.HasId && !_drafts.Any(d => d.Contains(p))).ToList() is { Count: > 0 } uncovered)
     {
         <MudAlert Severity="@MudBlazor.Severity.Warning" Dense="@true" Class="mb-3">
             @(uncovered.Count == 1 ? "1 packet is" : $"{uncovered.Count} packets are") in no protocol, so no registry dispatches

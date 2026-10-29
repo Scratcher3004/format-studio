@@ -18,7 +18,7 @@ namespace FormatStudio.Natives;
 public sealed partial class DeclaredNative : INativeType
 {
     private static readonly HashSet<string> Keys = ["native", "doc", "plugin", "class", "parameters", "nullable", "minSize", "codegen"];
-    private static readonly HashSet<string> CodegenKeys = ["type", "read", "write", "files", "valueType"];
+    private static readonly HashSet<string> CodegenKeys = ["type", "read", "write", "codec", "files", "valueType"];
 
     private readonly IReadOnlyDictionary<string, NativeCodegen> _codegen;
     private readonly bool? _nullable;
@@ -173,18 +173,25 @@ public sealed partial class DeclaredNative : INativeType
         return result;
     }
 
-    /// <summary>Reads the code of a native type for one generator; also used by <see cref="NativeCodegenExtension"/>.</summary>
+    /// <summary>
+    /// Reads the code of a native type for one generator; also used by <see cref="NativeCodegenExtension"/> and
+    /// <see cref="TypeBinding"/> (<paramref name="binding"/>, which also takes <c>value</c>).
+    /// </summary>
     internal static NativeCodegen ReadCodegen(string name, string generator, JsonNode? node, string file, NativeFiles files, List<string> used,
-        CodeGenerators? generators, DiagnosticBag diagnostics, SourceLocation where)
+        CodeGenerators? generators, DiagnosticBag diagnostics, SourceLocation where, bool binding = false)
     {
         if (node is not JsonObject map) throw new FormatDefinitionException($"codegen.{generator} must be a mapping");
         if (generators != null && generators.Find(generator) == null)
             diagnostics.Warning($"Unknown generator '{generator}' in the codegen of {name} ({string.Join(", ", generators.All.Select(g => g.Name))})", where);
-        foreach (var key in map.Select(p => p.Key).Where(k => !CodegenKeys.Contains(k)))
+        foreach (var key in map.Select(p => p.Key).Where(k => !CodegenKeys.Contains(k) && !(binding && k == "value")))
             diagnostics.Warning($"Unknown key '{key}' in codegen.{generator}", where);
-        string Template(string key) => map[key]?.ToString() is { Length: > 0 } text
-            ? text
-            : throw new FormatDefinitionException($"codegen.{generator} of {name} needs '{key}'");
+        string Template(string key) => Optional(key)
+            ?? throw new FormatDefinitionException($"codegen.{generator} of {name} needs '{key}'");
+        string? Optional(string key) => map[key]?.ToString() is { Length: > 0 } text ? text : null;
+
+        // Code that composes codecs can do without read and write code; then both are left out.
+        var codec = Optional("codec");
+        var readWrite = codec == null || map["read"] != null || map["write"] != null;
 
         var runtimeFiles = new List<NativeFile>();
         var patterns = map["files"] switch
@@ -207,8 +214,12 @@ public sealed partial class DeclaredNative : INativeType
             }
         }
 
-        return new NativeCodegen(Template("type"), Template("read"), Template("write"), runtimeFiles,
-            map["valueType"] is JsonValue valueType && valueType.TryGetValue<bool>(out var isValueType) && isValueType);
+        return new NativeCodegen(Template("type"), readWrite ? Template("read") : "", readWrite ? Template("write") : "", runtimeFiles,
+            map["valueType"] is JsonValue valueType && valueType.TryGetValue<bool>(out var isValueType) && isValueType)
+        {
+            Codec = codec,
+            Value = binding ? Optional("value") : null,
+        };
     }
 
     private INativeType Implemented => Implementation

@@ -130,6 +130,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         OptionalRef optional => Nullable(Type(optional.Inner, qualified)),
         SizedRef sized => Type(sized.Inner, qualified),
         FixedPointRef => "double",
+        NamedRef named when BoundType(named) is { } bound => bound,
         NamedRef named => Definition(named.Name) is AliasDef alias && !IsExcluded(named.Name)
             ? Type(alias.Target, qualified)
             : TypeName(Definition(named.Name), qualified),
@@ -144,11 +145,12 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         return NativeTemplate(codegen.Type, args, new Dictionary<string, string>());
     }
 
-    private bool IsValueType(TypeRef type) => Project.Unalias(type) switch
+    private bool IsValueType(TypeRef type) => Unalias(type) switch
     {
         PrimitiveRef or FixedPointRef => true,
         SizedRef sized => IsValueType(sized.Inner),
         NativeRef native => ValueTypeArgument(native) is { } inner ? IsValueType(inner) : Native(native).Codegen.IsValueType,
+        NamedRef named when Binding(named) is { } bound => bound.IsValueType,
         NamedRef named => Definition(named.Name) is EnumDef or BitfieldDef || Definition(named.Name) is StructDef or VariantDef && !IsClass(Definition(named.Name)),
         _ => false,
     };
@@ -317,19 +319,22 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         var remarks = new List<string?>
         {
             structDef.Title != null ? $"Schema name: {structDef.Title}." : null,
-            structDef.IsPacket ? $"Packet id {structDef.Id}." : null,
+            structDef.IsPacket ? $"Packet id {structDef.IdText}." : null,
             isClass ? "A class because it contains itself." : null,
         };
         Doc(w, structDef.Doc, remarks.ToArray());
 
-        var interfaceName = structDef.IsPacket ? options.PacketInterface : options.SerializableInterface;
+        var interfaceName = !structDef.IsPacket ? options.SerializableInterface
+            : structDef.TextId != null ? options.TextPacketInterface
+            : options.PacketInterface;
         w.Open($"public {(isClass ? "sealed partial class" : "partial struct")} {name} : {interfaceName}<{name}>");
         if (structDef.IsPacket)
         {
-            if (structDef.Id == null) throw new CodegenException("A packet needs an id");
-            w.Line($"public const uint Id = {structDef.Id};");
+            if (!structDef.HasId) throw new CodegenException("A packet needs an id");
+            var type = structDef.TextId != null ? "string" : "uint";
+            w.Line($"public const {type} Id = {(structDef.TextId != null ? Literal(structDef.TextId) : structDef.Id)};");
             w.Line();
-            w.Line("public static uint PacketId => Id;");
+            w.Line($"public static {type} PacketId => Id;");
             w.Line();
         }
 
@@ -379,7 +384,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override void CheckRange(StructDef structDef, FieldDef field, string value, CodeWriter w)
     {
-        if (!options.ValidateRanges || Project.Unalias(field.Type) is not PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool } primitive) return;
+        if (!options.ValidateRanges || Unalias(field.Type) is not PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool } primitive) return;
         // Half only compares with Half.
         if (primitive.Kind == PrimitiveKind.F16) value = $"(double){value}";
         var checks = new List<string>();
@@ -390,7 +395,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     protected override string Constant(FieldDef field)
     {
-        var resolved = Project.Unalias(field.Type);
+        var resolved = Unalias(field.Type);
         var constant = field.Const!;
         switch (resolved)
         {
@@ -421,7 +426,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
     protected override void DeclareComputed(FieldDef field, string name, string code, ValueKind kind, CodeWriter w)
     {
         var type = Type(field.Type);
-        var resolved = Project.Unalias(field.Type);
+        var resolved = Unalias(field.Type);
         if (resolved is PrimitiveRef { Kind: PrimitiveKind.Bool }) code = kind == ValueKind.Bool ? code : $"({code} != 0)";
         else if (kind == ValueKind.Bool) code = $"({type})({code} ? 1 : 0)";
         else code = resolved is NamedRef ? $"({Type(field.Type, true)})({code})" : $"({type})({code})";
@@ -840,7 +845,7 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         w.Open($"public {(isClass ? "sealed partial class" : "partial struct")} {name} : {options.SerializableInterface}<{name}>");
 
         var stringTags = Project.TagKind(variant) == VariantTagKind.String;
-        var resolvedTag = variant.Tag != null ? Project.Unalias(variant.Tag) : null;
+        var resolvedTag = variant.Tag != null ? Unalias(variant.Tag) : null;
         if (tagType == "Case")
         {
             // String tags are mapped to the case index; CaseOf and TagOf convert.
@@ -994,12 +999,16 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
 
     private void RegistryMembers(CodeWriter w, List<StructDef> packets)
     {
+        var text = IsTextRegistry(packets);
+        var (idType, visitor) = text ? ("string", options.TextVisitorInterface) : ("uint", options.VisitorInterface);
+        string Key(StructDef packet) => text ? Literal(packet.TextId!) : packet.Id!.Value.ToString(CultureInfo.InvariantCulture);
+
         w.Line("/// <summary>Reads the packet with the given id and passes it to the visitor. Returns false for unknown ids.</summary>");
-        w.Open($"public static bool Dispatch<TVisitor>(uint id, {ReaderParameter}, ref TVisitor visitor) where TVisitor : {options.VisitorInterface}");
+        w.Open($"public static bool Dispatch<TVisitor>({idType} id, {ReaderParameter}, ref TVisitor visitor) where TVisitor : {visitor}");
         w.Open("switch (id)");
         foreach (var packet in packets)
         {
-            w.Open($"case {packet.Id}:");
+            w.Open($"case {Key(packet)}:");
             w.Line($"var packet = {Global(packet)}.Read({Pass("reader")});");
             w.Line("visitor.Visit(ref packet);");
             w.Line("return true;");
@@ -1013,12 +1022,14 @@ internal sealed class CSharpEmitter(FormatProject project, CSharpOptions options
         w.Line();
 
         w.Line("/// <summary>The packet name for an id, or null.</summary>");
-        w.Open("public static string? NameOf(uint id) => id switch");
-        foreach (var packet in packets) w.Line($"{packet.Id} => \"{packet.Name}\",");
+        w.Open($"public static string? NameOf({idType} id) => id switch");
+        foreach (var packet in packets) w.Line($"{Key(packet)} => \"{packet.Name}\",");
         w.Line("_ => null,");
         w.Close(";");
         w.Line();
         w.Line("/// <summary>All packet ids.</summary>");
-        w.Line($"public static global::System.ReadOnlySpan<uint> Ids => [{string.Join(", ", packets.Select(p => p.Id))}];");
+        w.Line(text
+            ? $"public static global::System.Collections.Generic.IReadOnlyList<string> Ids {{ get; }} = [{string.Join(", ", packets.Select(Key))}];"
+            : $"public static global::System.ReadOnlySpan<uint> Ids => [{string.Join(", ", packets.Select(Key))}];");
     }
 }

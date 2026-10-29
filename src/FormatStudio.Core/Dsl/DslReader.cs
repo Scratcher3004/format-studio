@@ -172,8 +172,14 @@ public sealed class DslReader
         {
             if (Get(map, "id") is { } id)
             {
-                definition.Id = Integer(id, "id");
-                definition.IdBase = BaseOf(id);
+                // A plain integer is a number, anything else (quoted, or not a number) a text id.
+                if (id is YamlScalarNode { Style: ScalarStyle.Plain or ScalarStyle.Any, Value: { } plain } && YamlValues.TryParseInteger(plain, out _, out _))
+                {
+                    definition.Id = Integer(id, "id");
+                    definition.IdBase = BaseOf(id);
+                }
+                else if (Scalar(id, "id") is { Length: > 0 } text) definition.TextId = text;
+                else throw Fail(id, "A packet's id can't be empty");
             }
 
             if (Get(map, "groups") is { } groups)

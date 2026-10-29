@@ -17,6 +17,7 @@ codegen:
 | `registry` | `Packets` | Class with the packet id dispatch |
 | `unsigned` | `widen` | How unsigned integers are represented, see below |
 | `collections` | `list` | `list`: arrays are `java.util.List`s; `array`: Java arrays (`int[]`, `Item[]`) |
+| `records` | `false` | Structs and packets become `record`s (Java 16+) instead of classes with public fields |
 | `validateRanges` | `false` | Check `min`/`max` of numeric fields when reading |
 | `validateStrings` | `true` | Reject invalid UTF-8 or ASCII, and padding or fill with `check: strict` |
 | `includeRuntime` | `true` | Write the runtime's sources into the output |
@@ -34,7 +35,12 @@ handshake.write(new FormatWriter(buffer));
 ```
 
 - Structs and packets become `final class`es with public fields, `static read(FormatReader)` and
-  `write(FormatWriter)`. Packets implement `FormatPacket` (`ID`, `packetId()`).
+  `write(FormatWriter)`. Packets implement `FormatPacket` (`ID`, `packetId()`), or with a text id `FormatTextPacket`
+  (`String ID`, `String packetId()`).
+- With `records`, structs and packets are `record`s whose components are the stored fields, in order (computed and
+  const fields aren't components), with the same `read`/`write` methods. Expressions read fields through the
+  accessors (`point.x()`), also those of types skipped with `skipCodegen`, which must be records then. Fields named
+  like a method of `Object` or `packetId` get a `Value` suffix. The output needs Java 16.
 - Signed integers use the Java type of their size (`i8` → `byte`, `i16` → `short`, `i32`/`varint32`/`zigzag32` →
   `int`, 64-bit → `long`). `f16`/`f32` are `float`, `f64` is `double`, `uuid` is `java.util.UUID`, strings are `String`, bytes
   and NBT are `byte[]`.
@@ -48,7 +54,8 @@ handshake.write(new FormatWriter(buffer));
 - Variants are classes with `kind` (the tag enum, or a nested `Case` enum with `value` or `tag`), one field per case
   and `ofCase(...)` factories; `read(reader, kind)` and `writeContent` are for external tags.
 - The registry has `read(id, reader)` (returns the packet, or `null` for unknown ids), `dispatch(id, reader, visitor)`,
-  `nameOf(id)` and `ids()`. Packet ids must fit an `int`. With [protocols](dsl.md#protocols) each protocol is a
+  `nameOf(id)` and `ids()`. Packet ids must fit an `int`. A registry of text ids takes and returns `String` ids, its
+  packets are `FormatTextPacket`s and its visitor a `FormatTextPacketVisitor`. With [protocols](dsl.md#protocols) each protocol is a
   nested class with these methods: `Packets.LoginServerbound.read(id, reader)`.
 - Names that are Java keywords get a `_` suffix; fields named `ID` or `kind` (and enum members named `value` or `tag`)
   are renamed so they don't clash with the generated members. A variant named `Case` with a nested `Case` enum is the
@@ -72,7 +79,7 @@ fit are rejected when writing.
 ## Runtime
 
 With `includeRuntime` the runtime's sources (`FormatReader`, `FormatWriter`, `FormatSerializable`, `FormatPacket`,
-`FormatPacketVisitor`, `FormatDataException`) are written into the output, in `runtimePackage`, so the output compiles
+`FormatPacketVisitor`, `FormatTextPacket`, `FormatTextPacketVisitor`, `FormatDataException`) are written into the output, in `runtimePackage`, so the output compiles
 on its own. Turn it off when several targets share one copy of the runtime. The sources are in
 `src/FormatStudio.Runtime.Java`.
 

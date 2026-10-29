@@ -103,3 +103,8 @@ A dependency's `codegen` changes that:
 
 Settings only apply to direct dependencies; list a library's own dependency as a dependency of the project to
 configure it.
+
+A library's [bindings](codegen.md#binding-definitions-to-existing-types) (`bind` files) are packed with it, with their
+runtime files, and apply wherever the library is loaded: its bound definitions aren't generated for those generators.
+A project can bind a library's definitions itself (`bind: geo.Point`), but not for a generator the library binds them
+for already.

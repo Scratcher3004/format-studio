@@ -38,6 +38,8 @@ public sealed class FormatModule
     public IReadOnlyList<Codegen.DeclaredGenerator> Generators { get; init; } = [];
     /// <summary>The code for native types the library adds (<c>native-codegen</c>); it applies wherever the library is loaded.</summary>
     public IReadOnlyList<Natives.NativeCodegenExtension> CodegenExtensions { get; init; } = [];
+    /// <summary>The library's bindings of definitions to existing types, by qualified name; they apply wherever the library is loaded.</summary>
+    public IReadOnlyList<Codegen.TypeBinding> Bindings { get; init; } = [];
 
     public TypeDef? Find(string name) => _types.GetValueOrDefault(name);
 

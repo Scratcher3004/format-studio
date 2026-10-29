@@ -37,6 +37,9 @@ codegen:                         # per generator: csharp, csharp-stream, java-st
     files: [java/*.java]
 ```
 
+A generator that composes codec values instead of calling read and write code (such as Minecraft's `StreamCodec`s)
+takes `codec`, an expression of the type's codec; `read` and `write` can then be left out.
+
 Arguments are completed as for `nbt`: from the reference, then `defaults.rgb` in the project, then the parameter's
 default. The templates take the placeholders described in [code generation](codegen.md#native-types): `{{reader}}`,
 `{{writer}}`, `{{value}}`, `{{namespace}}`, `{{runtime}}` and the arguments by name (`{{order}}`,

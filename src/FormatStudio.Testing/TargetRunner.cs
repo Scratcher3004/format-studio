@@ -247,7 +247,12 @@ public static class TargetRunner
             // A registry is generated per protocol, or one for all packets of a project without protocols; a group narrows
             // the packets beyond what a registry has.
             if (frame.Group == null && (frame.Protocol == null) == (project.Settings.Protocols.Count == 0))
+            {
+                // A packet header holds an integer id; a registry of text ids has no packet for it.
+                var registry = frame.Protocol is { } name && project.FindProtocol(name) is { } protocol ? project.PacketsOf(protocol) : project.Packets;
+                if (registry.Any(p => p.TextId != null)) return Framed.Skipped("the registry dispatches text ids, and a packet header holds an integer id");
                 return new Framed(HarnessJob.OfPacket(frame.Protocol ?? "", id, body), null, prefix, expected, id);
+            }
             if (expected == null) return Framed.Skipped($"no packet has id {id}");
 
             var generated = Generated(new NamedRef(expected), null, out var why);
@@ -300,7 +305,7 @@ public static class TargetRunner
                 null or not (StructDef or BitfieldDef or VariantDef { Tag: not null }) =>
                     $"{text ?? type.ToString()} has no generated Read of its own (structs, bitfields and variants with a tag have)",
                 { Owner: { } library } => $"{definition.Name} is from the library {library.Name}",
-                _ when output.FileOf(definition.QualifiedName) == null => $"{definition.Name} has no generated code (skipCodegen)",
+                _ when output.FileOf(definition.QualifiedName) == null => $"{definition.Name} has no generated code (skipCodegen, or bound to an existing type)",
                 _ => null,
             };
             return reason == null ? definition!.Name : null;

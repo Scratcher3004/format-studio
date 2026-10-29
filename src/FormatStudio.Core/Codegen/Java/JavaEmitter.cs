@@ -27,6 +27,12 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     /// <summary>Field names the generated code itself uses.</summary>
     private static readonly HashSet<string> Reserved = ["ID", "kind"];
 
+    /// <summary>
+    /// Names a record component can't have: its accessor would clash with a method of <c>Object</c> or of the packet
+    /// interfaces.
+    /// </summary>
+    private static readonly HashSet<string> RecordReserved = ["clone", "finalize", "getClass", "hashCode", "notify", "notifyAll", "packetId", "toString", "wait"];
+
     /// <summary>Names of the fields and helpers of generated enums, which members can't use.</summary>
     private static readonly HashSet<string> EnumReserved = ["value", "tag", "BY_VALUE", "BY_TAG"];
 
@@ -65,7 +71,11 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     /// <summary>The Java field name of a field or case, avoiding generated members.</summary>
     private static string Member(string name) => Reserved.Contains(name) ? name + "Value" : Id(name);
 
-    protected override string MemberName(string name, string owner) => Member(name);
+    /// <summary>The Java name of a struct's field: a public field, or with <c>records</c> a record component.</summary>
+    private string FieldMember(string name) => options.Records && RecordReserved.Contains(name) ? name + "Value" : Member(name);
+
+    // Fields are read through the accessor of a record.
+    protected override string MemberName(string name, string owner) => options.Records ? FieldMember(name) + "()" : FieldMember(name);
 
     private static string EnumMember(string name) => EnumReserved.Contains(name) ? name + "_" : Id(name);
 
@@ -92,7 +102,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     private static bool IsOpen(EnumDef enumDef) => enumDef.Flags || enumDef.AllowUnknown;
 
     private EnumDef? ClosedEnum(TypeRef type) =>
-        Project.Unalias(type) is NamedRef named && Definition(named.Name) is EnumDef { } enumDef && !IsOpen(enumDef) ? enumDef : null;
+        Unalias(type) is NamedRef named && Definition(named.Name) is EnumDef { } enumDef && !IsOpen(enumDef) ? enumDef : null;
 
     private bool Arrays => options.Collections == JavaCollections.Array;
 
@@ -206,6 +216,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
             OptionalRef optional => Type(optional.Inner, true),
             SizedRef sized => Type(sized.Inner),
             FixedPointRef => "double",
+            NamedRef named when BoundType(named) is { } bound => bound,
             NamedRef named => Definition(named.Name) switch
             {
                 AliasDef alias when !IsExcluded(named.Name) => Type(alias.Target),
@@ -254,7 +265,10 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     private static string Escape(string text) => text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
         .Replace("\\", "&#92;").Replace("*/", "*&#47;").Replace("@", "&#64;");
 
-    private static void Doc(CodeWriter w, string? doc, params string?[] remarks)
+    private static void Doc(CodeWriter w, string? doc, params string?[] remarks) => Doc(w, doc, [], remarks);
+
+    /// <param name="tags">Block tags after the text, e.g. <c>@param</c>, escaped already.</param>
+    private static void Doc(CodeWriter w, string? doc, IReadOnlyList<string> tags, params string?[] remarks)
     {
         var lines = doc?.Split('\n').Select(Escape).ToList() ?? [];
         var parts = remarks.Where(r => r != null).ToList();
@@ -263,6 +277,9 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
             if (lines.Count > 0) lines.Add("<p>");
             lines.Add(Escape(string.Join(" ", parts)));
         }
+
+        if (lines.Count > 0 && tags.Count > 0) lines.Add("");
+        lines.AddRange(tags);
 
         if (lines.Count == 0) return;
         if (lines.Count == 1)
@@ -286,7 +303,8 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         builder.Append($"package {package};\n\n");
         if (options.RuntimePackage != package)
         {
-            var imports = new[] { "FormatDataException", "FormatEncoding", "FormatPacket", "FormatPacketVisitor", "FormatReader", "FormatSerializable", "FormatWriter" }
+            var imports = new[] { "FormatDataException", "FormatEncoding", "FormatPacket", "FormatPacketVisitor", "FormatReader", "FormatSerializable", "FormatTextPacket",
+                    "FormatTextPacketVisitor", "FormatWriter" }
                 .Where(name => System.Text.RegularExpressions.Regex.IsMatch(body, $@"\b{name}\b")).ToList();
             foreach (var name in imports) builder.Append($"import {options.RuntimePackage}.{name};\n");
             if (imports.Count > 0) builder.Append('\n');
@@ -313,7 +331,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     {
         if (kind == ValueKind.Bool) return mayBeNull ? $"({access} != null && {access})" : access;
         var converted = kind == ValueKind.Float ? $"(double) {access}"
-            : Project.Unalias(declared) switch
+            : Unalias(declared) switch
             {
                 PrimitiveRef primitive => AsLong(access, primitive.Kind),
                 NamedRef named when Definition(named.Name) is EnumDef enumDef => AsLong(IsOpen(enumDef) ? access : $"{access}.value", enumDef.Type.Kind),
@@ -327,9 +345,9 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     protected override string Length(Value value)
     {
         TypeRef? type = value.Type;
-        while (type != null && Project.Unalias(type) is var resolved && resolved is OptionalRef or SizedRef)
+        while (type != null && Unalias(type) is var resolved && resolved is OptionalRef or SizedRef)
             type = resolved is OptionalRef optional ? optional.Inner : ((SizedRef)resolved).Inner;
-        var suffix = (type != null ? Project.Unalias(type) : null) switch
+        var suffix = (type != null ? Unalias(type) : null) switch
         {
             StringRef => ".length()",
             BytesRef => ".length",
@@ -346,7 +364,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     protected override string TagNumber(Value value)
     {
         var access = $"{value.Raw}.kind.value";
-        return value.Type != null && Project.Unalias(value.Type) is NamedRef named && Definition(named.Name) is VariantDef variant
+        return value.Type != null && Unalias(value.Type) is NamedRef named && Definition(named.Name) is VariantDef variant
             && KindValueKind(variant) is { } kind
             ? AsLong(access, kind)
             : $"(long) {access}";
@@ -492,29 +510,43 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     {
         var name = structDef.Name;
         var w = new CodeWriter();
-        Doc(w, structDef.Doc, structDef.Title != null ? $"Schema name: {structDef.Title}." : null, structDef.IsPacket ? $"Packet id {structDef.Id}." : null);
-        w.OpenInline($"public final class {name} implements {(structDef.IsPacket ? "FormatPacket" : "FormatSerializable")}");
+        var interfaceName = !structDef.IsPacket ? "FormatSerializable" : structDef.TextId != null ? "FormatTextPacket" : "FormatPacket";
+        var remarks = new[] { structDef.Title != null ? $"Schema name: {structDef.Title}." : null, structDef.IsPacket ? $"Packet id {structDef.IdText}." : null };
+        var fields = structDef.Fields.Where(f => f.IsInput).ToList();
+        foreach (var field in fields) WarnUnsigned64(field.Type, $"{name}.{field.Name}", structDef);
+        if (options.Records)
+        {
+            // The fields' documentation goes to the record's @param tags.
+            Doc(w, structDef.Doc, fields.Select(f => $"@param {FieldMember(f.Name)} {Escape(FieldRemarks(f))}").ToList(), remarks);
+            w.OpenInline($"public record {name}({string.Join(", ", fields.Select(f => $"{FieldType(f)} {FieldMember(f.Name)}"))}) implements {interfaceName}");
+        }
+        else
+        {
+            Doc(w, structDef.Doc, remarks);
+            w.OpenInline($"public final class {name} implements {interfaceName}");
+        }
+
         if (structDef.IsPacket)
         {
-            if (structDef.Id is not { } id) throw new CodegenException("A packet needs an id");
-            if (id is < int.MinValue or > int.MaxValue) throw new CodegenException($"Packet id {id} doesn't fit a Java int");
-            w.Line($"public static final int ID = {id};");
+            if (structDef.TextId != null) w.Line($"public static final String ID = {Literal(structDef.TextId)};");
+            else if (structDef.Id is not { } id) throw new CodegenException("A packet needs an id");
+            else if (id is < int.MinValue or > int.MaxValue) throw new CodegenException($"Packet id {id} doesn't fit a Java int");
+            else w.Line($"public static final int ID = {id};");
             w.Line();
         }
 
-        foreach (var field in structDef.Fields.Where(f => f.IsInput))
+        foreach (var field in options.Records ? [] : fields)
         {
-            WarnUnsigned64(field.Type, $"{name}.{field.Name}", structDef);
             Doc(w, field.Doc, field.Title != null ? $"Schema name: {field.Title}." : null, $"Wire: {Describe(field.Type)}.",
                 field.If != null ? $"Only present if {field.If}." : null);
-            w.Line($"public {FieldType(field)} {Member(field.Name)};");
+            w.Line($"public {FieldType(field)} {FieldMember(field.Name)};");
             w.Line();
         }
 
         if (structDef.IsPacket)
         {
             w.Line("@Override");
-            w.OpenInline("public int packetId()");
+            w.OpenInline($"public {(structDef.TextId != null ? "String" : "int")} packetId()");
             w.Line("return ID;");
             w.Close();
             w.Line();
@@ -527,15 +559,38 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         return Header(w.ToString());
     }
 
-    private static string Access(FieldDef field, string prefix) => field.IsInput ? prefix + Member(field.Name) : $"__{field.Name}";
+    /// <summary>The documentation of a record component: its doc and remarks on one line.</summary>
+    private string FieldRemarks(FieldDef field) => string.Join(" ", new[]
+    {
+        field.Doc?.ReplaceLineEndings(" "), field.Title != null ? $"Schema name: {field.Title}." : null, $"Wire: {Describe(field.Type)}.",
+        field.If != null ? $"Only present if {field.If}." : null,
+    }.Where(r => r != null));
+
+    private string Access(FieldDef field, string prefix) => field.IsInput ? prefix + FieldMember(field.Name) : $"__{field.Name}";
 
     private string NotEqual(FieldDef field, string left, string right) =>
-        Project.Unalias(field.Type) is StringRef ? $"!java.util.Objects.equals({left}, {right})" : $"{left} != {right}";
+        Unalias(field.Type) is StringRef ? $"!java.util.Objects.equals({left}, {right})" : $"{left} != {right}";
 
     private void ReadMethod(StructDef structDef, CodeWriter w)
     {
         var name = structDef.Name;
         w.OpenInline($"public static {name} read(FormatReader reader) throws {IOException}");
+        if (options.Records)
+        {
+            // A record is created from all of its components at once: they are read into locals first.
+            var fields = structDef.Fields.Where(f => f.IsInput).ToList();
+            foreach (var field in fields)
+            {
+                var type = FieldType(field);
+                w.Line($"{type} {Access(field, "__")} = {DefaultValue(type)};");
+            }
+
+            ReadFields(structDef, w, f => Access(f, "__"));
+            w.Line($"return new {name}({string.Join(", ", fields.Select(f => Access(f, "__")))});");
+            w.Close();
+            return;
+        }
+
         w.Line($"{name} result = new {name}();");
         ReadFields(structDef, w, f => Access(f, "result."));
         w.Line("return result;");
@@ -558,7 +613,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     protected override void CheckRange(StructDef structDef, FieldDef field, string value, CodeWriter w)
     {
-        if (!options.ValidateRanges || Project.Unalias(field.Type) is not PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool } primitive) return;
+        if (!options.ValidateRanges || Unalias(field.Type) is not PrimitiveRef { Kind: not PrimitiveKind.Uuid and not PrimitiveKind.Bool } primitive) return;
         var kind = primitive.Kind;
         var checks = new List<string>();
         if (kind is PrimitiveKind.U64 or PrimitiveKind.VarUInt64)
@@ -578,7 +633,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
 
     protected override string Constant(FieldDef field)
     {
-        var resolved = Project.Unalias(field.Type);
+        var resolved = Unalias(field.Type);
         var constant = field.Const!;
         switch (resolved)
         {
@@ -1198,7 +1253,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     {
         var w = new CodeWriter();
         var registries = Registries(options.Registry)
-            .Select(r => (r.Protocol, Packets: r.Packets.Where(p => p.Id is >= int.MinValue and <= int.MaxValue).ToList()))
+            .Select(r => (r.Protocol, Packets: r.Packets.Where(p => p.TextId != null || p.Id is >= int.MinValue and <= int.MaxValue).ToList()))
             .ToList();
         if (registries is [(null, var all)])
         {
@@ -1229,17 +1284,22 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
     /// <param name="className">The class the members are in, for its private constructor.</param>
     private void RegistryMembers(CodeWriter w, string className, List<StructDef> packets)
     {
-        w.Line($"private static final int[] IDS = {{{string.Join(", ", packets.Select(p => p.Id))}}};");
+        // A registry of text ids switches over strings (Java 7+) and has the text packet interfaces.
+        var text = IsTextRegistry(packets);
+        var (idType, packetType, visitorType) = text ? ("String", "FormatTextPacket", "FormatTextPacketVisitor") : ("int", "FormatPacket", "FormatPacketVisitor");
+        string Key(StructDef packet) => text ? Literal(packet.TextId!) : packet.Id!.Value.ToString(CultureInfo.InvariantCulture);
+
+        w.Line($"private static final {idType}[] IDS = {{{string.Join(", ", packets.Select(Key))}}};");
         w.Line();
         w.Line($"private {className}() {{");
         w.Line("}");
         w.Line();
         w.Line("/** Reads the packet with the given id, or returns null for unknown ids. */");
-        w.OpenInline($"public static FormatPacket read(int id, FormatReader reader) throws {IOException}");
+        w.OpenInline($"public static {packetType} read({idType} id, FormatReader reader) throws {IOException}");
         w.OpenInline("switch (id)");
         foreach (var packet in packets)
         {
-            w.Line($"case {packet.Id}:");
+            w.Line($"case {Key(packet)}:");
             w.Line($"    return {TypeName(packet)}.read(reader);");
         }
 
@@ -1249,19 +1309,19 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         w.Close();
         w.Line();
         w.Line("/** Reads the packet with the given id and passes it to the visitor. Returns false for unknown ids. */");
-        w.OpenInline($"public static boolean dispatch(int id, FormatReader reader, FormatPacketVisitor visitor) throws {IOException}");
-        w.Line("FormatPacket packet = read(id, reader);");
+        w.OpenInline($"public static boolean dispatch({idType} id, FormatReader reader, {visitorType} visitor) throws {IOException}");
+        w.Line($"{packetType} packet = read(id, reader);");
         w.Line("if (packet == null) return false;");
         w.Line("visitor.visit(packet);");
         w.Line("return true;");
         w.Close();
         w.Line();
         w.Line("/** The packet name for an id, or null. */");
-        w.OpenInline("public static String nameOf(int id)");
+        w.OpenInline($"public static String nameOf({idType} id)");
         w.OpenInline("switch (id)");
         foreach (var packet in packets)
         {
-            w.Line($"case {packet.Id}:");
+            w.Line($"case {Key(packet)}:");
             w.Line($"    return {Literal(packet.Name)};");
         }
 
@@ -1271,7 +1331,7 @@ internal sealed class JavaEmitter(FormatProject project, JavaOptions options) : 
         w.Close();
         w.Line();
         w.Line("/** All packet ids. */");
-        w.OpenInline("public static int[] ids()");
+        w.OpenInline($"public static {idType}[] ids()");
         w.Line("return IDS.clone();");
         w.Close();
     }

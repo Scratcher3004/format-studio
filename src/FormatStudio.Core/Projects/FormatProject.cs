@@ -441,6 +441,8 @@ public sealed class FormatProject
     public List<DeclaredNative> DeclaredNatives { get; } = [];
     /// <summary>The code for native types the project adds itself (<c>native-codegen:</c> files among its sources).</summary>
     public List<NativeCodegenExtension> CodegenExtensions { get; } = [];
+    /// <summary>The definitions the project binds to existing types itself (<c>bind:</c> files among its sources).</summary>
+    public List<TypeBinding> Bindings { get; } = [];
     /// <summary>The code generators the project's targets can use: built-in, its own and its libraries'.</summary>
     public CodeGenerators Generators { get; set; } = CodeGenerators.BuiltIn;
     /// <summary>The code generators the project declares itself (<c>generator:</c> files among its sources).</summary>
@@ -481,6 +483,24 @@ public sealed class FormatProject
     }
 
     public TypeDef? Find(string name) => Resolve(name).Definition;
+
+    /// <summary>The bindings of definitions to existing types: the project's own, then those of its libraries.</summary>
+    public IEnumerable<TypeBinding> AllBindings => Bindings.Concat(_modules.Values.SelectMany(m => m.Bindings));
+
+    /// <summary>
+    /// The code of a definition bound to an existing type for a generator, or null when the generator generates it. With
+    /// two bindings (an error of the validator) the project's own comes first.
+    /// </summary>
+    public NativeCodegen? Binding(TypeDef definition, string generator)
+    {
+        foreach (var binding in AllBindings)
+        {
+            if (binding.Codegen.TryGetValue(generator, out var codegen) && ReferenceEquals(Find(binding.Definition), definition))
+                return codegen;
+        }
+
+        return null;
+    }
 
     /// <summary>
     /// Resolves a type name: <c>Alias.Type</c> or <c>Library.Type</c> in that library; a plain name in the project's own
@@ -591,6 +611,7 @@ public sealed class FormatProject
         copy.DeclaredNatives.AddRange(DeclaredNatives);
         copy.DeclaredGenerators.AddRange(DeclaredGenerators);
         copy.CodegenExtensions.AddRange(CodegenExtensions);
+        copy.Bindings.AddRange(Bindings);
         foreach (var type in _types.Values) copy.Add(type);
         foreach (var module in _modules.Values) copy.AddModule(module);
         foreach (var (alias, module) in _dependencies) copy.AddModule(module, alias);
@@ -789,6 +810,12 @@ public sealed class FormatProject
         }
 
         AddCodegen(CodegenExtensions);
+        foreach (var source in sources.Where(s => TypeBinding.IsDeclaration(s.Text)))
+        {
+            if (TypeBinding.Read(source.Text, Relative(source.File), files, Diagnostics, generators: Generators) is { } binding)
+                Bindings.Add(binding);
+        }
+
         foreach (var (file, patternIndex, text) in sources.Where(s => !IsDeclaration(s.Text)))
         {
             var definition = DslReader.Read(text, Relative(file), Diagnostics);
@@ -810,9 +837,12 @@ public sealed class FormatProject
         }
     }
 
-    /// <summary>Whether a source file declares a native type, code for one or a code generator rather than a definition.</summary>
+    /// <summary>
+    /// Whether a source file declares a native type, code for one, a code generator or a binding rather than a definition.
+    /// </summary>
     public static bool IsDeclaration(string text) =>
-        DeclaredNative.IsDeclaration(text) || DeclaredGenerator.IsDeclaration(text) || NativeCodegenExtension.IsDeclaration(text);
+        DeclaredNative.IsDeclaration(text) || DeclaredGenerator.IsDeclaration(text) || NativeCodegenExtension.IsDeclaration(text)
+        || TypeBinding.IsDeclaration(text);
 
     private void LoadTests()
     {

@@ -16,8 +16,20 @@
         }
         @if (header.IsPacket)
         {
-            <IntegerField Value="header.Id" ValueChanged="v => Set(() => header.Id = v)" Base="header.IdBase" BaseChanged="b => Set(() => header.IdBase = b)"
-                          AllowEmpty="true" Label="Id" Placeholder="0x27" Variant="Variant.Outlined" Style="max-width: 150px" />
+            @if (header.TextId != null)
+            {
+                <MudTextField T="string" Value="header.TextId" ValueChanged="v => Set(() => header.TextId = v ?? string.Empty)" Label="Id"
+                              Placeholder="mod:move" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mono" Style="max-width: 220px"
+                              Error="@(header.TextId.Length == 0)" ErrorText="A text id can't be empty" />
+            }
+            else
+            {
+                <IntegerField Value="header.Id" ValueChanged="v => Set(() => header.Id = v)" Base="header.IdBase" BaseChanged="b => Set(() => header.IdBase = b)"
+                              AllowEmpty="true" Label="Id" Placeholder="0x27" Variant="Variant.Outlined" Style="max-width: 150px" />
+            }
+            <MudTooltip Text="An id as text, e.g. a channel name, instead of a number">
+                <MudSwitch T="bool" Value="header.TextId != null" ValueChanged="t => Set(() => SetTextId(header, t))" Label="Text id" Color="Color.Primary" Class="mt-1" />
+            </MudTooltip>
             <MudTextField T="string" Value="@string.Join(", ", header.Groups)" ValueChanged="v => Set(() => SetGroups(header, v))"
                           Label="Groups" Placeholder="play, clientbound" Variant="Variant.Outlined" Margin="Margin.Dense" Class="grow" />
         }
@@ -185,6 +197,26 @@
 
     private static string? FormatTag(VariantCase variantCase) =>
         variantCase.TagMember ?? (variantCase.TagValue is { } tag ? YamlValues.FormatInteger(tag, variantCase.TagBase) : null);
+
+    /// <summary>Switches a packet between an integer and a text id, keeping the id where it converts.</summary>
+    private static void SetTextId(StructDef packet, bool text)
+    {
+        if (text)
+        {
+            packet.TextId = packet.IdText ?? string.Empty;
+            packet.Id = null;
+        }
+        else
+        {
+            if (YamlValues.TryParseInteger(packet.TextId, out var id, out var numberBase))
+            {
+                packet.Id = id;
+                packet.IdBase = numberBase;
+            }
+
+            packet.TextId = null;
+        }
+    }
 
     private static void SetGroups(StructDef structDef, string? text)
     {

@@ -38,6 +38,8 @@ public sealed class JavaOptions
     public bool ValidateStrings { get; set; } = true;
     public JavaUnsigned Unsigned { get; set; } = JavaUnsigned.Widen;
     public JavaCollections Collections { get; set; } = JavaCollections.List;
+    /// <summary>Structs and packets become records (Java 16+) instead of classes with public fields.</summary>
+    public bool Records { get; set; }
 
     public static IReadOnlyList<CodegenOption> Describe() =>
     [
@@ -46,6 +48,7 @@ public sealed class JavaOptions
         CodegenOption.Choice("unsigned", "Unsigned integers", ["widen", "signed", "checked"],
             "widen: the next larger type (u8/u16 → int, u32 → long; u64 keeps its bits in a long, with a warning). signed: the signed type of the same size, keeping the bits. checked: like signed, but values that don't fit are rejected."),
         CodegenOption.Choice("collections", "Arrays as", ["list", "array"], "java.util.List or Java arrays (T[]). Maps are always lists of entries."),
+        CodegenOption.Bool("records", "Records", false, "Structs and packets become records (needs Java 16) instead of classes with public fields."),
         CodegenOption.Bool("validateRanges", "Validate ranges", false, "Check min/max of numeric fields when reading."),
         CodegenOption.Bool("validateStrings", "Validate strings", true, "Reject invalid UTF-8, and padding or fill that wouldn't re-encode the same where check is strict."),
         CodegenOption.Bool("includeRuntime", "Include runtime", true,
@@ -64,6 +67,7 @@ public sealed class JavaOptions
             ValidateStrings = read.Bool("validateStrings"),
             Unsigned = Enum.Parse<JavaUnsigned>(read.Choice("unsigned"), true),
             Collections = Enum.Parse<JavaCollections>(read.Choice("collections"), true),
+            Records = read.Bool("records"),
             IncludeRuntime = read.Bool("includeRuntime"),
             RuntimePackage = read.Text("runtimePackage"),
         };
