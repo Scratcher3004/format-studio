@@ -1,0 +1,10 @@
+bitfield: ChunkPos
+doc: A chunk position packed into 64 bits, as Minecraft sends it (x in the low half).
+type: i64
+fields:
+  - name: z
+    bits: 32
+    signed: true
+  - name: x
+    bits: 32
+    signed: true

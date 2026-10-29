@@ -10,4 +10,19 @@ internal static class MinecraftFiles
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
+
+    /// <summary>The definition and binding files of the library (<c>Definitions/</c>), by name.</summary>
+    public static IReadOnlyList<(string Path, string Text)> Definitions()
+    {
+        var assembly = typeof(MinecraftFiles).Assembly;
+        return assembly.GetManifestResourceNames()
+            .Where(n => n.StartsWith("Definitions/", StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .Select(n =>
+            {
+                using var reader = new StreamReader(assembly.GetManifestResourceStream(n)!);
+                return (n, reader.ReadToEnd());
+            })
+            .ToList();
+    }
 }

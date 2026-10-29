@@ -1,0 +1,13 @@
+bitfield: BlockPos
+doc: A block position packed into 64 bits, as Minecraft sends it.
+type: i64
+fields:
+  - name: x
+    bits: 26
+    signed: true
+  - name: z
+    bits: 26
+    signed: true
+  - name: y
+    bits: 12
+    signed: true

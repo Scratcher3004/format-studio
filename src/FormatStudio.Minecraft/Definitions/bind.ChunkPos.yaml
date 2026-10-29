@@ -1,0 +1,6 @@
+bind: ChunkPos
+doc: Minecraft's ChunkPos, with its StreamCodec
+codegen:
+  netty:
+    type: net.minecraft.world.level.ChunkPos
+    codec: net.minecraft.world.level.ChunkPos.STREAM_CODEC

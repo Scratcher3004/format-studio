@@ -271,6 +271,91 @@ public class NettyGeneratorTests
         Assert.True(failures.Count == 0, string.Join("\n", failures.Take(20)));
     }
 
+    /// <summary>The stand-ins of the classes the library's definitions are bound to, with their real wire formats.</summary>
+    private static GeneratedFile[] LibraryClasses() =>
+    [
+        new("net/minecraft/world/phys/Vec3.java", """
+            package net.minecraft.world.phys;
+
+            import io.netty.buffer.ByteBuf;
+            import net.minecraft.network.codec.StreamCodec;
+
+            public record Vec3(double x, double y, double z) {
+                public static final StreamCodec<ByteBuf, Vec3> STREAM_CODEC = StreamCodec.of(
+                    (buf, v) -> buf.writeDouble(v.x).writeDouble(v.y).writeDouble(v.z),
+                    buf -> new Vec3(buf.readDouble(), buf.readDouble(), buf.readDouble()));
+            }
+            """),
+        new("net/minecraft/core/BlockPos.java", """
+            package net.minecraft.core;
+
+            import io.netty.buffer.ByteBuf;
+            import net.minecraft.network.codec.StreamCodec;
+
+            public record BlockPos(long packed) {
+                public static final StreamCodec<ByteBuf, BlockPos> STREAM_CODEC = StreamCodec.of(
+                    (buf, p) -> buf.writeLong(p.packed),
+                    buf -> new BlockPos(buf.readLong()));
+            }
+            """),
+        new("net/minecraft/world/level/ChunkPos.java", """
+            package net.minecraft.world.level;
+
+            import io.netty.buffer.ByteBuf;
+            import net.minecraft.network.codec.StreamCodec;
+
+            public record ChunkPos(int x, int z) {
+                public static final StreamCodec<ByteBuf, ChunkPos> STREAM_CODEC = StreamCodec.of(
+                    (buf, p) -> buf.writeLong((p.x & 0xFFFFFFFFL) | ((p.z & 0xFFFFFFFFL) << 32)),
+                    buf -> { long l = buf.readLong(); return new ChunkPos((int) l, (int) (l >>> 32)); });
+            }
+            """),
+    ];
+
+    /// <summary>The library's Vec3, BlockPos, ChunkPos and Identifier use Minecraft's classes and codecs in netty.</summary>
+    [Fact]
+    public void TheLibrarysDefinitionsAreBoundToMinecraftsClasses()
+    {
+        var project = Project(("types/Look.yaml", """
+            packet: Look
+            id: mod:look
+            fields:
+              - eye: minecraft.Vec3
+              - block: minecraft.BlockPos
+              - chunk: minecraft.ChunkPos
+              - {name: sound, type: minecraft.Identifier}
+            """));
+        var output = CodeGeneration.Generate(project, Target());
+        Assert.Empty(Errors(output));
+        var look = output.FileOf("Look")!.Content;
+        Assert.Contains("net.minecraft.world.phys.Vec3 eye", look);
+        Assert.Contains("net.minecraft.world.phys.Vec3.STREAM_CODEC, Look::eye,", look);
+        Assert.Contains("net.minecraft.core.BlockPos.STREAM_CODEC, Look::block,", look);
+        Assert.Contains("net.minecraft.world.level.ChunkPos.STREAM_CODEC, Look::chunk,", look);
+        Assert.Contains("net.minecraft.resources.Identifier.STREAM_CODEC, Look::sound,", look);
+
+        // Other generators generate the definitions themselves.
+        var java = CodeGeneration.Generate(project, new CodegenTarget { Name = "j", Generator = "java-stream", Output = "g",
+            Options = new JsonObject { ["package"] = "generated.test" } });
+        Assert.Empty(Errors(java));
+        Assert.NotNull(java.Files.FirstOrDefault(f => f.Path.EndsWith("Vec3.java", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void TheLibrarysDefinitionsHaveMinecraftsWireFormats()
+    {
+        var project = Project(("types/Look.yaml", """
+            struct: Look
+            fields:
+              - eye: minecraft.Vec3
+              - block: minecraft.BlockPos
+              - chunk: minecraft.ChunkPos
+              - sound: minecraft.Identifier
+            """));
+        var failures = CheckAgainstSimulator(project, Target(), 20, LibraryClasses());
+        Assert.True(failures.Count == 0, string.Join("\n", failures.Take(20)));
+    }
+
     [Fact]
     public void TheMinecraftLibraryProvidesTheGenerator()
     {

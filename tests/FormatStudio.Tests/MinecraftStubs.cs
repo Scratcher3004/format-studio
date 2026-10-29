@@ -88,7 +88,13 @@ internal static class MinecraftStubs
         new("net/minecraft/resources/Identifier.java", """
             package net.minecraft.resources;
 
+            import io.netty.buffer.ByteBuf;
+            import net.minecraft.network.codec.ByteBufCodecs;
+            import net.minecraft.network.codec.StreamCodec;
+
             public record Identifier(String text) {
+                public static final StreamCodec<ByteBuf, Identifier> STREAM_CODEC = ByteBufCodecs.STRING_UTF8.map(Identifier::new, Identifier::text);
+
                 public static Identifier parse(String text) {
                     return new Identifier(text);
                 }

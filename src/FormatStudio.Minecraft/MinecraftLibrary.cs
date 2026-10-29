@@ -6,8 +6,9 @@ using FormatStudio.Projects;
 namespace FormatStudio.Minecraft;
 
 /// <summary>
-/// The <c>minecraft</c> library: native types for Minecraft's formats (NBT) and the <c>netty</c> generator of Minecraft's
-/// StreamCodecs. A project uses them with
+/// The <c>minecraft</c> library: native types for Minecraft's formats (NBT), the <c>netty</c> generator of Minecraft's
+/// StreamCodecs, and definitions of its common types (Identifier, Vec3, BlockPos, ChunkPos) bound to its classes for
+/// netty. A project uses them with
 /// <c>dependencies: [minecraft]</c> once a host has called <see cref="Register"/>.
 /// </summary>
 public static class MinecraftLibrary
@@ -24,9 +25,11 @@ public static class MinecraftLibrary
     {
         Name = Name,
         Version = "1.0.0",
-        Description = "Native types for Minecraft's formats (NBT) and the netty generator of Minecraft's StreamCodecs",
+        Description = "Native types for Minecraft's formats (NBT), the netty generator of Minecraft's StreamCodecs, and its common types (Identifier, Vec3, BlockPos, ChunkPos)",
         Natives = Natives,
         Generators = Generators,
+        Files = MinecraftFiles.Definitions(),
+        Defaults = "endian: big\nlength: varint32",
         // nbt used to be built in. TODO(legacy-nbt): remove with HostLibraries.WithLegacyDependencies.
         LegacyNatives = ["nbt"],
     };

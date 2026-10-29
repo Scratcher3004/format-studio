@@ -1,0 +1,3 @@
+alias: Identifier
+doc: A resource identifier such as minecraft:stone, a string of at most 32767 characters.
+type: {string: utf8, max: 32767}

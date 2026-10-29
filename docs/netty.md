@@ -63,6 +63,7 @@ A struct is a `StreamCodec.composite` when it has at most 12 fields, none of the
 | `T[]` with a `varint32` length | `T`'s codec `.apply(ByteBufCodecs.list())`, `list(maxItems)` with the field's `maxItems` |
 | `T?` | `NettyFormat.nullable(...)`: Minecraft's optional, as the value or null |
 | a struct, enum, bit field or variant with its own tag | its `CODEC` (skipped types must have one too) |
+| `minecraft.Identifier`, `Vec3`, `BlockPos`, `ChunkPos` | their `STREAM_CODEC`s ([the library's definitions](libraries.md#the-minecraft-library)) |
 | a [bound](codegen.md#binding-definitions-to-existing-types) type or native type | its `codec`: `codegen: {netty: {type: ..., codec: ...}}` |
 | `nbt` (`java-network` only) | `ByteBufCodecs.TAG`; values are `net.minecraft.nbt.Tag`s |
 

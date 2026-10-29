@@ -18,6 +18,13 @@ public sealed class HostLibrary
     public IReadOnlyList<INativeType> Natives { get; init; } = [];
     /// <summary>The code generators the library provides to the projects that depend on it, e.g. <c>netty</c>.</summary>
     public IReadOnlyList<ICodeGenerator> Generators { get; init; } = [];
+    /// <summary>
+    /// The definition and binding files the library provides, as in a packed library: path, text. The paths only tell
+    /// the files apart in messages.
+    /// </summary>
+    public IReadOnlyList<(string Path, string Text)> Files { get; init; } = [];
+    /// <summary>The library's <c>defaults:</c> in YAML (<c>endian: big</c> ...), which its <see cref="Files"/> are read with.</summary>
+    public string Defaults { get; init; } = "";
 
     /// <summary>
     /// Names of native types that used to be built in. A project or library that uses one without depending on this
@@ -56,8 +63,9 @@ public static class HostLibraries
     internal static IEnumerable<LibraryPackage> Packages() => All.Select(library => new LibraryPackage
     {
         Settings = ProjectSettings.Parse($"name: {library.Name}\nkind: library\nversion: {library.Version}\n" +
-            (library.Description.Length > 0 ? $"description: '{library.Description.Replace("'", "''")}'\n" : ""), $"built-in {library.Name}"),
-        Files = [],
+            (library.Description.Length > 0 ? $"description: '{library.Description.Replace("'", "''")}'\n" : "") +
+            (library.Defaults.Length > 0 ? $"defaults:\n{string.Concat(library.Defaults.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(l => "  " + l.Trim() + "\n"))}" : ""), $"built-in {library.Name}"),
+        Files = library.Files,
         Origin = $"built-in {library.Name}",
         HostNatives = library.Natives,
         HostGenerators = library.Generators,

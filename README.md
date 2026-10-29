@@ -38,7 +38,7 @@ dotnet run --project src/FormatStudio.Web -- --workspace samples --urls http://l
 | Folder | |
 |---|---|
 | `src/FormatStudio.Core` | Model, YAML DSL, project loader, validator, simulator, code generation |
-| `src/FormatStudio.Minecraft` | The `minecraft` library: native types for Minecraft's formats (NBT) |
+| `src/FormatStudio.Minecraft` | The `minecraft` library: NBT, the netty generator, Identifier, Vec3, BlockPos, ChunkPos |
 | `src/FormatStudio.Cli` | `format-studio` command-line tool |
 | `src/FormatStudio.Web` | Web UI (Blazor Server, MudBlazor) |
 | `src/FormatStudio.Importers.Mojang` | Importer for [Mojang/bedrock-protocol-docs](https://github.com/Mojang/bedrock-protocol-docs) |

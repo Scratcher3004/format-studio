@@ -52,7 +52,7 @@ versions and packages.
 ### The `minecraft` library
 
 `minecraft` is a built-in library with the native types for Minecraft's formats, today `nbt` (see
-[native types](dsl.md#native-types)), and the [`netty` generator](netty.md) of Minecraft's `StreamCodec`s. It is not part of Core but of `FormatStudio.Minecraft`, an assembly that the
+[native types](dsl.md#native-types)), the [`netty` generator](netty.md) of Minecraft's `StreamCodec`s, and definitions of its common types. It is not part of Core but of `FormatStudio.Minecraft`, an assembly that the
 command line and the web UI register at start-up (`MinecraftLibrary.Register()`), and which a program using
 `FormatStudio.Core` on its own has to register too. Projects and libraries that use `nbt` declare it:
 
@@ -62,8 +62,22 @@ defaults:
   nbt: java-network
 ```
 
-Such host libraries (`HostLibrary` in Core) have no definition files; they provide native types with their code
-generation, including the runtime files that code needs, and code generators.
+It also has definitions of Minecraft's common types, all with the defaults `endian: big` and `length: varint32`:
+
+| Definition | Wire format | Class in the `netty` generator |
+|---|---|---|
+| `minecraft.Identifier` | UTF-8 string, at most 32767 characters | `net.minecraft.resources.Identifier` |
+| `minecraft.Vec3` | three `f64`s | `net.minecraft.world.phys.Vec3` |
+| `minecraft.BlockPos` | bit field of an `i64`: 26-bit x, 26-bit z, 12-bit y | `net.minecraft.core.BlockPos` |
+| `minecraft.ChunkPos` | bit field of an `i64`: 32-bit z, 32-bit x | `net.minecraft.world.level.ChunkPos` |
+
+The other generators generate these definitions like any others; `netty` has [bindings](codegen.md#binding-definitions-to-existing-types)
+to Minecraft's classes and their `STREAM_CODEC`s, so `eye: minecraft.Vec3` becomes a `Vec3` field. (`uuid` is a built-in
+type already, and `netty` uses `UUIDUtil.STREAM_CODEC` for it.)
+
+Such host libraries (`HostLibrary` in Core) provide native types with their code generation, including the runtime
+files that code needs, code generators, and definition and binding files (`HostLibrary.Files`, embedded in the
+assembly) with the `defaults` they are read with.
 
 **Temporary exception.** `nbt` used to be built in. A project or library that uses it (a default `nbt: ...`, or the
 word `nbt` in one of its definition files) without declaring `minecraft` gets the dependency added automatically

@@ -1,0 +1,6 @@
+bind: Vec3
+doc: Minecraft's Vec3, with its StreamCodec
+codegen:
+  netty:
+    type: net.minecraft.world.phys.Vec3
+    codec: net.minecraft.world.phys.Vec3.STREAM_CODEC

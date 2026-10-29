@@ -1,0 +1,6 @@
+bind: BlockPos
+doc: Minecraft's BlockPos, with its StreamCodec
+codegen:
+  netty:
+    type: net.minecraft.core.BlockPos
+    codec: net.minecraft.core.BlockPos.STREAM_CODEC

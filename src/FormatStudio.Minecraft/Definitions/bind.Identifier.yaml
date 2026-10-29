@@ -1,0 +1,6 @@
+bind: Identifier
+doc: Minecraft's Identifier, with its StreamCodec
+codegen:
+  netty:
+    type: net.minecraft.resources.Identifier
+    codec: net.minecraft.resources.Identifier.STREAM_CODEC

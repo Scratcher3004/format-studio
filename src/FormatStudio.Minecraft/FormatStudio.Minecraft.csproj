@@ -12,6 +12,8 @@
         <!-- Runtime files the generated code of the native types needs; written into the output of the generators.
              WithCulture: otherwise ".cs" in NbtCodec.cs.txt would be taken for the Czech culture. -->
         <EmbeddedResource Include="Files\*" LogicalName="Files/%(Filename)%(Extension)" WithCulture="false" />
+        <!-- The library's definitions and their bindings. -->
+        <EmbeddedResource Include="Definitions\*.yaml" LogicalName="Definitions/%(Filename)%(Extension)" />
     </ItemGroup>
 
 </Project>
